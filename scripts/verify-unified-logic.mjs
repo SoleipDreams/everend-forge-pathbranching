@@ -91,8 +91,9 @@ const conditionalSplit = updateTransition(split, split.events[0].transitions[0].
 conditionalSplit.events[0].transitions[1].mode = "fallback";
 const visualModel = buildStoryCanvasModel(conditionalSplit, { canvasLayerMode: "visual" });
 const logicModel = buildStoryCanvasModel(conditionalSplit, { canvasLayerMode: "logic" });
-const visualGate = visualModel.nodes.find((node) => node.id === "route-gate:event:a");
-const logicGate = logicModel.nodes.find((node) => node.id === "route-gate:event:a");
+const splitGateId = "route-gate:event:a:event:a";
+const visualGate = visualModel.nodes.find((node) => node.id === splitGateId);
+const logicGate = logicModel.nodes.find((node) => node.id === splitGateId);
 assert.equal(visualGate?.data.details?.junctionPresentation, "split");
 assert.equal(logicGate?.data.details?.junctionPresentation, "gate");
 const visualGateCenter = {
@@ -110,12 +111,7 @@ assert.ok((logicGate?.width ?? 0) >= 160, "Logic gates must have room for an inf
 assert.ok((logicGate?.height ?? 0) > (visualGate?.height ?? 0), "Logic gates must expand beyond the visual knot");
 const visualSource = visualModel.nodes.find((node) => node.id === "event:a");
 const logicSource = logicModel.nodes.find((node) => node.id === "event:a");
-assert.equal(logicSource?.position.x, (visualSource?.position.x ?? 0) - 67, "Logic mode must make room on the left side of the expanded gate");
-assert.equal(
-  (visualGate?.position.x ?? 0) - ((visualSource?.position.x ?? 0) + (visualSource?.width ?? 230)),
-  (logicGate?.position.x ?? 0) - ((logicSource?.position.x ?? 0) + (logicSource?.width ?? 230)),
-  "the source-to-gate separation must remain stable between layers",
-);
+assert.deepEqual(logicSource?.position, visualSource?.position, "Layer switches must not reflow surrounding nodes when a gate expands.");
 assert.equal(visualModel.nodes.find((node) => node.id === "event:a")?.data.logicSummary, undefined);
 assert.ok(logicModel.nodes.find((node) => node.id === "event:a")?.data.logicSummary);
 const visualRoute = visualModel.edges.find((edge) => edge.data?.kind === "transition" && edge.data?.conditions);
@@ -125,13 +121,108 @@ assert.equal(visualRoute?.animated, false);
 assert.equal(logicRoute?.data?.canvasLayerMode, "logic");
 assert.equal(logicRoute?.animated, true);
 assert.equal(logicRoute?.data?.routePreview?.conditionItems?.[0]?.subjectLabel, "Relic");
-const gateRouteEdges = logicModel.edges.filter((edge) => edge.source === "route-gate:event:a");
+const gateRouteEdges = logicModel.edges.filter((edge) => edge.source === splitGateId);
 assert.equal(gateRouteEdges.length, 2, "a Logic Gate must expose every outgoing route");
-assert.ok(gateRouteEdges.every((edge) => edge.sourceHandle === `route:${edge.id}`), "each route must leave through its own gate handle");
-const visualGateRouteEdges = visualModel.edges.filter((edge) => edge.source === "route-gate:event:a");
-assert.ok(visualGateRouteEdges.every((edge) => edge.sourceHandle === `route:${edge.id}`), "each Visual knot output must resolve to its own route handle");
+assert.ok(gateRouteEdges.every((edge) => edge.sourceHandle === "route:output"), "every route must leave through the shared gate output");
+const visualGateRouteEdges = visualModel.edges.filter((edge) => edge.source === splitGateId);
+assert.ok(visualGateRouteEdges.every((edge) => edge.sourceHandle === "route:output"), "every Visual knot route must resolve through the shared output");
 const gateOptions = logicGate?.data.details?.routeOptions;
 assert.equal(Array.isArray(gateOptions) ? gateOptions.length : 0, 2, "a Logic Gate must summarize every outgoing route");
+
+const ordinaryStorySplit = normalizeProject({
+  ...source,
+  events: [
+    { id: "event:a", name: "A", type: "normal", transitions: [
+      { id: "flow:a-b", from: "event:a", to: "event:b" },
+      { id: "flow:a-c", from: "event:a", to: "event:c" },
+    ] },
+    { id: "event:b", name: "B", type: "normal", transitions: [] },
+    { id: "event:c", name: "C", type: "final", transitions: [] },
+  ],
+});
+const ordinaryStoryLogic = buildStoryCanvasModel(ordinaryStorySplit, { canvasLayerMode: "logic" });
+assert.equal(
+  ordinaryStoryLogic.nodes.some((node) => node.id === "route-gate:event:a:event:a"),
+  false,
+  "A story-level event with ordinary exits must keep direct Logic-mode lines.",
+);
+assert.equal(
+  ordinaryStoryLogic.edges.filter((edge) => edge.source === "event:a" && edge.data?.kind === "transition").length,
+  2,
+  "Ordinary story-level exits must remain attached to their event.",
+);
+
+const outcomeSource = "outcome:event:a:decision:choose:continue";
+const outcomeStorySplit = normalizeProject({
+  ...source,
+  events: [
+    {
+      id: "event:a",
+      name: "A",
+      type: "normal",
+      decisions: [{ id: "decision:choose", name: "Choose", type: "dialogue", outcomes: [{ id: "continue", name: "Continue" }] }],
+      transitions: [
+        { id: "outcome:a-b", from: outcomeSource, to: "event:b" },
+        { id: "outcome:a-c", from: outcomeSource, to: "event:c" },
+      ],
+    },
+    { id: "event:b", name: "B", type: "normal", transitions: [] },
+    { id: "event:c", name: "C", type: "final", transitions: [] },
+  ],
+});
+const outcomeStoryLogic = buildStoryCanvasModel(outcomeStorySplit, { canvasLayerMode: "logic" });
+assert.ok(
+  outcomeStoryLogic.nodes.some((node) => node.id === `route-gate:event:a:${outcomeSource}`),
+  "A single outcome with multiple exits must own its Logic Gate.",
+);
+const outcomeStoryEvent = outcomeStoryLogic.nodes.find((node) => node.id === "event:a");
+assert.deepEqual(
+  outcomeStoryEvent?.data.details?.logicOutcomePorts,
+  [{ id: outcomeSource, label: "Continue", decisionLabel: "Choose" }],
+  "Logic mode must retain a visible output port for each outcome.",
+);
+assert.equal(
+  outcomeStoryLogic.edges.find((edge) => edge.target === `route-gate:event:a:${outcomeSource}`)?.sourceHandle,
+  outcomeSource,
+  "An outcome route must leave through its own Logic-mode output port.",
+);
+
+const independentOutcomeProject = normalizeProject({
+  ...source,
+  events: [
+    {
+      id: "event:a",
+      name: "A",
+      type: "normal",
+      decisions: [{
+        id: "decision:choose",
+        name: "Choose",
+        type: "dialogue",
+        outcomes: [{ id: "continue", name: "Continue" }, { id: "leave", name: "Leave" }],
+      }],
+      transitions: [
+        { id: "outcome:continue", from: outcomeSource, to: "event:b" },
+        { id: "outcome:leave", from: "outcome:event:a:decision:choose:leave", to: "event:c" },
+      ],
+    },
+    { id: "event:b", name: "B", type: "normal", transitions: [] },
+    { id: "event:c", name: "C", type: "final", transitions: [] },
+  ],
+});
+const independentOutcomeLogic = buildStoryCanvasModel(independentOutcomeProject, { canvasLayerMode: "logic" });
+assert.equal(
+  independentOutcomeLogic.nodes.some((node) => node.data.kind === "routeGate"),
+  false,
+  "Outcomes with one exit each must remain continuous Logic-mode lines.",
+);
+assert.deepEqual(
+  independentOutcomeLogic.edges
+    .filter((edge) => edge.source === "event:a" && edge.data?.kind === "transition")
+    .map((edge) => edge.sourceHandle)
+    .sort(),
+  [outcomeSource, "outcome:event:a:decision:choose:leave"].sort(),
+  "Independent outcomes must retain independent output handles.",
+);
 
 const disabledProject = normalizeProject({
   ...source,

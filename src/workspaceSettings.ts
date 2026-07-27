@@ -166,6 +166,7 @@ export type AppSettings = {
   /** Interface language only; story localization remains in the project catalog. */
   localePreference: LocalePreference;
   theme: ThemeId;
+  minimapOpen: boolean;
   recentProjects: string[];
   lastOpenedProject?: string;
   lastView?: AppView;
@@ -332,6 +333,8 @@ export function loadSettings(): AppSettings {
     return {
       localePreference: normalizeLocalePreference(parsed.localePreference),
       theme: normalizeThemeId(parsed.theme),
+      minimapOpen:
+        typeof parsed.minimapOpen === "boolean" ? parsed.minimapOpen : true,
       recentProjects: Array.isArray(parsed.recentProjects)
         ? parsed.recentProjects.filter(
             (item): item is string => typeof item === "string",
@@ -376,6 +379,7 @@ export function loadSettings(): AppSettings {
     return {
       localePreference: "system",
       theme: "worldnotion-light",
+      minimapOpen: true,
       recentProjects: [],
       lastView: "home",
       canvasBackground: DEFAULT_CANVAS_BACKGROUND_SETTINGS,

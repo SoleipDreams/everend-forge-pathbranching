@@ -34,6 +34,11 @@ function isTerminalEventType(project: BranchingProject, type: string | undefined
   return Boolean(type && (type === "final" || project.eventCategories?.some((category) => category.id === type && category.terminal)));
 }
 
+function validationNodeLabel(project: BranchingProject, nodeId: string) {
+  const event = project.events.find((candidate) => candidate.id === nodeId);
+  return event?.name?.trim() ? `Event "${event.name}" (${nodeId})` : `Node "${nodeId}"`;
+}
+
 /** Ids of entities (canon or local) whose entity type is marked grantable via LogicTypeOverride. */
 function grantableEntityIds(project: BranchingProject): Set<string> {
   const grantableCanonTypes = new Set<string>();
@@ -780,24 +785,24 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       const ordered = [...transitions].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       const fallbacks = transitions.filter((transition) => transition.mode === "fallback");
       if (fallbacks.length > 1) {
-        findings.push(finding("duplicate_fallback", "error", `Node "${sourceId}" has more than one fallback transition.`, { id: sourceId }));
+        findings.push(finding("duplicate_fallback", "error", `${validationNodeLabel(project, sourceId)} has more than one fallback transition.`, { id: sourceId }));
       }
       const orders = transitions.map((transition) => transition.order ?? 0);
       if (new Set(orders).size !== orders.length || orders.some((order) => order < 0)) {
-        findings.push(finding("invalid_transition_order", "error", `Node "${sourceId}" has duplicate or invalid transition order values.`, { id: sourceId }));
+        findings.push(finding("invalid_transition_order", "error", `${validationNodeLabel(project, sourceId)} has duplicate or invalid transition order values.`, { id: sourceId }));
       }
       const unconditionalIndex = ordered.findIndex(
         (transition) => transition.mode !== "fallback" && !(transition.logic?.when ?? transition.conditions),
       );
       if (unconditionalIndex >= 0 && unconditionalIndex < ordered.length - 1) {
-        findings.push(finding("invalid_transition_order", "warning", `Node "${sourceId}" has an unconditional route before later transitions; those routes are unreachable.`, { id: sourceId }));
+        findings.push(finding("invalid_transition_order", "warning", `${validationNodeLabel(project, sourceId)} has an unconditional route before later transitions; those routes are unreachable.`, { id: sourceId }));
       }
       if (
         transitions.some((transition) => transition.logic?.when ?? transition.conditions) &&
         !fallbacks.length &&
         !transitions.some((transition) => transition.mode !== "fallback" && !(transition.logic?.when ?? transition.conditions))
       ) {
-        findings.push(finding("no_valid_transition", "error", `Non-terminal node "${sourceId}" can stop when no conditional transition matches. Add an Else fallback.`, { id: sourceId }));
+        findings.push(finding("no_valid_transition", "error", `Non-terminal ${validationNodeLabel(project, sourceId)} can stop when no conditional transition matches. Add an Else fallback.`, { id: sourceId }));
       }
     });
   });

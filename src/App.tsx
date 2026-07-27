@@ -3,6 +3,7 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   SelectionMode,
@@ -36,7 +37,7 @@ import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
 import { ConnectPanel } from "./components/ConnectPanel.js";
 import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
-import { nodeTypes } from "./components/StoryNode.js";
+import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
 import { Topbar } from "./components/Topbar.js";
 import { FeedbackModal } from "./components/FeedbackModal.js";
 import { UniverseIconFrame } from "./components/UniverseIconFrame.js";
@@ -97,9 +98,11 @@ import {
   ImagePlus,
   Info,
   Link,
+  LayoutGrid,
   MapPin,
   Maximize2,
   MessageSquare,
+  MoreHorizontal,
   MousePointerClick,
   Minimize2,
   Moon,
@@ -136,6 +139,7 @@ import {
   type ReactNode,
   type ReactElement,
 } from "react";
+import { createPortal } from "react-dom";
 import type {
   Branch,
   BranchingProject,
@@ -227,6 +231,7 @@ import {
   updateLocalizedEntry,
 } from "./localization.js";
 import { UNKNOWN_SPEAKER_REF } from "./speakerRoles.js";
+import { automaticNarrativeName } from "./narrativeNaming.js";
 import * as mutations from "./projectMutations.js";
 import {
   exportRuntimeDialog,
@@ -320,7 +325,10 @@ import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, r
 import { validateProject } from "./validate.js";
 import {
   buildStoryCanvasModel,
+  DIRECTION_BEAT_NODE_HEIGHT,
+  fitSubcanvasWorkspaceBounds,
   layoutSubcanvasNodes,
+  SPEECH_BEAT_NODE_HEIGHT,
   validateStoryCanvasEdges,
   type PathBranchingFileItem,
   type StoryCanvasEdge,
@@ -828,6 +836,80 @@ type ConnectedNarrativeNodeKind =
   | "directionBeat"
   | "dialogueStart";
 
+type DialoguePresetSpeakerOption = {
+  id: string;
+  label: string;
+  portraitUrl?: string;
+  variants: Array<{ id: string; label: string; portraitUrl?: string }>;
+};
+
+function recentDialoguePresets(
+  nodes: StoryCanvasNode[],
+  edges: StoryCanvasEdge[],
+  sourceNodeId: string,
+  canonRefs: CanonRef[],
+  speakerOptions: DialoguePresetSpeakerOption[],
+): DialoguePreset[] {
+  const incoming = new Map<string, string[]>();
+  edges.forEach((edgeItem) => {
+    const sources = incoming.get(edgeItem.target) ?? [];
+    sources.push(edgeItem.source);
+    incoming.set(edgeItem.target, sources);
+  });
+
+  // Walk backwards from the node whose connector is open. This keeps the
+  // order authoring-relevant: the current line first, then connected lines
+  // that lead into it, instead of relying on canvas coordinates.
+  const orderedNodeIds: string[] = [];
+  const visited = new Set<string>();
+  const queue = [sourceNodeId];
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    if (!nodeId || visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    orderedNodeIds.push(nodeId);
+    (incoming.get(nodeId) ?? []).forEach((sourceId) => {
+      if (!visited.has(sourceId)) queue.push(sourceId);
+    });
+  }
+
+  // If the source is a direction beat or the graph is only partially
+  // connected, still offer the other speech beats already authored in this
+  // space as a useful fallback.
+  nodes.forEach((node) => {
+    if (!visited.has(node.id)) orderedNodeIds.push(node.id);
+  });
+
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const presets: DialoguePreset[] = [];
+  const seenPresets = new Set<string>();
+  orderedNodeIds.forEach((nodeId) => {
+    if (presets.length >= 3) return;
+    const node = nodeById.get(nodeId);
+    if (node?.data.kind !== "speechBeat") return;
+    const block = node.data.details?.block as ScriptBlock | undefined;
+    const characterRef = block?.characterRef ?? block?.speakerRef;
+    if (!characterRef || characterRef === UNKNOWN_SPEAKER_REF) return;
+    const speaker = speakerOptions.find((option) => option.id === characterRef);
+    const canonRef = canonRefs.find((ref) => ref.id === characterRef);
+    const characterVariantId = canonRef
+      ? resolveCanonVariantId(canonRef, block?.characterVariantId)
+      : block?.characterVariantId ?? "base";
+    const presetKey = `${characterRef}:${characterVariantId}`;
+    if (seenPresets.has(presetKey)) return;
+    seenPresets.add(presetKey);
+    const variant = speaker?.variants.find((option) => option.id === characterVariantId);
+    presets.push({
+      characterRef,
+      characterVariantId,
+      label: speaker?.label ?? characterRef,
+      variantLabel: variant?.label,
+      portraitUrl: variant?.portraitUrl ?? speaker?.portraitUrl,
+    });
+  });
+  return presets;
+}
+
 function snapCanvasPoint(
   point: CanvasPoint,
   snapToGrid: boolean,
@@ -1171,6 +1253,7 @@ function isPointInside(node: StoryCanvasNode, x: number, y: number) {
 }
 
 type CanvasRect = { x: number; y: number; width: number; height: number };
+type NestedLayoutMode = "grid" | "linear";
 
 const DEFAULT_CANVAS_NODE_SIZE = { width: 230, height: 126 };
 const CANVAS_NODE_GAP = 24;
@@ -1182,15 +1265,188 @@ function canvasNodeSize(node: StoryCanvasNode): { width: number; height: number 
   };
 }
 
+function isNestedLayoutMovableNode(node: StoryCanvasNode) {
+  return !["workspace", "boundary", "endAdder"].includes(node.data.kind);
+}
+
+function canvasReadingOrder(left: StoryCanvasNode, right: StoryCanvasNode) {
+  return left.position.y - right.position.y || left.position.x - right.position.x || left.id.localeCompare(right.id);
+}
+
+/**
+ * Produces a stable narrative order for the subcanvas. The canvas positions
+ * are only a fallback: authored transitions are the source of truth, so a
+ * director beat reached from a speech beat always follows it in a grid pass.
+ */
+function narrativeGridOrder(nodes: StoryCanvasNode[], edges: StoryCanvasEdge[]) {
+  const movable = nodes
+    .filter((node) => !["workspace", "boundary", "endAdder"].includes(node.data.kind))
+    .slice();
+  const movableIds = new Set(movable.map((node) => node.id));
+  const nodeById = new Map(movable.map((node) => [node.id, node]));
+  const inboundCounts = new Map(movable.map((node) => [node.id, 0]));
+  const outgoing = new Map<string, StoryCanvasEdge[]>();
+  const entryTargets = new Set<string>();
+
+  edges.forEach((edge) => {
+    if (movableIds.has(edge.target) && !movableIds.has(edge.source)) {
+      entryTargets.add(edge.target);
+    }
+    if (!movableIds.has(edge.source) || !movableIds.has(edge.target) || edge.source === edge.target) {
+      return;
+    }
+    inboundCounts.set(edge.target, (inboundCounts.get(edge.target) ?? 0) + 1);
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge]);
+  });
+
+  const orderTargets = (left: StoryCanvasEdge, right: StoryCanvasEdge) => {
+    const leftOrder = Number(left.data?.order ?? 0);
+    const rightOrder = Number(right.data?.order ?? 0);
+    const orderDifference = (Number.isFinite(leftOrder) ? leftOrder : 0) - (Number.isFinite(rightOrder) ? rightOrder : 0);
+    if (orderDifference) return orderDifference;
+    return canvasReadingOrder(nodeById.get(left.target)!, nodeById.get(right.target)!);
+  };
+
+  const compareReady = (leftId: string, rightId: string) => {
+    const leftIsEntry = entryTargets.has(leftId);
+    const rightIsEntry = entryTargets.has(rightId);
+    if (leftIsEntry !== rightIsEntry) return leftIsEntry ? -1 : 1;
+    return canvasReadingOrder(nodeById.get(leftId)!, nodeById.get(rightId)!);
+  };
+  const queue = movable
+    .filter((node) => inboundCounts.get(node.id) === 0)
+    .map((node) => node.id)
+    .sort(compareReady);
+  const orderedIds: string[] = [];
+  const visited = new Set<string>();
+
+  while (queue.length) {
+    const currentId = queue.shift()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
+    orderedIds.push(currentId);
+    const nextReady: string[] = [];
+    [...(outgoing.get(currentId) ?? [])].sort(orderTargets).forEach((edge) => {
+      const nextInboundCount = (inboundCounts.get(edge.target) ?? 1) - 1;
+      inboundCounts.set(edge.target, nextInboundCount);
+      if (nextInboundCount === 0) nextReady.push(edge.target);
+    });
+    // Keep a linear chain contiguous in the grid. Other roots and branches
+    // remain queued after the active route, while still respecting all inputs.
+    queue.unshift(...nextReady);
+  }
+
+  return [
+    ...orderedIds.map((id) => nodeById.get(id)!),
+    ...movable.filter((node) => !visited.has(node.id)).sort(canvasReadingOrder),
+  ];
+}
+
+function nestedGridLayoutPositions(
+  nodes: StoryCanvasNode[],
+  edges: StoryCanvasEdge[],
+  columns: number,
+  horizontalGapCells: number,
+  verticalGapCells: number,
+  gridSize: number,
+  selectedNodeIds: string[] = [],
+) {
+  const selectedIds = new Set(selectedNodeIds);
+  const movable = narrativeGridOrder(
+    nodes.filter((node) => isNestedLayoutMovableNode(node) && (!selectedIds.size || selectedIds.has(node.id))),
+    edges,
+  );
+  if (!movable.length) return new Map<string, CanvasPoint>();
+
+  const safeColumns = Math.max(1, Math.round(columns));
+  const safeGrid = Math.max(1, gridSize);
+  const horizontalGap = Math.max(0, horizontalGapCells) * safeGrid;
+  const verticalGap = Math.max(0, verticalGapCells) * safeGrid;
+  const rowCount = Math.ceil(movable.length / safeColumns);
+  const columnWidths = Array.from({ length: Math.min(safeColumns, movable.length) }, () => 0);
+  const rowHeights = Array.from({ length: rowCount }, () => 0);
+  movable.forEach((node, index) => {
+    const size = canvasNodeSize(node);
+    const column = index % safeColumns;
+    const row = Math.floor(index / safeColumns);
+    columnWidths[column] = Math.max(columnWidths[column], size.width);
+    rowHeights[row] = Math.max(rowHeights[row], size.height);
+  });
+  const workspace = nodes.find((node) => node.data.kind === "workspace");
+  const minX = Math.min(...movable.map((node) => node.position.x));
+  const minY = Math.min(...movable.map((node) => node.position.y));
+  const originX = workspace ? workspace.position.x + safeGrid * 2 : minX;
+  const originY = workspace ? workspace.position.y + safeGrid * 2 : minY;
+  const columnOffsets = columnWidths.reduce<number[]>((offsets, width, index) => {
+    offsets.push(index === 0 ? 0 : offsets[index - 1] + columnWidths[index - 1] + horizontalGap);
+    return offsets;
+  }, []);
+  const rowOffsets = rowHeights.reduce<number[]>((offsets, height, index) => {
+    offsets.push(index === 0 ? 0 : offsets[index - 1] + rowHeights[index - 1] + verticalGap);
+    return offsets;
+  }, []);
+  return new Map(movable.map((node, index) => {
+    const column = index % safeColumns;
+    const row = Math.floor(index / safeColumns);
+    const size = canvasNodeSize(node);
+    // Speech beats define the visual rhythm of a row. A direction beat is
+    // deliberately shorter, so center it against that rhythm instead of
+    // leaving its top edge aligned with the speech card.
+    const directionBeatOffset = node.data.kind === "directionBeat"
+      ? Math.max(0, (rowHeights[row] - size.height) / 2)
+      : 0;
+    return [node.id, snapCanvasPoint({
+      x: originX + columnOffsets[column],
+      y: originY + rowOffsets[row] + directionBeatOffset,
+    }, true, safeGrid)];
+  }));
+}
+
+function nestedLinearLayoutPositions(
+  nodes: StoryCanvasNode[],
+  edges: StoryCanvasEdge[],
+  horizontalGapCells: number,
+  gridSize: number,
+  selectedNodeIds: string[] = [],
+) {
+  const selectedIds = new Set(selectedNodeIds);
+  const movable = narrativeGridOrder(
+    nodes.filter((node) => isNestedLayoutMovableNode(node) && (!selectedIds.size || selectedIds.has(node.id))),
+    edges,
+  );
+  if (!movable.length) return new Map<string, CanvasPoint>();
+
+  const safeGrid = Math.max(1, gridSize);
+  const horizontalGap = Math.max(0, horizontalGapCells) * safeGrid;
+  const workspace = nodes.find((node) => node.data.kind === "workspace");
+  const minX = Math.min(...movable.map((node) => node.position.x));
+  const minY = Math.min(...movable.map((node) => node.position.y));
+  const originX = workspace ? workspace.position.x + safeGrid * 2 : minX;
+  const originY = workspace ? workspace.position.y + safeGrid * 2 : minY;
+  const lineHeight = Math.max(...movable.map((node) => canvasNodeSize(node).height));
+  let cursorX = originX;
+
+  return new Map(movable.map((node) => {
+    const size = canvasNodeSize(node);
+    const directionBeatOffset = node.data.kind === "directionBeat"
+      ? Math.max(0, (lineHeight - size.height) / 2)
+      : 0;
+    const position = snapCanvasPoint({ x: cursorX, y: originY + directionBeatOffset }, true, safeGrid);
+    cursorX += size.width + horizontalGap;
+    return [node.id, position];
+  }));
+}
+
 function canvasNodeSizeForKind(kind: StoryCanvasNodeData["kind"]) {
   switch (kind) {
     case "branch":
       return { width: 390, height: 190 };
     case "decision":
-      return { width: 300, height: 170 };
+      return { width: 230, height: 170 };
     case "speechBeat":
+      return { width: 360, height: SPEECH_BEAT_NODE_HEIGHT };
     case "directionBeat":
-      return { width: 360, height: 176 };
+      return { width: 360, height: DIRECTION_BEAT_NODE_HEIGHT };
     case "dialogue":
       return { width: 230, height: 150 };
     case "dialogueStart":
@@ -1316,51 +1572,6 @@ function visibleCanvasFlowBounds(reactFlowInstance: ReactFlowInstance<any, any>)
     bottom: (rect.height - viewport.y) / viewport.zoom,
     viewport,
   };
-}
-
-const CANVAS_LAYER_TRANSITION_MS = 360;
-
-function easeCanvasLayerTransition(progress: number) {
-  const inverse = 1 - progress;
-  return 1 - inverse * inverse * inverse;
-}
-
-function interpolateCanvasNodes(
-  fromNodes: StoryCanvasNode[],
-  targetNodes: StoryCanvasNode[],
-  progress: number,
-) {
-  const fromById = new Map(fromNodes.map((node) => [node.id, node]));
-  const interpolate = (from: number | undefined, to: number | undefined) => {
-    if (typeof from !== "number" || typeof to !== "number") return to;
-    return from + (to - from) * progress;
-  };
-
-  return targetNodes.map((target) => {
-    const from = fromById.get(target.id);
-    if (!from) return target;
-
-    const width = interpolate(from.width, target.width);
-    const height = interpolate(from.height, target.height);
-    const style = from.style || target.style
-      ? {
-          ...target.style,
-          ...(typeof width === "number" ? { width } : {}),
-          ...(typeof height === "number" ? { height } : {}),
-        }
-      : undefined;
-
-    return {
-      ...target,
-      position: {
-        x: interpolate(from.position.x, target.position.x) ?? target.position.x,
-        y: interpolate(from.position.y, target.position.y) ?? target.position.y,
-      },
-      width,
-      height,
-      style,
-    };
-  });
 }
 
 function ensureCanvasNodeVisible(
@@ -6070,6 +6281,19 @@ function Inspector({
     selection?.type === "edge"
       ? edges.find((edgeItem) => edgeItem.id === selection.id)
       : undefined;
+  const selectedRouteGateNode =
+    selectedNode?.data.kind === "routeGate"
+      ? selectedNode
+      : selection?.type === "node"
+        ? nodes.find((node) => node.id === selection.id && node.data.kind === "routeGate")
+        : undefined;
+  const suppressRouteEdgeInspector = Boolean(
+    selectedEdge && (
+      selectedEdge.data?.kind === "transition" ||
+      selectedEdge.data?.kind === "boundary" ||
+      selectedEdge.id.startsWith("edge:entry:")
+    ),
+  );
   useEffect(() => {
     if (canvasLayerMode !== "logic" || !requestedLogicTab || !selection) return;
     const selectionKey = `${selection.type}:${selection.id}`;
@@ -6234,17 +6458,15 @@ function Inspector({
       )
     : undefined;
   const selectedRouteGateSourceId =
-    selectedNode?.data.kind === "routeGate" && typeof selectedNode.data.details?.routeSourceId === "string"
-      ? selectedNode.data.details.routeSourceId
-      : selection?.type === "node" && selection.id.startsWith("route-gate:")
-        ? selection.id.slice("route-gate:".length)
-        : undefined;
+    selectedRouteGateNode?.data.kind === "routeGate" && typeof selectedRouteGateNode.data.details?.routeSourceId === "string"
+      ? selectedRouteGateNode.data.details.routeSourceId
+      : undefined;
   const selectedRouteGateContext =
     selectedRouteGateSourceId
       ? (() => {
           const sourceId = selectedRouteGateSourceId;
-          const eventId = typeof selectedNode?.data.details?.eventId === "string"
-            ? selectedNode.data.details.eventId
+          const eventId = typeof selectedRouteGateNode?.data.details?.eventId === "string"
+            ? selectedRouteGateNode.data.details.eventId
             : project.events.find((eventNode) =>
                 eventNode.transitions?.some((transition) => transition.from === sourceId),
               )?.id;
@@ -6260,7 +6482,7 @@ function Inspector({
         })()
       : undefined;
   const selectedRouteGateRoute = selectedRouteGateContext?.routes.find(
-    (route) => route.id === routeGateRouteId,
+    (route) => route.id === (routeGateRouteId ?? selectedTransition?.id),
   ) ?? selectedRouteGateContext?.routes[0];
   const selectedRouteGateRouteIds = selectedRouteGateContext?.routes
     .map((route) => route.id)
@@ -6290,10 +6512,20 @@ function Inspector({
       setRouteGateRouteId(undefined);
       return;
     }
-    if (!selectedRouteGateContext.routes.some((route) => route.id === routeGateRouteId)) {
+    const preferredRouteId = routeGateRouteId ?? selectedTransition?.id;
+    if (!selectedRouteGateContext.routes.some((route) => route.id === preferredRouteId)) {
       setRouteGateRouteId(selectedRouteGateContext.routes[0].id);
+      return;
     }
-  }, [routeGateRouteId, selectedRouteGateContext?.sourceId, selectedRouteGateRouteIds]);
+    if (routeGateRouteId !== preferredRouteId) {
+      setRouteGateRouteId(preferredRouteId);
+    }
+  }, [routeGateRouteId, selectedRouteGateContext?.sourceId, selectedRouteGateRouteIds, selectedTransition?.id]);
+  useEffect(() => {
+    if (selection?.type === "edge" && selectedTransition && selectedRouteGateContext) {
+      setRouteGateRouteId(selectedTransition.id);
+    }
+  }, [selection?.id, selection?.type, selectedRouteGateContext?.sourceId, selectedTransition?.id]);
   useEffect(() => {
     setObjectInspectorTab("overview");
   }, [selection?.type, selection?.id]);
@@ -6319,12 +6551,6 @@ function Inspector({
           return beat && block ? { eventId, dialogueId, beat, block } : undefined;
         })()
       : undefined;
-  const selectedDialogueFirstBeat = selectedDialogueContext?.dialogue?.beats?.[0];
-  const selectedDialogueFirstBlock = selectedDialogueFirstBeat
-    ? project.scriptDocuments
-        ?.find((script) => script.id === selectedDialogueFirstBeat.blockRef.scriptId)
-        ?.blocks.find((block) => block.id === selectedDialogueFirstBeat.blockRef.blockId)
-    : undefined;
   const isParentCanvas = scope?.kind !== "event";
   const selectedDataClass = selectedDataObject
     ? project.dataClasses?.find(
@@ -6349,7 +6575,9 @@ function Inspector({
   const selectedDialogueEvent = selectedDialogueContext
     ? findEvent(project, selectedDialogueContext.eventId)
     : undefined;
-  const selectedDialoguePresentEntityRefs = selectedDialogueEvent?.presentEntityRefs ?? selectedDialogueEvent?.canonRefs ?? [];
+  const selectedDialogueSequence = selectedDialogueEvent
+    ? project.sequences.find((candidate) => candidate.eventIds.includes(selectedDialogueEvent.id))
+    : undefined;
   const selectedTriggerEvent = selectedDialogueStartContext
     ? findEvent(project, selectedDialogueStartContext.eventId)
     : undefined;
@@ -6458,7 +6686,7 @@ function Inspector({
 
   return (
     <aside className={`canvas-inspector ${embedded ? "embedded" : ""}`}>
-      {!embedded && !selectedRouteGateContext ? (
+      {!embedded && !selectedRouteGateContext && !suppressRouteEdgeInspector ? (
         <div className="inspector-header inspector-object-header">
           <div className="inspector-object-identity">
             <span className="inspector-object-icon" aria-hidden="true">
@@ -7300,7 +7528,15 @@ function Inspector({
 
         {selectedDialogueContext?.dialogue ? (
           <>
-            <InspectorContentTabs value={objectInspectorTab} onChange={setObjectInspectorTab} tabs={[{ id: "overview", label: "Overview" }, ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : [])]} />
+            <InspectorContentTabs
+              value={objectInspectorTab}
+              onChange={setObjectInspectorTab}
+              tabs={[
+                { id: "overview", label: "Overview" },
+                { id: "narrativeSequence", label: "Narrative Sequence" },
+                ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : []),
+              ]}
+            />
             {objectInspectorTab === "overview" ? (
             <section className="inspector-section">
               <h2>Dialogue</h2>
@@ -7319,90 +7555,51 @@ function Inspector({
                   }
                 />
               </label>
-              <CanonEntityRefPicker
-                value={selectedDialogueFirstBlock?.characterRef ?? selectedDialogueFirstBlock?.speakerRef}
-                canonRefs={project.canonRefs}
-                presentEntityRefs={selectedDialoguePresentEntityRefs}
-                onChange={(characterRef) => {
-                  if (!selectedDialogueFirstBeat) return;
-                  onUpdateScriptBlock(
-                    selectedDialogueFirstBeat.blockRef.scriptId,
-                    selectedDialogueFirstBeat.blockRef.blockId,
-                    { characterRef, characterVariantId: undefined },
-                  );
-                  if (characterRef && selectedDialogueEvent && !selectedDialoguePresentEntityRefs.includes(characterRef)) {
-                    onUpdateEvent(selectedDialogueEvent.id, {
-                      presentEntityRefs: [...selectedDialoguePresentEntityRefs, characterRef],
-                    });
-                  }
-                }}
-              />
-              {(() => {
-                const characterRef = selectedDialogueFirstBlock?.characterRef ?? selectedDialogueFirstBlock?.speakerRef;
-                const canonRef = project.canonRefs.find((ref) => ref.id === characterRef);
-                const variants = canonRef ? canonVariantsForRef(canonRef) : [];
-                return canonRef && selectedDialogueFirstBeat && variants.length > 1 ? (
-                  <label className="field-label">
-                    Character variant
-                    <select
-                      value={resolveCanonVariantId(canonRef, selectedDialogueFirstBlock?.characterVariantId)}
-                      onChange={(event) =>
-                        onUpdateScriptBlock(
-                          selectedDialogueFirstBeat.blockRef.scriptId,
-                          selectedDialogueFirstBeat.blockRef.blockId,
-                          { characterVariantId: event.target.value === "base" ? undefined : event.target.value },
-                        )
-                      }
-                    >
-                      {variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}
-                    </select>
-                  </label>
-                ) : null;
-              })()}
               <label className="field-label">
-                Text
+                Description
                 <textarea
-                  value={selectedDialogueFirstBlock?.content ?? ""}
+                  value={selectedDialogueContext.dialogue.text.content}
                   rows={5}
                   onChange={(inputEvent) =>
-                    selectedDialogueFirstBeat &&
-                    onUpdateScriptBlock(
-                      selectedDialogueFirstBeat.blockRef.scriptId,
-                      selectedDialogueFirstBeat.blockRef.blockId,
-                      { content: inputEvent.target.value },
+                    onUpdateDialogue(
+                      selectedDialogueContext.eventId,
+                      selectedDialogueContext.dialogue!.id,
+                      {
+                        text: {
+                          ...selectedDialogueContext.dialogue!.text,
+                          content: inputEvent.target.value,
+                        },
+                      },
                     )
                   }
                 />
               </label>
               <p className="inspector-connection-hint">
-                Quick edit for the first beat. Double-click this node to open the full dialogue canvas.
+                Double-click this node to open the full dialogue canvas.
               </p>
-              <CanonRefsPicker
-                value={selectedDialogueContext.dialogue.canonRefs}
-                canonRefs={project.canonRefs}
-                onChange={(canonRefs) =>
-                  onUpdateDialogue(
-                    selectedDialogueContext.eventId,
-                    selectedDialogueContext.dialogue!.id,
-                    {
-                      canonRefs,
-                    },
-                  )
-                }
-              />
-              <button
-                type="button"
-                className="danger"
-                onClick={() =>
-                  onDeleteDialogue(
-                    selectedDialogueContext.eventId,
-                    selectedDialogueContext.dialogue!.id,
-                  )
-                }
-              >
-                Delete
-              </button>
             </section>
+            ) : null}
+            {objectInspectorTab === "narrativeSequence" ? (
+              <section className="inspector-section">
+                <h2>Narrative Sequence</h2>
+                {selectedDialogueEvent ? (
+                  <>
+                    <p className="inspector-connection-hint">
+                      {selectedDialogueSequence
+                        ? `${selectedDialogueSequence.name} · ${selectedDialogueEvent.name}`
+                        : selectedDialogueEvent.name}
+                      {" · EVPATH"}
+                    </p>
+                    <EvpathEditor
+                      project={project}
+                      eventId={selectedDialogueEvent.id}
+                      onApply={onApplyEvpath}
+                    />
+                  </>
+                ) : (
+                  <span className="empty-line">No containing narrative sequence found.</span>
+                )}
+              </section>
             ) : null}
             {objectInspectorTab === "logic" ? <InDevelopmentPlaceholder title="Dialogue logic" /> : null}
           </>
@@ -7728,7 +7925,7 @@ function Inspector({
           </section>
         ) : null}
 
-        {selectedEdge ? (
+        {selectedEdge && !selectedRouteGateContext && !suppressRouteEdgeInspector ? (
           <>
             {selectedTransition && canvasLayerMode === "logic" ? (
               <nav className="inspector-subtabs" aria-label="Transition inspector sections">
@@ -9147,6 +9344,8 @@ function StoryCanvas({
   expandedInspectorTabId,
   inspectorMaximized,
   canvasBackground,
+  minimapOpen,
+  onMinimapOpenChange,
   canvasLayerMode,
   onCanvasLayerModeChange,
   onCanvasBackgroundChange,
@@ -9198,12 +9397,12 @@ function StoryCanvas({
   onCreateBoundaryEnd,
   onDeleteBoundaryEnd,
   onWorkspaceBoundsChange,
+  onArrangeScopeNodes,
   onDeleteTransition,
   onCreateScriptTransition,
   onRemoveMissingEventReference,
   onRemoveBoundaryBinding,
   onNormalizeTransitionOrder,
-  onInsertRouteGate,
   onDeleteScriptBlock,
   onFocusScriptBlock,
   onCreateCanonSuggestion,
@@ -9284,6 +9483,8 @@ function StoryCanvas({
   expandedInspectorTabId?: string;
   inspectorMaximized: boolean;
   canvasBackground: CanvasBackgroundSettings;
+  minimapOpen: boolean;
+  onMinimapOpenChange: (open: boolean) => void;
   canvasLayerMode: CanvasLayerMode;
   onCanvasLayerModeChange: (mode: CanvasLayerMode) => void;
   onCanvasBackgroundChange: (updates: Partial<CanvasBackgroundSettings>) => void;
@@ -9324,6 +9525,7 @@ function StoryCanvas({
     kind: ConnectedNarrativeNodeKind,
     position: CanvasPoint,
     sourceHandleId?: string,
+    preset?: Pick<DialoguePreset, "characterRef" | "characterVariantId">,
   ) => void;
   onCreateConnectedEvent: (
     sourceNodeId: string,
@@ -9387,6 +9589,13 @@ function StoryCanvas({
     bounds: SubcanvasWorkspaceBounds,
     persist: boolean,
   ) => void;
+  onArrangeScopeNodes: (options: {
+    mode: NestedLayoutMode;
+    columns: number;
+    horizontalGapCells: number;
+    verticalGapCells: number;
+    selectedNodeIds?: string[];
+  }) => void;
   onDeleteTransition: (transitionId: string) => void;
   onCreateScriptTransition?: (eventId: string, from: string, to: string) => void;
   onRemoveMissingEventReference: (
@@ -9395,7 +9604,6 @@ function StoryCanvas({
   ) => void;
   onRemoveBoundaryBinding: (bindingId: string) => void;
   onNormalizeTransitionOrder: (sourceId: string) => void;
-  onInsertRouteGate: (sourceId: string) => void;
   onDeleteScriptBlock: (blockKey: string) => void;
   onFocusScriptBlock: (target: { scriptId: string; blockId: string }) => void;
   onCreateCanonSuggestion: (
@@ -9477,6 +9685,8 @@ function StoryCanvas({
     edgeId: string;
     timer?: number;
   } | undefined>(undefined);
+  const connectionGestureRef = useRef(false);
+  const suppressNodeInspectorUntilRef = useRef(0);
   const directedNodeHoldRef = useRef<{
     nodeId: string;
     timer: number;
@@ -9492,9 +9702,32 @@ function StoryCanvas({
   const [editingEdgeId, setEditingEdgeId] = useState<string>();
   const [draggingEvent, setDraggingEvent] = useState(false);
   const [directedNodeOpening, setDirectedNodeOpening] = useState(true);
-  const [minimapOpen, setMinimapOpen] = useState(true);
+  const [canvasToolsOpen, setCanvasToolsOpen] = useState(false);
+  const canvasToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [canvasToolsPosition, setCanvasToolsPosition] = useState({ left: 0, top: 0 });
+  const [autoFitPaddingGridPoints, setAutoFitPaddingGridPoints] = useState(5);
+  const [gridLayoutColumns, setGridLayoutColumns] = useState(5);
+  const [gridLayoutHorizontalGap, setGridLayoutHorizontalGap] = useState(3);
+  const [gridLayoutVerticalGap, setGridLayoutVerticalGap] = useState(3);
+  const [nestedLayoutMode, setNestedLayoutMode] = useState<NestedLayoutMode>("grid");
   const [canvasLocale, setCanvasLocale] = useState(primaryLocale);
   const [canvasLocaleMenuOpen, setCanvasLocaleMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!canvasToolsOpen) return;
+    const syncCanvasToolsPosition = () => {
+      const rect = canvasToolsTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setCanvasToolsPosition({ left: rect.right + 8, top: rect.bottom });
+    };
+    syncCanvasToolsPosition();
+    window.addEventListener("resize", syncCanvasToolsPosition);
+    window.addEventListener("scroll", syncCanvasToolsPosition, true);
+    return () => {
+      window.removeEventListener("resize", syncCanvasToolsPosition);
+      window.removeEventListener("scroll", syncCanvasToolsPosition, true);
+    };
+  }, [canvasToolsOpen]);
 
   useEffect(() => {
     if (contextMenu) {
@@ -9718,6 +9951,11 @@ function StoryCanvas({
                     width: node.width ?? 720,
                     height: node.height ?? 460,
                   },
+                  minBounds: fitSubcanvasWorkspaceBounds(
+                    nodes,
+                    autoFitPaddingGridPoints,
+                    canvasBackground.gridSize,
+                  ),
                   onPreview: (bounds: SubcanvasWorkspaceBounds) =>
                     onWorkspaceBoundsChange(activeScope, bounds, false),
                   onCommit: (bounds: SubcanvasWorkspaceBounds) =>
@@ -9733,6 +9971,7 @@ function StoryCanvas({
             activeScope?.kind === "event" &&
             node.data.kind === "boundary" &&
             node.data.details?.direction === "output" &&
+            node.data.details?.restart !== true &&
             typeof node.data.details?.eventId === "string"
               ? (() => {
                   const eventId = node.data.details.eventId;
@@ -9825,6 +10064,35 @@ function StoryCanvas({
                     : lengthTarget.unit === "words"
                       ? activeText.trim() ? activeText.trim().split(/\s+/u).length : 0
                       : Array.from(activeText).length;
+                  const speakerOptions: DialoguePresetSpeakerOption[] = project.canonRefs
+                    .filter((canonRef) => canonRefIsEntityPresentable(project, propertiesConfig, canonRef))
+                    .map((canonRef) => {
+                      const variants = canonVariantsForRef(canonRef).map((variant) => {
+                        const portrait = canonPresentationImageForRef(
+                          propertiesConfig,
+                          { ...canonRef, frontmatter: resolveCanonVariantFrontmatter(canonRef, variant.id) },
+                          "portrait",
+                        );
+                        return {
+                          ...variant,
+                          portraitUrl: portrait ? canonVaultImageUrl(project, portrait.value) : undefined,
+                        };
+                      });
+                      const portrait = variants.find((variant) => variant.id === "base")?.portraitUrl;
+                      return {
+                        id: canonRef.id,
+                        label: canonRef.label ?? canonRef.id,
+                        portraitUrl: portrait,
+                        variants,
+                      };
+                    });
+                  const dialoguePresets = recentDialoguePresets(
+                    nodes,
+                    edges,
+                    node.id,
+                    project.canonRefs,
+                    speakerOptions,
+                  );
                   return {
                     values: block ? blockValues(project, blockRef.scriptId, block, primaryLocale) : {},
                     directorNote: beat.directorNote ?? "",
@@ -9859,28 +10127,7 @@ function StoryCanvas({
                       ? (updates: Partial<SpeechBeatCounterPreference>) => onUpdateSpeechBeatCounter(updates)
                       : undefined,
                     presentEntityIds: presentEntityRefs,
-                    speakerOptions: project.canonRefs
-                      .filter((canonRef) => canonRefIsEntityPresentable(project, propertiesConfig, canonRef))
-                      .map((canonRef) => {
-                        const variants = canonVariantsForRef(canonRef).map((variant) => {
-                          const portrait = canonPresentationImageForRef(
-                            propertiesConfig,
-                            { ...canonRef, frontmatter: resolveCanonVariantFrontmatter(canonRef, variant.id) },
-                            "portrait",
-                          );
-                          return {
-                            ...variant,
-                            portraitUrl: portrait ? canonVaultImageUrl(project, portrait.value) : undefined,
-                          };
-                        });
-                        const portrait = variants.find((variant) => variant.id === "base")?.portraitUrl;
-                        return {
-                          id: canonRef.id,
-                          label: canonRef.label ?? canonRef.id,
-                          portraitUrl: portrait,
-                          variants,
-                        };
-                      }),
+                    speakerOptions,
                     onTextUpdate: (locale: string, value: string) => onUpdateLocalizedText(textKey, locale, value),
                     onDirectorNoteUpdate: (value: string) => {
                       const dialogueId = typeof node.data.details?.dialogueId === "string"
@@ -9922,12 +10169,13 @@ function StoryCanvas({
                       onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, {
                         characterVariantId: characterVariantId === "base" ? undefined : characterVariantId,
                       }),
-                    beatConnector:
-                      node.data.kind === "speechBeat" &&
+                    narrativeConnector:
+                      (node.data.kind === "speechBeat" || node.data.kind === "directionBeat") &&
                       activeScope &&
                       (activeScope.kind === "event" || activeScope.kind === "dialogue")
                         ? {
-                            onConnect: (kind: "speechBeat" | "decision" | "directionBeat") => {
+                            dialoguePresets,
+                            onConnect: (kind: "speechBeat" | "decision" | "directionBeat", preset?: DialoguePreset) => {
                               const position = connectedNarrativeNodePosition(
                                 nodes,
                                 node,
@@ -9942,18 +10190,11 @@ function StoryCanvas({
                                 node.id,
                                 kind,
                                 position,
+                                undefined,
+                                preset,
                               );
                             },
-                            onInsertConditions: canvasLayerMode === "logic" && edges.some((item) => item.data?.routeSourceId === node.id)
-                              ? () => {
-                                  const routeEdge = edges.find((item) => item.data?.routeSourceId === node.id);
-                                  if (!routeEdge) return;
-                                  const edgeSelection = { type: "edge" as const, id: routeEdge.id };
-                                  setLogicFocus({ selectionKey: `edge:${routeEdge.id}`, part: "conditions" });
-                                  onCanvasSelect(edgeSelection);
-                                  onOpenCanvasInspector(edgeSelection);
-                                }
-                              : undefined,
+                            onInsertConditions: undefined,
                           }
                         : undefined,
                   };
@@ -9984,14 +10225,10 @@ function StoryCanvas({
               ? (label: string) => commitEdgeLabel(edgeItem.id, label)
               : undefined,
             onCancelLabel: editable ? () => setEditingEdgeId(undefined) : undefined,
-            onOpenLogicPart: canvasLayerMode === "logic"
-              ? (part: "conditions" | "consequences") => {
-                  const edgeSelection = { type: "edge" as const, id: edgeItem.id };
-                  setLogicFocus({ selectionKey: `edge:${edgeItem.id}`, part });
-                  onCanvasSelect(edgeSelection);
-                  onOpenCanvasInspector(edgeSelection);
-                }
-              : undefined,
+            // Route configuration belongs to the Gate. Edges remain
+            // selectable only as deletion targets, never as inspector entry
+            // points.
+            onOpenLogicPart: undefined,
           },
         };
       }),
@@ -10350,9 +10587,10 @@ function StoryCanvas({
     (event: ReactMouseEvent, edgeItem: StoryCanvasEdge) => {
       event.preventDefault();
       event.stopPropagation();
-      if (edgeItem.data?.kind !== "transition" || typeof edgeItem.data.routeSourceId !== "string") {
-        return;
-      }
+      // Transition lines are deliberately inert: configure split routes from
+      // their Logic Gate, rather than from an edge menu or inspector.
+      if (edgeItem.data?.kind === "transition") return;
+      if (typeof edgeItem.data?.routeSourceId !== "string") return;
       contextMenuFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
         ? document.activeElement
         : shellRef.current;
@@ -10458,6 +10696,26 @@ function StoryCanvas({
     [reactFlowInstance],
   );
 
+  const beginConnectionGesture = useCallback(() => {
+    connectionGestureRef.current = true;
+    // A handle drag is a connection gesture, never a long press on either
+    // endpoint. Keep the suppression through the trailing click event too.
+    suppressNodeInspectorUntilRef.current = Date.now() + 500;
+    clearDirectedNodeHold();
+    clearPendingNodeClick();
+  }, [clearDirectedNodeHold, clearPendingNodeClick]);
+
+  const finishConnectionGesture = useCallback<OnConnectEnd>(
+    (event, connectionState) => {
+      connectionGestureRef.current = false;
+      suppressNodeInspectorUntilRef.current = Date.now() + 500;
+      clearDirectedNodeHold();
+      clearPendingNodeClick();
+      openConnectionCreateMenu(event, connectionState);
+    },
+    [clearDirectedNodeHold, clearPendingNodeClick, openConnectionCreateMenu],
+  );
+
   const eventTypeOptions: EventCategoryDefinition[] =
     (project.eventCategories?.length ?? 0) > 0
       ? (project.eventCategories ?? [])
@@ -10466,6 +10724,18 @@ function StoryCanvas({
           { id: "final", label: "Final", terminal: true },
         ];
   const isNestedCanvas = activeScope?.kind === "event" || activeScope?.kind === "dialogue";
+  const selectedLayoutNodeIds = nodes
+    .filter((node) => node.selected && isNestedLayoutMovableNode(node))
+    .map((node) => node.id);
+  const fitNestedCanvasWorkspace = useCallback(() => {
+    if (!activeScope || activeScope.kind === "sequence") return;
+    const bounds = fitSubcanvasWorkspaceBounds(
+      nodes,
+      autoFitPaddingGridPoints,
+      canvasBackground.gridSize,
+    );
+    onWorkspaceBoundsChange(activeScope, bounds, true);
+  }, [activeScope, autoFitPaddingGridPoints, canvasBackground.gridSize, nodes, onWorkspaceBoundsChange]);
   const minimapNodeColor = useCallback((node: StoryCanvasNode) => {
     if (node.data.kind === "workspace") return "var(--wn-editor-bg)";
     if (typeof node.data.minimapColor === "string")
@@ -10527,7 +10797,8 @@ function StoryCanvas({
         event.button !== 0 ||
         event.shiftKey ||
         node.data.kind === "workspace" ||
-        (event.target instanceof Element && event.target.closest("input, textarea, select, button, [contenteditable=\"true\"]"))
+        connectionGestureRef.current ||
+        (event.target instanceof Element && event.target.closest("input, textarea, select, button, [contenteditable=\"true\"], .react-flow__handle"))
       ) {
         return;
       }
@@ -10683,10 +10954,11 @@ function StoryCanvas({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectStart={beginConnectionGesture}
           selectionOnDrag
           selectionMode={SelectionMode.Partial}
           panOnDrag={[1]}
-          onConnectEnd={openConnectionCreateMenu}
+          onConnectEnd={finishConnectionGesture}
           onInit={setReactFlowInstance}
           onNodeDrag={(_, node) => {
             clearDirectedNodeHold();
@@ -10705,7 +10977,8 @@ function StoryCanvas({
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
             if (node.data.kind === "workspace") return;
-            if (event.target instanceof Element && event.target.closest("input, textarea, select, button, [contenteditable=\"true\"]")) return;
+            if (connectionGestureRef.current || Date.now() < suppressNodeInspectorUntilRef.current) return;
+            if (event.target instanceof Element && event.target.closest("input, textarea, select, button, [contenteditable=\"true\"], .react-flow__handle")) return;
             if (draggedNodeRef.current || event.shiftKey) return;
             const nodeSelection = { type: "node" as const, id: node.id };
             const clickCount = Math.max(event.detail || 1, 1);
@@ -10739,18 +11012,17 @@ function StoryCanvas({
           onEdgeClick={(event, edgeItem) => {
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
-            const edgeSelection = { type: "edge" as const, id: edgeItem.id };
-            onCanvasSelect(edgeSelection);
-            if (isNestedCanvas) {
-              clearPendingEdgeClick();
-              const timer = window.setTimeout(() => {
-                onOpenCanvasInspector(edgeSelection);
-                pendingEdgeClickRef.current = undefined;
-              }, NESTED_EDGE_INSPECTOR_OPEN_DELAY_MS);
-              pendingEdgeClickRef.current = { edgeId: edgeItem.id, timer };
-            } else {
-              onOpenCanvasInspector(edgeSelection);
-            }
+            clearPendingEdgeClick();
+            const removable =
+              edgeItem.id.startsWith("edge:transition:") ||
+              edgeItem.id.startsWith("edge:boundary:") ||
+              edgeItem.id.startsWith("edge:dialogue-entry:") ||
+              edgeItem.id.startsWith("edge:entry:");
+            if (!removable) return;
+            event.stopPropagation();
+            // Do not route through onOpenCanvasInspector: this selection is
+            // solely a keyboard target for Delete / Backspace.
+            onCanvasSelect({ type: "edge", id: edgeItem.id });
           }}
           onEdgeContextMenu={openEdgeContextMenu}
           onPaneClick={() => {
@@ -10785,31 +11057,89 @@ function StoryCanvas({
               position="bottom-left"
             />
           ) : null}
+          {isNestedCanvas ? (
+            <Panel position="top-left" className="canvas-advanced-tools">
+              <div className="canvas-advanced-tool">
+                <button type="button" className="canvas-advanced-tools-trigger" title="Adapt canvas size" aria-label="Adapt canvas size">
+                  <Maximize2 size={15} aria-hidden="true" />
+                </button>
+                <div className="canvas-advanced-tools-popover nodrag nopan">
+                  <strong>Adapt canvas size</strong>
+                  <span>Espacio alrededor de los nodos</span>
+                  <label><input type="number" min={0} max={24} step={1} value={autoFitPaddingGridPoints} onChange={(event) => setAutoFitPaddingGridPoints(Math.min(24, Math.max(0, Number(event.target.value) || 0)))} /><em>puntos de grid</em></label>
+                  <button type="button" onClick={fitNestedCanvasWorkspace}>Configurar</button>
+                </div>
+              </div>
+              <div className="canvas-advanced-tool">
+                <button type="button" className="canvas-advanced-tools-trigger" title="Arrange nodes in grid" aria-label="Arrange nodes in grid">
+                  <LayoutGrid size={15} aria-hidden="true" />
+                </button>
+                <div className="canvas-advanced-tools-popover canvas-grid-layout-popover nodrag nopan">
+                  <strong>Ordenar nodos</strong>
+                  <span>{selectedLayoutNodeIds.length ? `Ordena solo los ${selectedLayoutNodeIds.length} nodos seleccionados.` : "Respeta la secuencia de transiciones; los nodos sin ruta usan su orden visual actual."}</span>
+                  <label><select aria-label="Layout mode" value={nestedLayoutMode} onChange={(event) => setNestedLayoutMode(event.target.value as NestedLayoutMode)}><option value="grid">Grid</option><option value="linear">Lineal</option></select><em>modo</em></label>
+                  {nestedLayoutMode === "grid" ? <label><input type="number" min={1} max={24} step={1} value={gridLayoutColumns} onChange={(event) => setGridLayoutColumns(Math.min(24, Math.max(1, Number(event.target.value) || 1)))} /><em>columnas</em></label> : null}
+                  <label><input type="number" min={0} max={24} step={1} value={gridLayoutHorizontalGap} onChange={(event) => setGridLayoutHorizontalGap(Math.min(24, Math.max(0, Number(event.target.value) || 0)))} /><em>espacio horizontal · grid</em></label>
+                  {nestedLayoutMode === "grid" ? <label><input type="number" min={0} max={24} step={1} value={gridLayoutVerticalGap} onChange={(event) => setGridLayoutVerticalGap(Math.min(24, Math.max(0, Number(event.target.value) || 0)))} /><em>espacio vertical · grid</em></label> : null}
+                  <button type="button" onClick={() => onArrangeScopeNodes({ mode: nestedLayoutMode, columns: gridLayoutColumns, horizontalGapCells: gridLayoutHorizontalGap, verticalGapCells: gridLayoutVerticalGap, selectedNodeIds: selectedLayoutNodeIds })}>{nestedLayoutMode === "linear" ? "Ordenar en línea" : "Ordenar en grid"}</button>
+                </div>
+              </div>
+            </Panel>
+          ) : null}
           <Controls position="bottom-left">
-            <button
-              type="button"
-              className={`react-flow__controls-button canvas-interaction-toggle${directedNodeOpening ? " active" : ""}`}
-              aria-pressed={directedNodeOpening}
-              onClick={() => setDirectedNodeOpening((enabled) => !enabled)}
-              title={directedNodeOpening ? "Directed opening enabled: hold a node for 0.75 seconds" : "Enable directed opening"}
-              aria-label={directedNodeOpening ? "Disable directed opening" : "Enable directed opening"}
-            >
-              <MousePointerClick size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className={`react-flow__controls-button ${minimapOpen ? "active" : ""}`}
-              onClick={() => setMinimapOpen((open) => !open)}
-              title={minimapOpen ? "Hide minimap" : "Show minimap"}
-              aria-label={minimapOpen ? "Hide minimap" : "Show minimap"}
-            >
-              {minimapOpen ? <Eye size={14} /> : <EyeOff size={14} />}
-            </button>
             <CanvasFindingsButton
               findings={findings}
               onLocateFinding={locateFinding}
               onFixFinding={fixFinding}
             />
+            <div className="canvas-tools-anchor">
+              <button
+                type="button"
+                ref={canvasToolsTriggerRef}
+                className={`react-flow__controls-button canvas-tools-trigger${canvasToolsOpen ? " active" : ""}`}
+                onClick={() => setCanvasToolsOpen((open) => !open)}
+                title="More canvas tools"
+                aria-label="More canvas tools"
+                aria-expanded={canvasToolsOpen}
+              >
+                <MoreHorizontal size={14} aria-hidden="true" />
+              </button>
+              {canvasToolsOpen ? (
+                createPortal(
+                <div
+                  className="canvas-tools-menu"
+                  role="group"
+                  aria-label="Additional canvas tools"
+                  style={{ left: canvasToolsPosition.left, top: canvasToolsPosition.top }}
+                >
+                  <button
+                    type="button"
+                    className={`react-flow__controls-button canvas-interaction-toggle${directedNodeOpening ? " active" : ""}`}
+                    aria-pressed={directedNodeOpening}
+                    onClick={() => setDirectedNodeOpening((enabled) => !enabled)}
+                    title={directedNodeOpening ? "Directed opening enabled: hold a node for 0.75 seconds" : "Enable directed opening"}
+                    aria-label={directedNodeOpening ? "Disable directed opening" : "Enable directed opening"}
+                  >
+                    <MousePointerClick size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`react-flow__controls-button ${minimapOpen ? "active" : ""}`}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      onMinimapOpenChange(!minimapOpen);
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                    title={minimapOpen ? "Hide minimap" : "Show minimap"}
+                    aria-label={minimapOpen ? "Hide minimap" : "Show minimap"}
+                  >
+                    {minimapOpen ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </button>
+                </div>,
+                document.body,
+                )
+              ) : null}
+            </div>
           </Controls>
           {canvasBackground.showGrid ? (
             <Background
@@ -11398,7 +11728,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [canvasLayerMode, setCanvasLayerMode] = useState<CanvasLayerMode>(() =>
     loadSettings().authoringDisplay.logicMode ? "logic" : "visual",
   );
-  const canvasLayerTransitionFrameRef = useRef<number | undefined>(undefined);
   const [focusNodeId, setFocusNodeId] = useState<string>();
   const [undoStack, setUndoStack] = useState<BranchingProject[]>([]);
   const [redoStack, setRedoStack] = useState<BranchingProject[]>([]);
@@ -11433,6 +11762,27 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         title: string;
         label: string;
         initialValue?: string;
+      }
+    | {
+        kind: "createDialogue";
+        title: string;
+        label: string;
+        initialValue?: string;
+        eventId: string;
+        position?: CanvasPoint;
+        connected?: {
+          scope: Extract<CanvasScope, { kind: "event" | "dialogue" }>;
+          sourceNodeId: string;
+          sourceHandleId?: string;
+        };
+      }
+    | {
+        kind: "createDialogueFromSelection";
+        title: string;
+        label: string;
+        initialValue?: string;
+        eventId: string;
+        members: DialogueMemberRef[];
       }
   >();
   const [confirmDialog, setConfirmDialog] = useState<
@@ -12800,40 +13150,12 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       canvasLayerMode,
     });
     setActiveScopeState(scope);
+    // Layer changes are a single graph replacement. Interpolating nodes while
+    // installing the new edges leaves React Flow with stale gate-handle bounds.
+    nodesRef.current = model.nodes;
+    setNodes(model.nodes);
     setEdges(model.edges);
     setFiles(model.files);
-
-    const fromNodes = nodesRef.current;
-    const shouldAnimate = fromNodes.length > 0 && model.nodes.length > 0;
-    if (!shouldAnimate) {
-      nodesRef.current = model.nodes;
-      setNodes(model.nodes);
-      return;
-    }
-
-    const startedAt = performance.now();
-    const animate = (timestamp: number) => {
-      const rawProgress = Math.min((timestamp - startedAt) / CANVAS_LAYER_TRANSITION_MS, 1);
-      const progress = easeCanvasLayerTransition(rawProgress);
-      const nextNodes = interpolateCanvasNodes(fromNodes, model.nodes, progress);
-      nodesRef.current = nextNodes;
-      setNodes(nextNodes);
-      if (rawProgress < 1) {
-        canvasLayerTransitionFrameRef.current = window.requestAnimationFrame(animate);
-      } else {
-        canvasLayerTransitionFrameRef.current = undefined;
-        nodesRef.current = model.nodes;
-        setNodes(model.nodes);
-      }
-    };
-
-    canvasLayerTransitionFrameRef.current = window.requestAnimationFrame(animate);
-    return () => {
-      if (canvasLayerTransitionFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(canvasLayerTransitionFrameRef.current);
-        canvasLayerTransitionFrameRef.current = undefined;
-      }
-    };
   }, [canvasLayerMode, settings.authoringDisplay, settings.nodeColors]);
 
   const changeTheme = useCallback((theme: ThemeId) => {
@@ -12939,9 +13261,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const changeCanvasLayerMode = useCallback((mode: CanvasLayerMode) => {
     if (mode === canvasLayerModeRef.current) return;
-    if (canvasLayerTransitionFrameRef.current !== undefined) {
-      window.cancelAnimationFrame(canvasLayerTransitionFrameRef.current);
-    }
     canvasLayerModeRef.current = mode;
     setCanvasLayerMode(mode);
     setSettings((current) => {
@@ -14371,6 +14690,65 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         }
         return;
       }
+      if (dialog.kind === "createDialogue") {
+        const currentProject = projectRef.current;
+        if (!currentProject) return;
+        const sourceProject =
+          eventDraft?.eventId === dialog.eventId
+            ? applyEventDraftToProject(currentProject, eventDraft)
+            : currentProject;
+        if (eventDraft?.eventId === dialog.eventId) setEventDraft(undefined);
+        if (dialog.connected) {
+          const positioned = positionMutationNode(
+            mutations.createDialogue(sourceProject, dialog.eventId, value),
+            snapCanvasPoint(
+              dialog.position ?? { x: 0, y: 0 },
+              settingsRef.current.canvasBackground.snapToGrid,
+              settingsRef.current.canvasBackground.gridSize,
+            ),
+            dialog.connected.scope,
+          );
+          const targetNodeId =
+            positioned.selection?.type === "node" ? positioned.selection.id : undefined;
+          if (!targetNodeId || positioned.project === currentProject) {
+            setMessage(positioned.message ?? "Could not create the connected dialogue.");
+            return;
+          }
+          runCanvasMutation(
+            mutations.createInternalTransition(
+              positioned.project,
+              dialog.eventId,
+              dialog.connected.sourceHandleId ?? dialog.connected.sourceNodeId,
+              targetNodeId,
+            ),
+            "Created connected dialogue",
+          );
+          return;
+        }
+        runCanvasMutation(
+          positionMutationNode(
+            mutations.createDialogue(sourceProject, dialog.eventId, value),
+            dialog.position,
+            activeScope,
+          ),
+          "Created dialogue",
+        );
+        return;
+      }
+      if (dialog.kind === "createDialogueFromSelection") {
+        const currentProject = projectRef.current;
+        if (!currentProject) return;
+        runCanvasMutation(
+          mutations.groupDialogueMembers(
+            currentProject,
+            dialog.eventId,
+            dialog.members,
+            value,
+          ),
+          "Created dialogue",
+        );
+        return;
+      }
       if (dialog.kind === "saveInspectorTabGroup") {
         const result = saveEventInspectorTabGroup(
           eventInspector,
@@ -14416,10 +14794,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       createStory,
       eventInspector,
       eventInspectorTabGroups,
+      eventDraft,
       expandedInspectorTabId,
       inspectorTabs,
       nameDialog,
+      runCanvasMutation,
       runMutation,
+      activeScope,
+      settingsRef,
     ],
   );
 
@@ -14597,6 +14979,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       kind: ConnectedNarrativeNodeKind,
       position: CanvasPoint,
       sourceHandleId?: string,
+      preset?: Pick<DialoguePreset, "characterRef" | "characterVariantId">,
     ) => {
       const currentProject = projectRef.current;
       if (!currentProject || workspaceRef.current?.createdDefaultStory) {
@@ -14611,6 +14994,25 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         eventDraft?.eventId === eventId
           ? applyEventDraftToProject(currentProject, eventDraft)
           : currentProject;
+      if (kind === "dialogue") {
+        const event = findEvent(sourceProject, eventId);
+        if (!event) return;
+        setNameDialog({
+          kind: "createDialogue",
+          title: "Create Dialogue",
+          label: "Dialogue name",
+          initialValue: automaticNarrativeName(
+            sourceProject,
+            eventId,
+            "Dialogue",
+            (event.dialogues ?? []).length + 1,
+          ),
+          eventId,
+          position,
+          connected: { scope, sourceNodeId, sourceHandleId },
+        });
+        return;
+      }
       if (eventDraft?.eventId === eventId) {
         setEventDraft(undefined);
       }
@@ -14623,8 +15025,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               eventId,
               scope.kind === "dialogue" ? scope.id : undefined,
             );
-          case "dialogue":
-            return mutations.createDialogue(sourceProject, eventId);
           case "speechBeat":
           case "directionBeat":
             return scope.kind === "dialogue"
@@ -14633,11 +15033,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   eventId,
                   scope.id,
                   kind === "speechBeat" ? "speech" : "direction",
+                  preset,
+                  sourceNodeId === `dialogue-boundary:${eventId}:${scope.id}:input`,
                 )
               : mutations.createEventDialogueBeat(
                   sourceProject,
                   eventId,
                   kind === "speechBeat" ? "speech" : "direction",
+                  preset,
                 );
           case "dialogueStart":
             return mutations.createDialogueStart(sourceProject, eventId);
@@ -15103,29 +15506,27 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (!currentProject) {
         return;
       }
-      if (eventDraft?.eventId === eventId) {
-        const draftProject = applyEventDraftToProject(currentProject, eventDraft);
-        setEventDraft(undefined);
-        runCanvasMutation(
-          positionMutationNode(
-            mutations.createDialogue(draftProject, eventId),
-            position,
-            activeScope,
-          ),
-          "Created dialogue",
-        );
-        return;
-      }
-      runCanvasMutation(
-        positionMutationNode(
-          mutations.createDialogue(currentProject, eventId),
-          position,
-          activeScope,
+      const sourceProject =
+        eventDraft?.eventId === eventId
+          ? applyEventDraftToProject(currentProject, eventDraft)
+          : currentProject;
+      const event = findEvent(sourceProject, eventId);
+      if (!event) return;
+      setNameDialog({
+        kind: "createDialogue",
+        title: "Create Dialogue",
+        label: "Dialogue name",
+        initialValue: automaticNarrativeName(
+          sourceProject,
+          eventId,
+          "Dialogue",
+          (event.dialogues ?? []).length + 1,
         ),
-        "Created dialogue",
-      );
+        eventId,
+        position,
+      });
     },
-    [activeScope, eventDraft, runCanvasMutation],
+    [eventDraft],
   );
 
   const updateDecision = useCallback(
@@ -15513,41 +15914,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [project, runCanvasMutation],
   );
 
-  const insertRouteGate = useCallback(
-    (sourceId: string) => {
-      const currentProject = projectRef.current;
-      if (!currentProject) return;
-      const scope = activeScope ?? activeCanvasScope(currentProject);
-      const scopeKey = scope ? canvasScopeKey(scope) : undefined;
-      const currentSources = scopeKey
-        ? currentProject.canvas?.scopes?.[scopeKey]?.routeGateSources
-        : currentProject.canvas?.routeGateSources;
-      if (currentSources?.includes(sourceId)) {
-        setMessage("This connection already has a Route Gate.");
-        return;
-      }
-      updateProject({
-        ...currentProject,
-        canvas: {
-          ...currentProject.canvas,
-          routeGateSources: scopeKey
-            ? currentProject.canvas?.routeGateSources
-            : withValue(currentProject.canvas?.routeGateSources, sourceId),
-          scopes: scopeKey
-            ? {
-                ...(currentProject.canvas?.scopes ?? {}),
-                [scopeKey]: {
-                  ...(currentProject.canvas?.scopes?.[scopeKey] ?? {}),
-                  routeGateSources: withValue(currentSources, sourceId),
-                },
-              }
-            : currentProject.canvas?.scopes,
-        },
-      });
-    },
-    [activeScope, updateProject],
-  );
-
   const deleteScriptBlock = useCallback(
     (blockKey: string) => {
       if (!project) return;
@@ -15731,6 +16097,71 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [commitCanvasAction],
   );
 
+  const arrangeScopeNodes = useCallback(
+    (options: {
+      mode: NestedLayoutMode;
+      columns: number;
+      horizontalGapCells: number;
+      verticalGapCells: number;
+      selectedNodeIds?: string[];
+    }) => {
+      if (!activeScope || activeScope.kind === "sequence") return;
+      const currentProject = projectRef.current;
+      if (!currentProject) return;
+      const gridSize = settingsRef.current.canvasBackground.gridSize;
+      const positions = options.mode === "linear"
+        ? nestedLinearLayoutPositions(
+          nodes,
+          edges,
+          options.horizontalGapCells,
+          gridSize,
+          options.selectedNodeIds,
+        )
+        : nestedGridLayoutPositions(
+          nodes,
+          edges,
+          options.columns,
+          options.horizontalGapCells,
+          options.verticalGapCells,
+          gridSize,
+          options.selectedNodeIds,
+        );
+      if (!positions.size) return;
+      const positionedNodes = nodes.map((node) => {
+        const position = positions.get(node.id);
+        return position ? { ...node, position } : node;
+      });
+      const bounds = fitSubcanvasWorkspaceBounds(positionedNodes, 2, gridSize);
+      const nextNodes = positionedNodes.map((node) =>
+        node.data.kind === "workspace"
+          ? {
+              ...node,
+              position: { x: bounds.x, y: bounds.y },
+              width: bounds.width,
+              height: bounds.height,
+              style: { ...node.style, width: bounds.width, height: bounds.height },
+            }
+          : node,
+      );
+      const positionedProject = updateProjectCanvas(currentProject, nextNodes, activeScope);
+      const scopeKey = canvasScopeKey(activeScope);
+      commitCanvasAction(options.mode === "linear" ? "Organized nodes in a line" : "Organized nodes in grid", {
+        ...positionedProject,
+        canvas: {
+          ...positionedProject.canvas,
+          scopes: {
+            ...(positionedProject.canvas?.scopes ?? {}),
+            [scopeKey]: {
+              ...(positionedProject.canvas?.scopes?.[scopeKey] ?? {}),
+              workspace: { ...bounds, manual: true },
+            },
+          },
+        },
+      });
+    },
+    [activeScope, commitCanvasAction, edges, nodes],
+  );
+
   const handleNodesChange = useCallback(
     (changes: NodeChange<StoryCanvasNode>[]) => {
       setNodes((currentNodes) => {
@@ -15824,8 +16255,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const route = mutations.createInternalTransition(
           project,
           activeScope.id,
-          sourceNode.id,
-          targetNode.id,
+          decisionOutcomeSourceId ??
+            (sourceNode.data.kind === "routeGate" ? routeSourceId : sourceNode.id),
+          targetNode.data.details?.restart === true ? activeScope.id : targetNode.id,
         );
         updateProject(route.project, route.selection);
         return;
@@ -16019,6 +16451,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           snap.gridSize,
         ),
       };
+      // A gate stores the visual knot position. Logic mode expands it around
+      // that same center, so convert the dragged logic rectangle back to its
+      // compact visual anchor before persisting it.
+      if (node.data.kind === "routeGate" && canvasLayerModeRef.current === "logic") {
+        nextNode.position = {
+          x: nextNode.position.x + (168 - 34) / 2,
+          y: nextNode.position.y + (92 - 34) / 2,
+        };
+      }
       const nextNodes = nodes.map((item) =>
         item.id === node.id ? nextNode : item,
       );
@@ -16690,11 +17131,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const canvasSelectionNodeIds = useCallback(() => {
     const ids = nodes.filter((node) => node.selected).map((node) => node.id);
+    // An open inspector updates the active selection, but it does not make
+    // that node part of an explicit canvas/marquee selection. Once the user
+    // has selected nodes on the canvas, keep that set authoritative for
+    // copy/cut/delete actions.
+    if (ids.length > 0) return ids;
+
     const currentSelection = selectionRef.current;
-    if (currentSelection?.type === "node" && !ids.includes(currentSelection.id)) {
-      ids.push(currentSelection.id);
-    }
-    return ids;
+    return currentSelection?.type === "node" ? [currentSelection.id] : [];
   }, [nodes]);
 
   const copyCanvasSelection = useCallback(() => {
@@ -17052,8 +17496,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setMessage("Dialogue members must belong to the same event.");
       return;
     }
-    runCanvasMutation(mutations.groupDialogueMembers(currentProject, Array.from(eventIds)[0], selectedMembers.map(({ member }) => member)));
-  }, [nodes, runCanvasMutation]);
+    const eventId = Array.from(eventIds)[0];
+    const event = findEvent(currentProject, eventId);
+    if (!event) return;
+    setNameDialog({
+      kind: "createDialogueFromSelection",
+      title: "Create Dialogue",
+      label: "Dialogue name",
+      initialValue: automaticNarrativeName(
+        currentProject,
+        eventId,
+        "Dialogue",
+        (event.dialogues ?? []).length + 1,
+      ),
+      eventId,
+      members: selectedMembers.map(({ member }) => member),
+    });
+  }, [nodes]);
 
   const detachDialogueMembers = useCallback((nodeIds: string[]) => {
     const currentProject = projectRef.current;
@@ -17144,10 +17603,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (currentSelection.type === "node") {
         event.preventDefault();
         const selectedNodeIds = nodes.filter((node) => node.selected).map((node) => node.id);
-        if (!selectedNodeIds.includes(currentSelection.id)) {
-          selectedNodeIds.push(currentSelection.id);
-        }
-        if (selectedNodeIds.length > 1) {
+        if (selectedNodeIds.length > 0) {
           deleteNodeSelections(selectedNodeIds);
         } else {
           deleteSelection(currentSelection);
@@ -17168,7 +17624,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (
         currentSelection.type === "edge" &&
         (currentSelection.id.startsWith("edge:boundary:") ||
-          currentSelection.id.startsWith("edge:dialogue-entry:"))
+          currentSelection.id.startsWith("edge:dialogue-entry:") ||
+          currentSelection.id.startsWith("edge:entry:"))
       ) {
         event.preventDefault();
         deleteBoundaryEdge(currentSelection.id);
@@ -17780,10 +18237,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             <EventScriptWorkspace
               project={project}
               eventId={eventScriptWorkspace.eventId}
-              primaryLocale={fileState.universeProfile?.localization?.primaryLocale ?? machineLocale()}
-              locales={fileState.universeProfile?.localization?.locales ?? [machineLocale()]}
-              localeNames={fileState.universeProfile?.localization?.localeNames}
-              focusedTextKey={eventScriptWorkspace.textKey}
               breadcrumb={canvasBreadcrumb(project, { kind: "event", id: eventScriptWorkspace.eventId }).map((crumb) => ({
                 label: crumb.label,
                 onClick: () => {
@@ -17791,29 +18244,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   navigateCanvasScope(crumb.scope, { type: "node", id: crumb.scope.id });
                 },
               }))}
-              portraitUrlForRef={eventScriptPortraitUrl}
-              propertiesConfig={workspace?.canonIndex.propertiesConfig}
-              onUpdateEvent={updateEvent}
-              onUpdateText={updateCanvasLocalizedText}
-              onUpdateBlock={updateCanvasScriptBlock}
-              onCreateEventBeat={createEventDialogueBeat}
-              onCreateDialogueBeat={createDialogueBeat}
-              onUpdateBeat={(dialogueId, beatId, updates) => dialogueId
-                ? updateDialogueBeat(eventScriptWorkspace.eventId, dialogueId, beatId, updates)
-                : updateEventDialogueBeat(eventScriptWorkspace.eventId, beatId, updates)}
-              onDeleteBeat={(dialogueId, beatId) => dialogueId
-                ? deleteDialogueBeat(eventScriptWorkspace.eventId, dialogueId, beatId)
-                : deleteEventDialogueBeat(eventScriptWorkspace.eventId, beatId)}
-              onCreateDecision={createDecision}
-              onUpdateDecision={updateDecision}
-              onDeleteDecision={deleteDecision}
-              onUpdateOutcome={updateOutcome}
-              onCreateTrigger={(source) => createDialogueStart(eventScriptWorkspace.eventId, undefined, source)}
-              onUpdateTrigger={(startId, updates) => updateDialogueStart(eventScriptWorkspace.eventId, startId, updates)}
-              onDeleteTrigger={(startId) => deleteDialogueStart(eventScriptWorkspace.eventId, startId)}
-              onCreateTransition={(from, to) => createScriptTransition(eventScriptWorkspace.eventId, from, to)}
-              onUpdateTransition={updateTransition}
-              onDeleteTransition={deleteTransition}
+              onApplyEvpath={applyEvpath}
             />
           ) : !workspace?.activeStory?.id ? (
             <StoryCreationEmptyState kind="story" onOpenStories={openStoriesForOnboarding} />
@@ -17847,6 +18278,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             expandedInspectorTabId={expandedInspectorTabId}
             inspectorMaximized={inspectorMaximized}
             canvasBackground={settings.canvasBackground}
+            minimapOpen={settings.minimapOpen}
+            onMinimapOpenChange={(open) => setSettings((current) => ({ ...current, minimapOpen: open }))}
             canvasLayerMode={canvasLayerMode}
             onCanvasLayerModeChange={changeCanvasLayerMode}
             onCanvasBackgroundChange={changeCanvasBackground}
@@ -17898,10 +18331,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onCreateBoundaryEnd={createBoundaryEnd}
             onDeleteBoundaryEnd={deleteBoundaryEnd}
             onWorkspaceBoundsChange={changeSubcanvasWorkspace}
+            onArrangeScopeNodes={arrangeScopeNodes}
             onRemoveMissingEventReference={removeMissingEventReference}
             onRemoveBoundaryBinding={removeBoundaryBinding}
             onNormalizeTransitionOrder={normalizeTransitionOrder}
-            onInsertRouteGate={insertRouteGate}
             onDeleteScriptBlock={deleteScriptBlock}
             onFocusScriptBlock={focusScriptBlock}
             onDeleteTransition={deleteTransition}

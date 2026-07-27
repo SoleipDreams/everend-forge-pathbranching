@@ -44,8 +44,32 @@ assert.deepEqual(
     snapToGrid: true,
     gridSize: 24,
   }),
-  { x: 552, y: 203 },
-  "nodes outside the source row must not displace the target vertically",
+  { x: 552, y: 216 },
+  "a shorter quick-connected node must remain vertically centered and grid aligned",
+);
+
+const fullSpeechBeat = {
+  ...source,
+  id: "beat:full-speech",
+  position: { x: 96, y: 96 },
+  measured: { width: 360, height: 264 },
+};
+assert.deepEqual(
+  connectedNarrativeNodePosition([fullSpeechBeat], fullSpeechBeat, { width: 360, height: 168 }, {
+    snapToGrid: true,
+    gridSize: 24,
+  }),
+  { x: 528, y: 144 },
+  "a director beat must be centered against the speech beat that creates it",
+);
+
+assert.deepEqual(
+  connectedNarrativeNodePosition([fullSpeechBeat], fullSpeechBeat, { width: 300, height: 170 }, {
+    snapToGrid: true,
+    gridSize: 24,
+  }),
+  { x: 528, y: 144 },
+  "a decision must be centered against the speech beat that creates it",
 );
 
 console.log("Speech beat quick-connector placement verified.");

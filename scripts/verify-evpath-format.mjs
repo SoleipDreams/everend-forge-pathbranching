@@ -156,6 +156,34 @@ assert.match(text, /^    \* \[Atacar\] #\^outcome-2$/m);
 const parsed = parseEvpath(text);
 assert.equal(parsed.errors.length, 0, JSON.stringify(parsed.errors));
 
+// Empty speech beats still need a valid four-space indent before their anchor.
+const emptyBeatProject = structuredClone(project);
+emptyBeatProject.scriptDocuments[0].blocks.push({
+  id: "block:empty",
+  kind: "speech",
+  textKey: "script.script:intro.block:empty",
+  content: "",
+});
+emptyBeatProject.localizationCatalog.entries["script.script:intro.block:empty"] = {
+  values: { "es-419": "" },
+};
+emptyBeatProject.events[0].dialogues[0].beats.push({
+  id: "beat:empty",
+  kind: "speech",
+  blockRef: { scriptId: "script:intro", blockId: "block:empty" },
+});
+emptyBeatProject.events[0].dialogues[0].members.push({ kind: "beat", id: "beat:empty" });
+emptyBeatProject.events[0].dialogues[0].entryBeatId = "beat:empty";
+emptyBeatProject.events[0].transitions.push({
+  id: "t-empty",
+  from: "beat:intro:beat:empty",
+  to: "beat:intro:beat:speech-2",
+  order: 0,
+});
+const emptyBeatText = serializeEventEvpath(emptyBeatProject, "intro");
+assert.match(emptyBeatText, /^    #\^beat:empty$/m);
+assert.equal(parseEvpath(emptyBeatText).errors.length, 0);
+
 // --- Round-trip idempotence ---------------------------------------------
 const idempotent = applyEvpathToEvent(project, "intro", text);
 assert.equal(idempotent.errors.length, 0, JSON.stringify(idempotent.errors));

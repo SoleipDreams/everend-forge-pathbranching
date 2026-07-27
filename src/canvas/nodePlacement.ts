@@ -46,9 +46,9 @@ function overlaps(
 }
 
 /**
- * Places a quick-connected narrative node on the same row as its source.
- * Occupied slots advance the candidate horizontally instead of pushing it
- * above or below the current beat.
+ * Places a quick-connected narrative node beside its source, centered on its
+ * vertical axis. Occupied slots advance the candidate horizontally instead of
+ * pushing it above or below the current beat.
  */
 export function connectedNarrativeNodePosition(
   nodes: StoryCanvasNode[],
@@ -58,7 +58,8 @@ export function connectedNarrativeNodePosition(
 ): CanvasPlacementPoint {
   const sourceSize = nodeSize(source);
   const horizontalGap = CANVAS_NODE_GAP * 3;
-  const y = source.position.y;
+  const verticalCenterOffset = (sourceSize.height - targetSize.height) / 2;
+  let y = source.position.y + verticalCenterOffset;
   const obstacles = nodes
     .filter(
       (node) =>
@@ -82,8 +83,10 @@ export function connectedNarrativeNodePosition(
 
   if (options.snapToGrid) {
     const gridSize = Math.max(1, options.gridSize);
-    // Snap outward so the horizontal gap cannot shrink; Y stays untouched.
+    // Snap outward so the horizontal gap cannot shrink and retain the closest
+    // grid-aligned version of the vertical centering.
     x = Math.ceil(x / gridSize) * gridSize;
+    if (verticalCenterOffset !== 0) y = Math.round(y / gridSize) * gridSize;
   }
   return { x, y };
 }

@@ -42,6 +42,11 @@ export type MutationResult = {
   message?: string;
 };
 
+export type DialogueBeatPreset = {
+  characterRef?: string;
+  characterVariantId?: string;
+};
+
 export function slugify(value: string) {
   return value
     .trim()
@@ -829,6 +834,7 @@ export function deleteOutcome(
 export function createDialogue(
   project: BranchingProject,
   eventId: string,
+  title?: string,
 ): MutationResult {
   const event = findEvent(project, eventId);
   if (!event) {
@@ -840,7 +846,7 @@ export function createDialogue(
   );
   const dialogue: DialogueNode = {
     id: dialogueId,
-    title: automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
+    title: title?.trim() || automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
     text: { format: "plain", content: "" },
     canonRefs: [],
     beats: [],
@@ -859,6 +865,7 @@ export function groupDialogueMembers(
   project: BranchingProject,
   eventId: string,
   members: DialogueMemberRef[],
+  title?: string,
 ): MutationResult {
   const event = findEvent(project, eventId);
   if (!event || members.length === 0) return { project, message: "Select beats or decisions from one event." };
@@ -875,7 +882,7 @@ export function groupDialogueMembers(
   );
   const dialogue: DialogueNode = {
     id: dialogueId,
-    title: automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
+    title: title?.trim() || automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
     text: { format: "plain", content: "" },
     canonRefs: [],
     beats: selectedBeats,
@@ -1025,6 +1032,8 @@ export function createDialogueBeat(
   eventId: string,
   dialogueId: string,
   kind: DialogueBeat["kind"] = "speech",
+  preset?: DialogueBeatPreset,
+  setAsEntry = true,
 ): MutationResult {
   const event = findEvent(project, eventId);
   const dialogue = event?.dialogues?.find((item) => item.id === dialogueId);
@@ -1042,9 +1051,13 @@ export function createDialogueBeat(
     ];
   }
   const script = scriptDocuments.find((document) => document.id === scriptId)!;
+  const existingEventBeatIds = [
+    ...(event.dialogueBeats ?? []),
+    ...(event.dialogues ?? []).flatMap((item) => item.beats ?? []),
+  ].map((beat) => beat.id);
   const beatId = uniqueId(
-    `beat:${kind}`,
-    (dialogue.beats ?? []).map((beat) => beat.id),
+    `beat:dialogue:${dialogueId}:${kind}`,
+    existingEventBeatIds,
   );
   const blockId = uniqueId(
     `block:${kind}`,
@@ -1066,13 +1079,21 @@ export function createDialogueBeat(
               kind: kind === "speech" ? "speech" as const : "direction" as const,
               textKey: scriptBlockTextKey(scriptId, blockId),
               content: "",
+              ...(kind === "speech" && preset?.characterRef
+                ? {
+                    characterRef: preset.characterRef,
+                    ...(preset.characterVariantId && preset.characterVariantId !== "base"
+                      ? { characterVariantId: preset.characterVariantId }
+                      : {}),
+                  }
+                : {}),
             },
           ],
         }
       : document,
   );
   const updated = updateDialogue(project, eventId, dialogueId, {
-    entryBeatId: dialogue.entryBeatId ?? beatId,
+    entryBeatId: dialogue.entryBeatId ?? (setAsEntry ? beatId : undefined),
     beats: [...(dialogue.beats ?? []), beat],
     members: [...(dialogue.members ?? []), { kind: "beat", id: beatId }],
   });
@@ -1088,6 +1109,7 @@ export function createEventDialogueBeat(
   project: BranchingProject,
   eventId: string,
   kind: DialogueBeat["kind"] = "speech",
+  preset?: DialogueBeatPreset,
 ): MutationResult {
   const event = findEvent(project, eventId);
   if (!event) return { project, message: "Event not found." };
@@ -1103,14 +1125,37 @@ export function createEventDialogueBeat(
     }];
   }
   const script = scriptDocuments.find((document) => document.id === scriptId)!;
-  const beatId = uniqueId(`beat:${kind}`, (event.dialogueBeats ?? []).map((beat) => beat.id));
+  const existingEventBeatIds = [
+    ...(event.dialogueBeats ?? []),
+    ...(event.dialogues ?? []).flatMap((item) => item.beats ?? []),
+  ].map((beat) => beat.id);
+  const beatId = uniqueId(`beat:event:${eventId}:${kind}`, existingEventBeatIds);
   const blockId = uniqueId(`block:${kind}`, script.blocks.map((block) => block.id));
   const beat: DialogueBeat = { id: beatId, kind, blockRef: { scriptId, blockId } };
   return {
     project: {
       ...project,
       scriptDocuments: scriptDocuments.map((document) => document.id === scriptId
-        ? { ...document, blocks: [...document.blocks, { id: blockId, kind: kind === "speech" ? "speech" as const : "direction" as const, textKey: scriptBlockTextKey(scriptId, blockId), content: "" }] }
+        ? {
+            ...document,
+            blocks: [
+              ...document.blocks,
+              {
+                id: blockId,
+                kind: kind === "speech" ? "speech" as const : "direction" as const,
+                textKey: scriptBlockTextKey(scriptId, blockId),
+                content: "",
+                ...(kind === "speech" && preset?.characterRef
+                  ? {
+                      characterRef: preset.characterRef,
+                      ...(preset.characterVariantId && preset.characterVariantId !== "base"
+                        ? { characterVariantId: preset.characterVariantId }
+                        : {}),
+                    }
+                  : {}),
+              },
+            ],
+          }
         : document),
       events: project.events.map((item) => item.id === eventId
         ? { ...item, dialogueBeats: [...(item.dialogueBeats ?? []), beat] }
@@ -1247,9 +1292,13 @@ export function linkScriptBlockToDialogue(
   const dialogue = event?.dialogues?.find((item) => item.id === dialogueId);
   const block = project.scriptDocuments?.find((script) => script.id === scriptId)?.blocks.find((item) => item.id === blockId);
   if (!event || !dialogue || !block) return { project, message: "Script block or dialogue not found." };
+  const existingEventBeatIds = [
+    ...(event.dialogueBeats ?? []),
+    ...(event.dialogues ?? []).flatMap((item) => item.beats ?? []),
+  ].map((beat) => beat.id);
   const beatId = uniqueId(
-    `beat:${block.kind === "speech" ? "speech" : "direction"}`,
-    (dialogue.beats ?? []).map((beat) => beat.id),
+    `beat:dialogue:${dialogueId}:${block.kind === "speech" ? "speech" : "direction"}`,
+    existingEventBeatIds,
   );
   const beat: DialogueBeat = {
     id: beatId,

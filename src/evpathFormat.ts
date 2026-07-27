@@ -558,7 +558,8 @@ export function serializeEventEvpathDetailed(
 
   const emitBeat = (node: Extract<GraphNode, { kind: "beat" }>, level: number) => {
     const { beat } = node;
-    const text = escapeText(beatText(project, beat));
+    const rawText = beatText(project, beat);
+    const text = rawText.trim().length ? escapeText(rawText) : "";
     let consTexts: string[] = [];
     if (beat.kind === "direction") {
       const cond = conditionInputText(beat.logic?.when ?? beat.displayCondition, project);
@@ -570,7 +571,8 @@ export function serializeEventEvpathDetailed(
       const variant = variantDisplay(project, characterRef, found?.block.characterVariantId);
       const prefix = speaker ? `${speaker}${variant ? ` (${variant})` : ""}: ` : "";
       const cond = conditionInputText(beat.logic?.when ?? beat.displayCondition, project);
-      lines.push(`${indentOf(level)}${prefix}${text}${cond ? ` ${cond}` : ""} #^${beat.id}`);
+      const anchorSuffix = text || prefix ? ` #^${beat.id}` : `#^${beat.id}`;
+      lines.push(`${indentOf(level)}${prefix}${text}${cond ? ` ${cond}` : ""}${anchorSuffix}`);
       if (beat.directorNote) {
         lines.push(`${indentOf(level + 1)}(${escapeText(beat.directorNote)})`);
       }

@@ -49,10 +49,96 @@ current = createDialogueBeat(current, eventId, dialogue.id).project;
 current = normalizeProject(current);
 const dialogueWithBeat = current.events[0].dialogues?.[0];
 assert.equal(dialogueWithBeat?.beats?.length, 1, "Expected the grouped dialogue beat to be created.");
+assert.ok(
+  dialogueWithBeat?.beats?.[0]?.id.startsWith(`beat:dialogue:${dialogue.id}:`),
+  "New Dialogue beats must be namespaced by their Dialogue to prevent canvas ID collisions.",
+);
 
 const beatId = dialogueWithBeat.beats[0].id;
 current = normalizeProject(deleteDialogueBeat(current, eventId, dialogue.id, beatId).project);
 assert.deepEqual(current.events[0].dialogues?.[0]?.beats, [], "Deleting the last dialogue beat must remain deleted after normalization.");
+
+// A beat created from another node must not silently become the Dialogue
+// Entry when the Dialogue has no Entry route yet. The UI only opts into the
+// Entry role when the source is the Dialogue input boundary.
+const detachedProject = createDialogue(project, eventId).project;
+const detachedDialogue = detachedProject.events[0].dialogues?.[0];
+assert.ok(detachedDialogue, "Expected a Dialogue container for the detached-entry regression.");
+const detachedBeat = createDialogueBeat(
+  detachedProject,
+  eventId,
+  detachedDialogue.id,
+  "speech",
+  undefined,
+  false,
+).project;
+assert.equal(
+  detachedBeat.events[0].dialogues?.[0]?.entryBeatId,
+  undefined,
+  "A beat created from another node must not become the Dialogue Entry.",
+);
+
+let hierarchyProject = createDialogue(project, eventId).project;
+const hierarchyDialogue = hierarchyProject.events[0].dialogues?.[0];
+assert.ok(hierarchyDialogue, "Expected a Dialogue container for the hierarchy routing regression.");
+hierarchyProject = createDialogueBeat(hierarchyProject, eventId, hierarchyDialogue.id).project;
+hierarchyProject = createDialogueBeat(hierarchyProject, eventId, hierarchyDialogue.id).project;
+hierarchyProject = createDialogueBeat(hierarchyProject, eventId, hierarchyDialogue.id).project;
+const hierarchyBeats = hierarchyProject.events[0].dialogues?.[0]?.beats ?? [];
+assert.equal(hierarchyBeats.length, 3, "Expected three independent Dialogue beats.");
+assert.equal(new Set(hierarchyBeats.map((beat) => beat.id)).size, 3, "Dialogue beat IDs must be unique.");
+const dialogueInputId = `dialogue-boundary:${eventId}:${hierarchyDialogue.id}:input`;
+hierarchyBeats.forEach((beat) => {
+  hierarchyProject = createInternalTransition(
+    hierarchyProject,
+    eventId,
+    dialogueInputId,
+    `beat:${eventId}:${beat.id}`,
+  ).project;
+});
+const hierarchyDialogueModel = buildStoryCanvasModel(hierarchyProject, {
+  scope: { kind: "dialogue", eventId, id: hierarchyDialogue.id },
+});
+const hierarchyGateId = `route-gate:${eventId}:${dialogueInputId}`;
+const hierarchyRouteEdges = hierarchyDialogueModel.edges.filter(
+  (edge) => edge.source === hierarchyGateId && edge.data.kind === "transition",
+);
+assert.equal(hierarchyRouteEdges.length, 3, "A Dialogue gate must expose all three beat routes.");
+assert.deepEqual(
+  new Set(hierarchyRouteEdges.map((edge) => edge.target)),
+  new Set(hierarchyBeats.map((beat) => `beat:${eventId}:${beat.id}`)),
+  "Dialogue routes must target the exact selected beats.",
+);
+const hierarchyEventModel = buildStoryCanvasModel(hierarchyProject, {
+  scope: { kind: "event", id: eventId },
+});
+assert.equal(
+  hierarchyEventModel.edges.filter((edge) => edge.data.kind === "transition").length,
+  0,
+  "Dialogue-internal routes must not be projected into the parent event canvas.",
+);
+
+// An event-level route can enter the Dialogue container. Its individual
+// beats remain an internal concern of the Dialogue canvas.
+hierarchyProject = createInternalTransition(
+  hierarchyProject,
+  eventId,
+  `boundary:${eventId}:input:sequence-entry:sequence:main`,
+  `dialogue:${eventId}:${hierarchyDialogue.id}`,
+).project;
+const hierarchyEntryModel = buildStoryCanvasModel(hierarchyProject, {
+  scope: { kind: "event", id: eventId },
+});
+const hierarchyEntryRoute = hierarchyEntryModel.edges.find(
+  (edge) =>
+    edge.data.kind === "transition" &&
+    edge.source === `boundary:${eventId}:input:sequence-entry:sequence:main`,
+);
+assert.equal(
+  hierarchyEntryRoute?.target,
+  `dialogue:${eventId}:${hierarchyDialogue.id}`,
+  "An event-level entry must render at the Dialogue container.",
+);
 
 const draft = createEventDraftFromSelection(current, { type: "node", id: eventId });
 assert.ok(draft, "Expected an event draft for the merge regression.");

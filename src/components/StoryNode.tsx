@@ -1,6 +1,6 @@
-import { Handle, NodeToolbar, Position, type NodeProps, type NodeTypes } from "@xyflow/react";
+import { Handle, NodeToolbar, Position, useUpdateNodeInternals, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
-import { AlignLeft, BookOpen, ChevronDown, ChevronUp, CircleDot, CircleHelp, Clapperboard, FileText, GitBranch, ImagePlus, MessageSquare, Plus, Split, Trash2, UserRound, X } from "lucide-react";
+import { AlignLeft, BookOpen, ChevronDown, ChevronRight, ChevronUp, CircleDot, CircleHelp, Clapperboard, FileText, GitBranch, GripVertical, ImagePlus, MessageSquare, Plus, Split, Trash2, UserRound, X } from "lucide-react";
 import type { CanvasInfoBadge, StoryCanvasNode, StoryCanvasNodeData } from "../canvas/storyCanvasModel.js";
 import type { Outcome, SceneImageAttachment } from "../domain.js";
 import type { LocaleNames } from "../localization.js";
@@ -32,6 +32,14 @@ function buildBeatFillerString(count: number, unit: "words" | "characters") {
     filler += "men ";
   }
   return filler.slice(0, safeCount);
+}
+
+function countBeatText(text: string, unit: "words" | "characters") {
+  return unit === "words"
+    ? text.trim()
+      ? text.trim().split(/\s+/u).length
+      : 0
+    : Array.from(text).length;
 }
 
 /**
@@ -80,7 +88,7 @@ function measureBeatFontFit(reference: HTMLDivElement, text: string) {
 const infoBadgeLabels: Record<CanvasInfoBadge["kind"], string> = {
   decisions: "Decisions",
   outcomes: "Outcomes",
-  dialogues: "Dialogue elements",
+  dialogues: "Dialogues",
   characters: "Characters",
   words: "Words",
 };
@@ -149,6 +157,36 @@ function isDecisionOption(value: unknown): value is DecisionOption {
   );
 }
 
+type LogicOutcomePort = {
+  id: string;
+  label: string;
+  decisionLabel: string;
+};
+
+function isLogicOutcomePort(value: unknown): value is LogicOutcomePort {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    typeof (value as LogicOutcomePort).id === "string" &&
+    typeof (value as LogicOutcomePort).label === "string" &&
+    typeof (value as LogicOutcomePort).decisionLabel === "string",
+  );
+}
+
+export type DialoguePreset = {
+  characterRef: string;
+  characterVariantId?: string;
+  label: string;
+  variantLabel?: string;
+  portraitUrl?: string;
+};
+
+type NarrativeConnector = {
+  onConnect: (kind: "speechBeat" | "decision" | "directionBeat", preset?: DialoguePreset) => void;
+  dialoguePresets?: DialoguePreset[];
+  onInsertConditions?: () => void;
+};
+
 type BeatQuickEditor = {
   values: Record<string, string>;
   directorNote?: string;
@@ -188,10 +226,7 @@ type BeatQuickEditor = {
   onAuxiliaryPanelChange?: (panel: "directorNote" | "sceneImage", open: boolean) => void;
   onCharacterUpdate: (characterRef?: string) => void;
   onCharacterVariantUpdate?: (variantId: string) => void;
-  beatConnector?: {
-    onConnect: (kind: "speechBeat" | "decision" | "directionBeat") => void;
-    onInsertConditions?: () => void;
-  };
+  narrativeConnector?: NarrativeConnector;
 };
 
 type EventCoverImage = {
@@ -280,6 +315,7 @@ function isBoundaryRouteEditor(value: unknown): value is BoundaryRouteEditor {
 
 type WorkspaceEditor = {
   bounds: { x: number; y: number; width: number; height: number };
+  minBounds?: { x: number; y: number; width: number; height: number };
   onPreview: (bounds: { x: number; y: number; width: number; height: number }) => void;
   onCommit: (bounds: { x: number; y: number; width: number; height: number }) => void;
 };
@@ -325,7 +361,24 @@ function stopCanvasInteraction(event: { stopPropagation: () => void }) {
 
 function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   const nodeData = data as StoryCanvasNodeData;
+  const updateNodeInternals = useUpdateNodeInternals();
+  const routeGateHandleSignature = nodeData.kind === "routeGate"
+    ? `${nodeData.details?.junctionPresentation ?? "split"}:${Array.isArray(nodeData.details?.routeOptions) ? nodeData.details.routeOptions.length : 0}`
+    : "";
+  const logicOutcomePortSignature = (nodeData.kind === "event" || nodeData.kind === "decision") && nodeData.canvasLayerMode === "logic"
+    ? Array.isArray(nodeData.details?.logicOutcomePorts)
+      ? nodeData.details.logicOutcomePorts.filter(isLogicOutcomePort).map((port) => port.id).join(":")
+      : ""
+    : "";
+
+  useLayoutEffect(() => {
+    if (nodeData.kind === "routeGate" || logicOutcomePortSignature) {
+      updateNodeInternals(id);
+    }
+  }, [id, logicOutcomePortSignature, nodeData.kind, routeGateHandleSignature, updateNodeInternals]);
+
   const [openBeatMenu, setOpenBeatMenu] = useState(false);
+  const [dialoguePresetMenuOpen, setDialoguePresetMenuOpen] = useState(false);
   const [editingDecisionOptionId, setEditingDecisionOptionId] = useState<string>();
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
   const connectorRef = useRef<HTMLDivElement>(null);
@@ -363,10 +416,16 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   const setAuxiliaryPanelOpen = (panel: "directorNote" | "sceneImage", open: boolean) =>
     quickEditor?.onAuxiliaryPanelChange?.(panel, open);
   const beatContentRef = useRef<HTMLDivElement>(null);
+  const directorNoteTextareaRef = useRef<HTMLTextAreaElement>(null);
   const counterEditorRef = useRef<HTMLDivElement>(null);
   const [counterEditorOpen, setCounterEditorOpen] = useState(false);
+  const [draftText, setDraftText] = useState(draftExternalText);
+  const [directorNoteDraft, setDirectorNoteDraft] = useState(directorNote);
   const beatCounterTarget = quickEditor?.textCounter?.target;
   const beatCounterUnit = quickEditor?.textCounter?.unit;
+  const draftTextCount = quickEditor?.textCounter
+    ? countBeatText(draftText, quickEditor.textCounter.unit)
+    : 0;
   // Size the dialogue text against the counter maximum (worst-case filler) so
   // the baseline stays stable no matter how much has been typed. The font only
   // shrinks below that baseline once the actual content exceeds the maximum. If
@@ -375,6 +434,12 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   const fitBeatText = useCallback(() => {
     const element = beatContentRef.current;
     if (!element || element.clientHeight <= 0) return;
+    // Direction beats are stage directions, not dialogue cards: their type
+    // must remain readable and stable instead of auto-growing with short text.
+    if (nodeData.kind === "directionBeat") {
+      element.style.fontSize = "16px";
+      return;
+    }
     const baselineFont = beatCounterTarget && beatCounterTarget > 0
       ? measureBeatFontFit(element, buildBeatFillerString(beatCounterTarget, beatCounterUnit ?? "characters"))
       : BEAT_FONT_MAX_PX;
@@ -390,14 +455,30 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
     element.style.overflowY =
       element.scrollHeight > element.clientHeight ? "auto" : "hidden";
   }, [beatCounterTarget, beatCounterUnit]);
+  const fitBeatTextFrameRef = useRef<number | undefined>(undefined);
+  const scheduleFitBeatText = useCallback(() => {
+    if (fitBeatTextFrameRef.current !== undefined) {
+      cancelAnimationFrame(fitBeatTextFrameRef.current);
+    }
+    fitBeatTextFrameRef.current = requestAnimationFrame(() => {
+      fitBeatTextFrameRef.current = undefined;
+      fitBeatText();
+    });
+  }, [fitBeatText]);
   useEffect(() => {
     const element = beatContentRef.current;
     if (!element) return;
     if (document.activeElement !== element && element.textContent !== draftExternalText) {
       element.textContent = draftExternalText;
+      setDraftText(draftExternalText);
     }
     fitBeatText();
   }, [draftExternalText, draftLocale, fitBeatText]);
+  useEffect(() => {
+    if (document.activeElement !== directorNoteTextareaRef.current) {
+      setDirectorNoteDraft(directorNote);
+    }
+  }, [directorNote, directorNoteOpen]);
   useLayoutEffect(() => {
     const element = beatContentRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
@@ -405,6 +486,11 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [fitBeatText]);
+  useEffect(() => () => {
+    if (fitBeatTextFrameRef.current !== undefined) {
+      cancelAnimationFrame(fitBeatTextFrameRef.current);
+    }
+  }, []);
   useEffect(() => {
     if (!counterEditorOpen) return;
     const closeOnOutsidePointerDown = (event: globalThis.PointerEvent) => {
@@ -424,6 +510,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   }, [counterEditorOpen]);
   useEffect(() => {
     if (!connectorMenuOpen) return;
+    setDialoguePresetMenuOpen(false);
     const closeOnOutsidePointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && connectorRef.current?.contains(target)) return;
@@ -490,6 +577,110 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   const canSource = boundaryDirection
     ? boundaryDirection === "input"
     : nodeData.kind !== "missingRef" && (nodeData.kind === "start" || (nodeData.kind !== "sequence" && !isFinalEvent));
+  const narrativeConnector = quickEditor?.narrativeConnector;
+  const supportsNarrativeConnector =
+    nodeData.kind === "speechBeat" || nodeData.kind === "directionBeat";
+  const renderNarrativeConnector = () => {
+    if (!supportsNarrativeConnector || !canSource || !narrativeConnector) return null;
+    return (
+      <div
+        ref={connectorRef}
+        className={`speech-beat-connector nodrag nopan${connectorMenuOpen ? " open" : ""}`}
+        onMouseLeave={() => setConnectorMenuOpen(false)}
+      >
+        <button
+          type="button"
+          className="speech-beat-connector-toggle"
+          aria-label="Add connected node"
+          aria-expanded={connectorMenuOpen}
+          title="Add connected node"
+          onPointerDown={stopCanvasInteraction}
+          onClick={(event) => {
+            stopCanvasInteraction(event);
+            setConnectorMenuOpen((open) => !open);
+          }}
+        >
+          <Plus size={14} aria-hidden="true" />
+        </button>
+        <div className="speech-beat-connector-menu">
+          <div
+            className={`speech-beat-connector-submenu${dialoguePresetMenuOpen ? " open" : ""}`}
+            onMouseEnter={() => setDialoguePresetMenuOpen(true)}
+          >
+            <button
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={dialoguePresetMenuOpen}
+              onPointerDown={stopCanvasInteraction}
+              onClick={(event) => {
+                stopCanvasInteraction(event);
+                setDialoguePresetMenuOpen((open) => !open);
+              }}
+            >
+              <MessageSquare size={13} aria-hidden="true" />
+              <span>Dialogue</span>
+              <ChevronRight className="speech-beat-connector-submenu-chevron" size={13} aria-hidden="true" />
+            </button>
+            {dialoguePresetMenuOpen ? (
+              <div className="speech-beat-connector-submenu-panel" role="menu" aria-label="Recent dialogue characters">
+                <div className="speech-beat-connector-submenu-label">Recent characters</div>
+                {narrativeConnector.dialoguePresets?.length ? (
+                  narrativeConnector.dialoguePresets.map((preset) => (
+                    <button
+                      key={`${preset.characterRef}:${preset.characterVariantId ?? "base"}`}
+                      type="button"
+                      role="menuitem"
+                      className="speech-beat-connector-preset"
+                      onPointerDown={stopCanvasInteraction}
+                      onClick={(event) => {
+                        stopCanvasInteraction(event);
+                        narrativeConnector.onConnect("speechBeat", preset);
+                        setDialoguePresetMenuOpen(false);
+                        setConnectorMenuOpen(false);
+                      }}
+                    >
+                      {preset.portraitUrl ? <img src={preset.portraitUrl} alt="" /> : <UserRound size={13} aria-hidden="true" />}
+                      <span>
+                        <strong>{preset.label}</strong>
+                        {preset.variantLabel && preset.characterVariantId !== "base" ? <small>{preset.variantLabel}</small> : null}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="speech-beat-connector-submenu-empty">No connected characters yet.</div>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="speech-beat-connector-new"
+                  onPointerDown={stopCanvasInteraction}
+                  onClick={(event) => {
+                    stopCanvasInteraction(event);
+                    narrativeConnector.onConnect("speechBeat");
+                    setDialoguePresetMenuOpen(false);
+                    setConnectorMenuOpen(false);
+                  }}
+                >
+                  <Plus size={13} aria-hidden="true" /> New speech beat
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <button type="button" onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); narrativeConnector.onConnect("decision"); setConnectorMenuOpen(false); }}>
+            <Split size={13} aria-hidden="true" /> Decision
+          </button>
+          <button type="button" onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); narrativeConnector.onConnect("directionBeat"); setConnectorMenuOpen(false); }}>
+            <Clapperboard size={13} aria-hidden="true" /> Director Direction
+          </button>
+          {narrativeConnector.onInsertConditions ? (
+            <button type="button" onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); narrativeConnector.onInsertConditions?.(); setConnectorMenuOpen(false); }}>
+              <GitBranch size={13} aria-hidden="true" /> Conditions
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
   const summaryBadges = Array.isArray(nodeData.summaryBadges)
     ? nodeData.summaryBadges.filter((badge): badge is string => typeof badge === "string" && badge.length > 0)
     : [];
@@ -509,6 +700,29 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
     onOpenWhen={() => openLogicPart?.("conditions")}
     onOpenThen={() => openLogicPart?.("consequences")}
   /> : null;
+  const logicOutcomePorts = nodeData.canvasLayerMode !== "logic"
+    ? []
+    : nodeData.kind === "event"
+      ? Array.isArray(nodeData.details?.logicOutcomePorts)
+        ? nodeData.details.logicOutcomePorts.filter(isLogicOutcomePort)
+        : []
+      : nodeData.kind === "decision" && Array.isArray(nodeData.details?.options)
+        ? nodeData.details.options
+          .filter(isDecisionOption)
+          .map((option) => ({ id: option.handleId, label: option.visibleText ?? option.name, decisionLabel: nodeData.title }))
+        : [];
+  const showDefaultLogicSource = logicOutcomePorts.length === 0 || nodeData.details?.hasLogicDirectOutput === true;
+  const renderLogicOutcomePorts = () => logicOutcomePorts.length ? (
+    <div className="logic-outcome-ports" aria-label="Decision outcomes">
+      {logicOutcomePorts.map((port) => (
+        <div className="logic-outcome-port" key={port.id} title={`${port.decisionLabel}: ${port.label}`}>
+          <span>{port.decisionLabel}</span>
+          <b>{port.label}</b>
+          <Handle id={port.id} className="logic-outcome-handle" type="source" position={Position.Right} />
+        </div>
+      ))}
+    </div>
+  ) : null;
   const eventOtherBadges = detailBadges.filter((badge) =>
     badge !== eventTypeBadge && badge !== eventTypeBadgeCandidate,
   );
@@ -523,12 +737,11 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
     const routeOptions = Array.isArray(nodeData.details?.routeOptions)
       ? nodeData.details.routeOptions.filter((option): option is {
         id: string;
-        handleId: string;
         index: number;
         mode: "conditional" | "fallback";
         label: string;
         condition: string;
-      } => Boolean(option) && typeof option === "object" && typeof (option as { id?: unknown }).id === "string" && typeof (option as { handleId?: unknown }).handleId === "string")
+      } => Boolean(option) && typeof option === "object" && typeof (option as { id?: unknown }).id === "string")
       : [];
     return <div
       className={`story-node route-junction ${split ? "split" : "gate"}${selected ? " selected" : ""}`}
@@ -538,30 +751,24 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
       <Handle type="target" position={Position.Left} />
       {split ? <>
         <span className="route-junction-dot" aria-hidden="true" />
-        {routeOptions.map((option) => (
-          <Handle
-            key={option.id}
-            id={option.handleId}
-            className="route-junction-output"
-            type="source"
-            position={Position.Right}
-          />
-        ))}
+        {routeOptions.length ? <Handle
+          id="route:output"
+          className="route-junction-output"
+          type="source"
+          position={Position.Right}
+        /> : null}
       </> : <>
         <div className="route-gate-kicker"><GitBranch size={11} /> LOGIC GATE</div>
         <div className="route-gate-summary">
           <strong>{routeOptions.length} {routeOptions.length === 1 ? "route" : "routes"}</strong>
           <span>{routeOptions.some((option) => option.mode === "fallback") ? "First valid route, then ELSE" : "First valid route wins"}</span>
         </div>
-        {routeOptions.map((option) => (
-          <Handle
-            key={option.id}
-            id={option.handleId}
-            className="route-gate-output"
-            type="source"
-            position={Position.Right}
-          />
-        ))}
+        {routeOptions.length ? <Handle
+          id="route:output"
+          className="route-gate-output"
+          type="source"
+          position={Position.Right}
+        /> : null}
       </>}
       {split && routeOptions.length === 0 ? <Handle type="source" position={Position.Right} /> : null}
     </div>;
@@ -614,21 +821,40 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
       const resize = (moveEvent: globalThis.PointerEvent) => {
         const deltaX = moveEvent.clientX - startX;
         const deltaY = moveEvent.clientY - startY;
+        const minimum = workspaceEditor.minBounds;
+        const minimumWidth = minimum?.width ?? 720;
+        const minimumHeight = minimum?.height ?? 460;
         let x = origin.x;
         let y = origin.y;
         let width = origin.width;
         let height = origin.height;
         if (direction.includes("w")) {
-          x = Math.min(origin.x + deltaX, origin.x + origin.width - 720);
+          x = Math.min(
+            origin.x + deltaX,
+            origin.x + origin.width - minimumWidth,
+            minimum?.x ?? Number.POSITIVE_INFINITY,
+          );
           width = origin.width + origin.x - x;
         } else if (direction.includes("e")) {
-          width = Math.max(720, origin.width + deltaX);
+          width = Math.max(
+            minimumWidth,
+            origin.width + deltaX,
+            minimum ? minimum.x + minimum.width - origin.x : 0,
+          );
         }
         if (direction.includes("n")) {
-          y = Math.min(origin.y + deltaY, origin.y + origin.height - 460);
+          y = Math.min(
+            origin.y + deltaY,
+            origin.y + origin.height - minimumHeight,
+            minimum?.y ?? Number.POSITIVE_INFINITY,
+          );
           height = origin.height + origin.y - y;
         } else if (direction.includes("s")) {
-          height = Math.max(460, origin.height + deltaY);
+          height = Math.max(
+            minimumHeight,
+            origin.height + deltaY,
+            minimum ? minimum.y + minimum.height - origin.y : 0,
+          );
         }
         latest = { x, y, width, height };
         workspaceEditor.onPreview(latest);
@@ -893,6 +1119,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             </button>
           ) : null}
         </div>
+        {renderLogicOutcomePorts()}
       </div>
     );
   }
@@ -954,23 +1181,38 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
                   <label htmlFor={`${id}-director-note`}>Director note</label>
                 </div>
                 <textarea
+                  ref={directorNoteTextareaRef}
                   id={`${id}-director-note`}
                   className="nodrag nopan"
                   rows={3}
-                  value={directorNote}
+                  value={directorNoteDraft}
                   placeholder="Add a note for direction, mood, timing…"
                   onPointerDown={stopCanvasInteraction}
                   onKeyDown={(event) => {
                     event.stopPropagation();
-                    if (event.key === "Escape") setAuxiliaryPanelOpen("directorNote", false);
+                    if (event.key === "Escape") {
+                      const nextNote = event.currentTarget.value;
+                      if (nextNote !== directorNote) {
+                        quickEditor.onDirectorNoteUpdate?.(nextNote);
+                      }
+                      setAuxiliaryPanelOpen("directorNote", false);
+                    }
                   }}
-                  onChange={(event) => quickEditor.onDirectorNoteUpdate?.(event.target.value)}
+                  onChange={(event) => setDirectorNoteDraft(event.target.value)}
+                  onBlur={() => {
+                    if (directorNoteDraft !== directorNote) {
+                      quickEditor.onDirectorNoteUpdate?.(directorNoteDraft);
+                    }
+                  }}
                 />
               </div>
             ) : null}
           </div>
         ) : null}
         <div className={`speech-beat-inline${isSpeech ? "" : " direction"}`}>
+          {!isSpeech ? <div className="direction-beat-drag-handle" title="Drag to move" aria-label="Drag stage direction">
+            <GripVertical size={17} aria-hidden="true" />
+          </div> : null}
           {isSpeech ? <div className="speech-beat-character">
             <div className="speech-beat-drag-surface" title="Drag to move">
               {speakerPortraitUrl ? <img className="speech-beat-avatar" src={speakerPortraitUrl} alt="" /> : <span className="speech-beat-avatar-fallback">{portraitFallback}</span>}
@@ -1029,8 +1271,14 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
               onInput={(event) => {
                 stopCanvasInteraction(event);
                 const nextText = event.currentTarget.textContent ?? "";
-                quickEditor?.onTextUpdate(selectedLocale, nextText);
-                fitBeatText();
+                setDraftText(nextText);
+                scheduleFitBeatText();
+              }}
+              onBlur={(event) => {
+                const nextText = event.currentTarget.textContent ?? "";
+                if (nextText !== draftExternalText) {
+                  quickEditor?.onTextUpdate(selectedLocale, nextText);
+                }
               }}
             />
             {textCounter ? (
@@ -1039,7 +1287,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
                 className={`speech-beat-counter-tools nodrag nopan${counterEditorOpen ? " open" : ""}`}
               >
                 <output
-                  className={`speech-beat-text-counter${textCounter.count > textCounter.target ? " over" : ""}`}
+                className={`speech-beat-text-counter${draftTextCount > textCounter.target ? " over" : ""}`}
                   title="Right-click to edit the maximum for this universe"
                   onPointerDown={stopCanvasInteraction}
                   onContextMenu={(event) => {
@@ -1048,7 +1296,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
                     if (quickEditor?.onCounterPreferenceUpdate) setCounterEditorOpen((open) => !open);
                   }}
                 >
-                  {textCounter.count} / {textCounter.target} {textCounter.unit === "words" ? "words" : "characters"}
+                  {countBeatText(draftText, textCounter.unit)} / {textCounter.target} {textCounter.unit === "words" ? "words" : "characters"}
                 </output>
                 {counterEditorOpen && quickEditor?.onCounterPreferenceUpdate ? (
                   <div
@@ -1181,75 +1429,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             </div>
           </div>
         ) : null}
-        {isSpeech && canSource && quickEditor?.beatConnector ? (
-          <div
-            ref={connectorRef}
-            className={`speech-beat-connector nodrag nopan${connectorMenuOpen ? " open" : ""}`}
-          >
-            <button
-              type="button"
-              className="speech-beat-connector-toggle"
-              aria-label="Add connected node"
-              aria-expanded={connectorMenuOpen}
-              title="Add connected node"
-              onPointerDown={stopCanvasInteraction}
-              onClick={(event) => {
-                stopCanvasInteraction(event);
-                setConnectorMenuOpen((open) => !open);
-              }}
-            >
-              <Plus size={14} aria-hidden="true" />
-            </button>
-            <div className="speech-beat-connector-menu">
-              <button
-                type="button"
-                onPointerDown={stopCanvasInteraction}
-                onClick={(event) => {
-                  stopCanvasInteraction(event);
-                  quickEditor.beatConnector?.onConnect("speechBeat");
-                  setConnectorMenuOpen(false);
-                }}
-              >
-                <MessageSquare size={13} aria-hidden="true" /> Dialogue
-              </button>
-              <button
-                type="button"
-                onPointerDown={stopCanvasInteraction}
-                onClick={(event) => {
-                  stopCanvasInteraction(event);
-                  quickEditor.beatConnector?.onConnect("decision");
-                  setConnectorMenuOpen(false);
-                }}
-              >
-                <Split size={13} aria-hidden="true" /> Decision
-              </button>
-              <button
-                type="button"
-                onPointerDown={stopCanvasInteraction}
-                onClick={(event) => {
-                  stopCanvasInteraction(event);
-                  quickEditor.beatConnector?.onConnect("directionBeat");
-                  setConnectorMenuOpen(false);
-                }}
-              >
-                <Clapperboard size={13} aria-hidden="true" /> Director Direction
-              </button>
-              {quickEditor.beatConnector.onInsertConditions ? (
-                <button
-                  type="button"
-                  onPointerDown={stopCanvasInteraction}
-                  onClick={(event) => {
-                    stopCanvasInteraction(event);
-                    quickEditor.beatConnector?.onInsertConditions?.();
-                    setConnectorMenuOpen(false);
-                  }}
-                >
-                  <GitBranch size={13} aria-hidden="true" /> Conditions
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        {renderNarrativeConnector()}
         {logicBands}
         {canSource ? <Handle type="source" position={Position.Right} /> : null}
       </div>
@@ -1345,6 +1525,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
         ) : null}
         <CanvasInfoBadges badges={infoBadges} />
         {logicBands}
+        {renderLogicOutcomePorts()}
         {summaryBadges.length > 0 ? (
           <div className="node-badges">
             {summaryBadges.slice(0, 3).map((badge) => (
@@ -1389,7 +1570,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             </button>
           </div>
         ) : null}
-        {canSource ? <Handle type="source" position={Position.Right} /> : null}
+        {canSource && showDefaultLogicSource ? <Handle type="source" position={Position.Right} /> : null}
       </div>
     );
   }
