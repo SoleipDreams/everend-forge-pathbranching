@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
 const candidates = [
   path.join(packageRoot, "node_modules/typescript/bin/tsc"),
-  path.join(packageRoot, "../worldnotion/node_modules/typescript/bin/tsc"),
+  path.join(packageRoot, "../everend-forge-worldnotion/node_modules/typescript/bin/tsc"),
 ];
 
 let tsc;

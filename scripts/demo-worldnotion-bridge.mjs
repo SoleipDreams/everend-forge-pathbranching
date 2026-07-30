@@ -39,7 +39,7 @@ const index = indexWorldNotionVaultFiles(files);
 const project = createEmptyBranchingProjectFromWorldNotionIndex(index, {
   projectId: "bridge-demo-from-worldnotion",
   name: "Bridge Demo From WorldNotion",
-  vaultRelativePath: "../worldnotion/examples/bridge-demo-vault",
+  vaultRelativePath: "../everend-forge-worldnotion/examples/bridge-demo-vault",
 });
 
 console.log(JSON.stringify({

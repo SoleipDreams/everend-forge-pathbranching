@@ -58,7 +58,7 @@
     "projectId": "bridge-demo-project",
     "sourceVault": {
       "kind": "worldnotion",
-      "relativePath": "../worldnotion/examples/bridge-demo-vault"
+      "relativePath": "../everend-forge-worldnotion/examples/bridge-demo-vault"
     },
     "dataClasses": [
       {

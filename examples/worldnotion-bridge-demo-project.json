@@ -4,7 +4,7 @@
   "name": "Bridge Demo PathBranching Project",
   "sourceVault": {
     "kind": "worldnotion",
-    "relativePath": "../worldnotion/examples/bridge-demo-vault"
+    "relativePath": "../everend-forge-worldnotion/examples/bridge-demo-vault"
   },
   "entrySequenceId": "sequence:example-protagonist",
   "canonRefs": [

@@ -25,7 +25,7 @@ const panelLabels: Record<WorkspacePanelId, string> = {
   assets: "Assets", logic: "Logic", player: "Player", outline: "Stories", export: "Export & Import", connect: "Connect",
 };
 
-const EVEREND_FORGE_GITHUB_URL = "https://github.com/Everendforge/everend-forge";
+const EVEREND_FORGE_GITHUB_URL = "https://github.com/SoleipDreams/everend-forge";
 const BUY_SUITE_URL = "https://everendforge.com/buy-suite";
 
 function ForgeLogoMark() {

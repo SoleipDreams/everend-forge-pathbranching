@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(__dirname, "..");
 const candidates = [
   path.join(packageRoot, "node_modules/vite/bin/vite.js"),
-  path.join(packageRoot, "../worldnotion/node_modules/vite/bin/vite.js"),
+  path.join(packageRoot, "../everend-forge-worldnotion/node_modules/vite/bin/vite.js"),
 ];
 
 let vite;
