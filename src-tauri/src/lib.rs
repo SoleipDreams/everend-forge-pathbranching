@@ -1,9 +1,12 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::UNIX_EPOCH;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tauri::menu::{
     Menu, MenuItem, PredefinedMenuItem, Submenu, HELP_SUBMENU_ID, WINDOW_SUBMENU_ID,
 };
@@ -58,6 +61,23 @@ struct BridgeStatus {
     ok: bool,
     runtime: String,
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EverendBridgeCommandResult {
+    ok: bool,
+    message: String,
+    pid: Option<u32>,
+    port: Option<u16>,
+    output: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeBundleFile {
+    path: String,
+    content: String,
 }
 
 #[derive(Serialize)]
@@ -474,6 +494,138 @@ fn bridge_status() -> BridgeStatus {
 }
 
 #[tauri::command]
+fn everend_bridge_start(
+    app: tauri::AppHandle,
+    executable: String,
+    port: u16,
+    show_terminal: bool,
+    project_id: Option<String>,
+    story_id: Option<String>,
+) -> Result<EverendBridgeCommandResult, String> {
+    let executable = resolve_bridge_executable(&app, &executable)?;
+    let mut command = bridge_command(&executable);
+    #[cfg(target_os = "windows")]
+    if !show_terminal {
+        command.creation_flags(0x08000000);
+    }
+    command.arg("start").arg("--port").arg(port.to_string());
+    if let Some(project_id) = project_id.filter(|value| !value.trim().is_empty()) {
+        command.arg("--project-id").arg(project_id);
+    }
+    if let Some(story_id) = story_id.filter(|value| !value.trim().is_empty()) {
+        command.arg("--story-id").arg(story_id);
+    }
+    let child = command
+        .spawn()
+        .map_err(|error| format!("Could not start Everend Forge Bridge: {error}"))?;
+    Ok(EverendBridgeCommandResult {
+        ok: true,
+        message: format!("Everend Forge Bridge start requested (pid {}) using {}.", child.id(), executable),
+        pid: Some(child.id()),
+        port: Some(port),
+        output: None,
+    })
+}
+
+#[tauri::command]
+fn everend_bridge_stop(app: tauri::AppHandle, executable: String, port: u16) -> Result<EverendBridgeCommandResult, String> {
+    let executable = resolve_bridge_executable(&app, &executable)?;
+    let child = bridge_command(&executable)
+        .arg("stop")
+        .arg("--port")
+        .arg(port.to_string())
+        .spawn()
+        .map_err(|error| format!("Could not stop Everend Forge Bridge: {error}"))?;
+    Ok(EverendBridgeCommandResult {
+        ok: true,
+        message: format!("Everend Forge Bridge stop requested (pid {}) using {}.", child.id(), executable),
+        pid: Some(child.id()),
+        port: Some(port),
+        output: None,
+    })
+}
+
+fn resolve_bridge_executable(app: &tauri::AppHandle, configured: &str) -> Result<String, String> {
+    if !configured.trim().is_empty() {
+        return Ok(configured.trim().to_string());
+    }
+
+    let current_dir = std::env::current_dir()
+        .map_err(|error| format!("Could not determine the PathBranching directory: {error}"))?;
+    let mut candidates = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("bridge-runtime").join("everend-forge-bridge.cmd"));
+        candidates.push(resource_dir.join("everend-forge-bridge.cmd"));
+    }
+    candidates.extend([
+        current_dir.join("bridge-runtime").join("everend-forge-bridge.cmd"),
+        current_dir.join("everend-forge-bridge.cmd"),
+        current_dir.join("..").join("everend-forge-bridge").join("everend-forge-bridge.cmd"),
+        current_dir.join("..").join("..").join("everend-forge-bridge").join("everend-forge-bridge.cmd"),
+        current_dir.join("..").join("..").join("..").join("products").join("everend").join("forge").join("repos").join("everend-forge-bridge").join("everend-forge-bridge.cmd"),
+    ]);
+
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+    }
+
+    Err("Bridge daemon executable not found automatically. Configure everend-forge-bridge.cmd in the Connection tab.".to_string())
+}
+
+fn bridge_command(executable: &str) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        if Path::new(executable)
+            .extension()
+            .map(|extension| extension.eq_ignore_ascii_case("cmd"))
+            .unwrap_or(false)
+        {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/d").arg("/c").arg(executable);
+            return command;
+        }
+    }
+    Command::new(executable)
+}
+
+#[tauri::command]
+fn everend_bridge_status(port: u16) -> Result<EverendBridgeCommandResult, String> {
+    let mut last_error = String::new();
+    for offset in 0..=25_u16 {
+        let candidate = port.saturating_add(offset);
+        match query_everend_bridge(candidate) {
+            Ok(result) if result.ok => return Ok(result),
+            Ok(_) => last_error = format!("Bridge on port {candidate} did not return HTTP 200."),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
+fn query_everend_bridge(port: u16) -> Result<EverendBridgeCommandResult, String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .map_err(|error| format!("Everend Forge Bridge is not reachable on 127.0.0.1:{port}: {error}"))?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .map_err(|error| error.to_string())?;
+    stream
+        .write_all(format!("GET /v1/session HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes())
+        .map_err(|error| error.to_string())?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).map_err(|error| error.to_string())?;
+    let output = response.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
+    Ok(EverendBridgeCommandResult {
+        ok: response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200"),
+        message: "Everend Forge Bridge session queried.".to_string(),
+        pid: None,
+        port: Some(port),
+        output: Some(output),
+    })
+}
+
+#[tauri::command]
 async fn open_universe_dialog(app: tauri::AppHandle) -> Result<Option<UniverseReadResult>, String> {
     let Some(folder_path) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
@@ -729,6 +881,27 @@ async fn export_runtime_dialog(
     Ok(Some(write_text_file(&path, &content)))
 }
 
+#[tauri::command]
+async fn export_bridge_bundle_dialog(
+    app: tauri::AppHandle,
+    files: Vec<BridgeBundleFile>,
+) -> Result<Option<WriteResult>, String> {
+    let Some(folder_path) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let root = folder_path.into_path().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    for file in files {
+        let relative = normalize_relative_path(&file.path)?;
+        let target = root.join(relative);
+        let result = write_text_file(&target, &file.content);
+        if !result.ok {
+            return Err(result.message.unwrap_or_else(|| format!("Could not write {}.", target.display())));
+        }
+    }
+    Ok(Some(WriteResult { ok: true, path: root.to_string_lossy().to_string(), modified_ms: modified_ms(&root), message: Some("Everend Forge offline bundle exported.".to_string()) }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -744,6 +917,9 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             bridge_status,
+            everend_bridge_start,
+            everend_bridge_stop,
+            everend_bridge_status,
             open_universe_dialog,
             read_universe_folder,
             index_canon_assets,
@@ -756,6 +932,7 @@ pub fn run() {
             save_project_as_dialog,
             reveal_universe,
             export_runtime_dialog,
+            export_bridge_bundle_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Everend PathBranching");

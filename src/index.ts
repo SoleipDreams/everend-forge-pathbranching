@@ -3,6 +3,7 @@ export * from "./domain.js";
 export * from "./canvas/storyCanvasModel.js";
 export * from "./canonWorkingCopy.js";
 export * from "./exportRuntime.js";
+export * from "./bridgeBundle.js";
 export * from "./exportFormats.js";
 export * from "./evpathFormat.js";
 export * from "./exportPreview.js";

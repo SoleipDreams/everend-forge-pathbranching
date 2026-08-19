@@ -157,24 +157,8 @@ function isDecisionOption(value: unknown): value is DecisionOption {
   );
 }
 
-type LogicOutcomePort = {
-  id: string;
-  label: string;
-  decisionLabel: string;
-};
-
-function isLogicOutcomePort(value: unknown): value is LogicOutcomePort {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    typeof (value as LogicOutcomePort).id === "string" &&
-    typeof (value as LogicOutcomePort).label === "string" &&
-    typeof (value as LogicOutcomePort).decisionLabel === "string",
-  );
-}
-
 export type DialoguePreset = {
-  characterRef: string;
+  characterRef?: string;
   characterVariantId?: string;
   label: string;
   variantLabel?: string;
@@ -217,6 +201,7 @@ type BeatQuickEditor = {
     id: string;
     label: string;
     portraitUrl?: string;
+    source?: "canon" | "local" | "published";
     variants: Array<{ id: string; label: string; portraitUrl?: string }>;
   }>;
   onTextUpdate: (locale: string, value: string) => void;
@@ -225,6 +210,7 @@ type BeatQuickEditor = {
   onImportSceneImage?: () => void;
   onAuxiliaryPanelChange?: (panel: "directorNote" | "sceneImage", open: boolean) => void;
   onCharacterUpdate: (characterRef?: string) => void;
+  onCreateSpeaker?: (name: string) => void;
   onCharacterVariantUpdate?: (variantId: string) => void;
   narrativeConnector?: NarrativeConnector;
 };
@@ -365,17 +351,21 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
   const routeGateHandleSignature = nodeData.kind === "routeGate"
     ? `${nodeData.details?.junctionPresentation ?? "split"}:${Array.isArray(nodeData.details?.routeOptions) ? nodeData.details.routeOptions.length : 0}`
     : "";
-  const logicOutcomePortSignature = (nodeData.kind === "event" || nodeData.kind === "decision") && nodeData.canvasLayerMode === "logic"
-    ? Array.isArray(nodeData.details?.logicOutcomePorts)
-      ? nodeData.details.logicOutcomePorts.filter(isLogicOutcomePort).map((port) => port.id).join(":")
-      : ""
-    : "";
+  // Decision nodes keep the Visual option rows (and their handles) as the
+  // single source of truth in both layers. Refresh their cached geometry when
+  // the layer or option set changes so React Flow follows the live DOM handles.
+  const outcomePortHandleSignature = nodeData.kind === "decision" && Array.isArray(nodeData.details?.options)
+      ? nodeData.details.options.filter(isDecisionOption).map((option) => option.handleId).join(":")
+      : "";
 
   useLayoutEffect(() => {
-    if (nodeData.kind === "routeGate" || logicOutcomePortSignature) {
+    if (
+      nodeData.kind === "routeGate" ||
+      nodeData.kind === "decision"
+    ) {
       updateNodeInternals(id);
     }
-  }, [id, logicOutcomePortSignature, nodeData.kind, routeGateHandleSignature, updateNodeInternals]);
+  }, [id, outcomePortHandleSignature, nodeData.canvasLayerMode, nodeData.kind, routeGateHandleSignature, updateNodeInternals]);
 
   const [openBeatMenu, setOpenBeatMenu] = useState(false);
   const [dialoguePresetMenuOpen, setDialoguePresetMenuOpen] = useState(false);
@@ -700,29 +690,6 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
     onOpenWhen={() => openLogicPart?.("conditions")}
     onOpenThen={() => openLogicPart?.("consequences")}
   /> : null;
-  const logicOutcomePorts = nodeData.canvasLayerMode !== "logic"
-    ? []
-    : nodeData.kind === "event"
-      ? Array.isArray(nodeData.details?.logicOutcomePorts)
-        ? nodeData.details.logicOutcomePorts.filter(isLogicOutcomePort)
-        : []
-      : nodeData.kind === "decision" && Array.isArray(nodeData.details?.options)
-        ? nodeData.details.options
-          .filter(isDecisionOption)
-          .map((option) => ({ id: option.handleId, label: option.visibleText ?? option.name, decisionLabel: nodeData.title }))
-        : [];
-  const showDefaultLogicSource = logicOutcomePorts.length === 0 || nodeData.details?.hasLogicDirectOutput === true;
-  const renderLogicOutcomePorts = () => logicOutcomePorts.length ? (
-    <div className="logic-outcome-ports" aria-label="Decision outcomes">
-      {logicOutcomePorts.map((port) => (
-        <div className="logic-outcome-port" key={port.id} title={`${port.decisionLabel}: ${port.label}`}>
-          <span>{port.decisionLabel}</span>
-          <b>{port.label}</b>
-          <Handle id={port.id} className="logic-outcome-handle" type="source" position={Position.Right} />
-        </div>
-      ))}
-    </div>
-  ) : null;
   const eventOtherBadges = detailBadges.filter((badge) =>
     badge !== eventTypeBadge && badge !== eventTypeBadgeCandidate,
   );
@@ -1119,7 +1086,6 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             </button>
           ) : null}
         </div>
-        {renderLogicOutcomePorts()}
       </div>
     );
   }
@@ -1225,6 +1191,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
                 onChange={(characterId) => {
                   quickEditor?.onCharacterUpdate(characterId);
                 }}
+                onCreateSpeaker={quickEditor?.onCreateSpeaker}
                 onClose={() => setOpenBeatMenu(false)}
                 onCanvasInteraction={stopCanvasInteraction}
               />
@@ -1525,7 +1492,6 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
         ) : null}
         <CanvasInfoBadges badges={infoBadges} />
         {logicBands}
-        {renderLogicOutcomePorts()}
         {summaryBadges.length > 0 ? (
           <div className="node-badges">
             {summaryBadges.slice(0, 3).map((badge) => (
@@ -1570,7 +1536,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             </button>
           </div>
         ) : null}
-        {canSource && showDefaultLogicSource ? <Handle type="source" position={Position.Right} /> : null}
+        {canSource ? <Handle type="source" position={Position.Right} /> : null}
       </div>
     );
   }

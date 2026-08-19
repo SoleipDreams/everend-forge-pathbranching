@@ -178,13 +178,13 @@ assert.ok(
 const outcomeStoryEvent = outcomeStoryLogic.nodes.find((node) => node.id === "event:a");
 assert.deepEqual(
   outcomeStoryEvent?.data.details?.logicOutcomePorts,
-  [{ id: outcomeSource, label: "Continue", decisionLabel: "Choose" }],
-  "Logic mode must retain a visible output port for each outcome.",
+  undefined,
+  "Sequence-level event nodes must not expose decision outcome ports; decisions live in the event subcanvas.",
 );
 assert.equal(
   outcomeStoryLogic.edges.find((edge) => edge.target === `route-gate:event:a:${outcomeSource}`)?.sourceHandle,
-  outcomeSource,
-  "An outcome route must leave through its own Logic-mode output port.",
+  undefined,
+  "A route leaving a decision outcome in the sequence overview must use the event's single output.",
 );
 
 const independentOutcomeProject = normalizeProject({
@@ -218,10 +218,9 @@ assert.equal(
 assert.deepEqual(
   independentOutcomeLogic.edges
     .filter((edge) => edge.source === "event:a" && edge.data?.kind === "transition")
-    .map((edge) => edge.sourceHandle)
-    .sort(),
-  [outcomeSource, "outcome:event:a:decision:choose:leave"].sort(),
-  "Independent outcomes must retain independent output handles.",
+    .map((edge) => edge.sourceHandle),
+  [undefined, undefined],
+  "Independent decision outcomes must still leave the sequence-level event through its single output.",
 );
 
 const disabledProject = normalizeProject({

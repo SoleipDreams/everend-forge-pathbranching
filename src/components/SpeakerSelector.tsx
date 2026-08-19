@@ -1,4 +1,4 @@
-import { ChevronDown, Search, UserRound, Package, GitBranch } from "lucide-react";
+import { ChevronDown, Search, UserRound, Package, GitBranch, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
 
@@ -7,6 +7,7 @@ type SpeakerOption = {
   label: string;
   portraitUrl?: string;
   kind?: string;
+  source?: "canon" | "local" | "published";
   variants: Array<{ id: string; label: string; portraitUrl?: string }>;
 };
 
@@ -22,6 +23,7 @@ export function SpeakerSelector({
   options,
   presentEntityIds,
   onChange,
+  onCreateSpeaker,
   onVariantChange,
   onClose,
   onCanvasInteraction,
@@ -30,6 +32,7 @@ export function SpeakerSelector({
   options: SpeakerOption[];
   presentEntityIds: string[];
   onChange: (speakerId?: string) => void;
+  onCreateSpeaker?: (name: string) => void;
   onVariantChange?: (variantId: string) => void;
   onClose: () => void;
   onCanvasInteraction: (event: React.PointerEvent | React.MouseEvent | React.KeyboardEvent) => void;
@@ -69,6 +72,9 @@ export function SpeakerSelector({
   }, [options, searchTerm, presentSet]);
 
   const totalResults = visibleSpeakers.length;
+  const normalizedSearchTerm = searchTerm.trim();
+  const specialSpeakerMatch = /^(narrator|unknown(?: speaker)?|\?\?\?)$/iu.test(normalizedSearchTerm);
+  const canCreateSpeaker = Boolean(onCreateSpeaker && normalizedSearchTerm && totalResults === 0 && !specialSpeakerMatch);
 
   // Focus search input when opened
   useEffect(() => {
@@ -104,6 +110,14 @@ export function SpeakerSelector({
 
   const handleSelectSpeaker = (speakerId?: string) => {
     onChange(speakerId);
+    setSearchOpen(false);
+    setSearchTerm("");
+    onClose();
+  };
+
+  const handleCreateSpeaker = () => {
+    if (!canCreateSpeaker || !onCreateSpeaker) return;
+    onCreateSpeaker(normalizedSearchTerm);
     setSearchOpen(false);
     setSearchTerm("");
     onClose();
@@ -153,6 +167,9 @@ export function SpeakerSelector({
                   if (speaker) {
                     handleSelectSpeaker(speaker.id);
                   }
+                } else if (e.key === "Enter" && canCreateSpeaker) {
+                  e.preventDefault();
+                  handleCreateSpeaker();
                 }
               }}
             />
@@ -227,18 +244,37 @@ export function SpeakerSelector({
                     {speaker.kind ? (
                       <span className="speaker-selector-kind">{speaker.kind}</span>
                     ) : null}
+                    {speaker.source ? (
+                      <span className="speaker-selector-source">{speaker.source === "published" ? "Published" : speaker.source === "local" ? "Local" : "Canon"}</span>
+                    ) : null}
                   </div>
                 </button>
               );
             })
           ) : (
-            <div className="speaker-selector-empty">
-              <p>
-                {searchTerm
-                  ? `No speakers match "${searchTerm}"`
-                  : "No entities present in this event yet. Search to add one."}
-              </p>
-            </div>
+            <>
+              <div className="speaker-selector-empty">
+                <p>
+                  {searchTerm
+                    ? `No speakers match "${searchTerm}"`
+                    : "No entities present in this event yet. Search to add one."}
+                </p>
+              </div>
+              {canCreateSpeaker ? (
+                <button
+                  type="button"
+                  role="option"
+                  className="speaker-selector-option speaker-selector-create"
+                  onClick={(event) => {
+                    onCanvasInteraction(event);
+                    handleCreateSpeaker();
+                  }}
+                >
+                  <span className="speaker-selector-icon"><Plus size={14} /></span>
+                  <span className="speaker-selector-label">Create “{normalizedSearchTerm}” as local character</span>
+                </button>
+              ) : null}
+            </>
           )}
         </div>
       ) : null}

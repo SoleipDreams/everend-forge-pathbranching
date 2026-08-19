@@ -403,16 +403,6 @@ function decisionOptions(eventId: string, decision: NonNullable<EventNode["decis
   }));
 }
 
-function eventLogicOutcomePorts(event: EventNode) {
-  return (event.decisions ?? []).flatMap((decision) =>
-    decision.outcomes.map((outcome) => ({
-      id: decisionOutcomeNodeId(event.id, decision.id, outcome.id),
-      label: outcome.visibleText ?? outcome.name,
-      decisionLabel: decision.name,
-    })),
-  );
-}
-
 function visualTransitionSource(
   event: EventNode,
   transition: Transition,
@@ -1826,8 +1816,6 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
         minimapColor: branchColor(branch, eventNode.branchRef, options) ?? eventTypeColor(project, eventNode, options),
         sequenceEntry,
         showEventOverview: true,
-        logicOutcomePorts: eventLogicOutcomePorts(eventNode),
-        hasLogicDirectOutput: eventNode.transitions?.some((transition) => transition.from === eventNode.id) ?? false,
       },
       {
         nodeColors: options.nodeColors,
@@ -1855,8 +1843,6 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
       if (!nodes.some((node) => node.id === eventNode.id) || !activeEventIds.has(transition.to)) {
         return;
       }
-      const outcomePort = eventLogicOutcomePorts(eventNode)
-        .find((port) => port.id === transition.from);
       edges.push({
         ...edge(
           `edge:transition:${transition.id}`,
@@ -1866,7 +1852,6 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
           transitionCanvasLabel(transition),
           transitionEdgeData(project, transition),
         ),
-        sourceHandle: outcomePort?.id,
       });
     });
   });

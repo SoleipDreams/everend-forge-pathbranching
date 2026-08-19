@@ -388,6 +388,12 @@ export async function exportRuntimeDialog(runtimePackage: RuntimePackage): Promi
   return exportTextDialog(`${JSON.stringify(runtimePackage, null, 2)}\n`, "runtime-package.json");
 }
 
+export async function exportBridgeBundleDialog(files: Array<{ path: string; content: string }>): Promise<WriteResult | undefined> {
+  assertDesktopRuntime("Exporting an Everend Forge offline bundle");
+  const result = await invoke<WriteResult | null>("export_bridge_bundle_dialog", { files });
+  return result ?? undefined;
+}
+
 export async function exportTextDialog(content: string, defaultName: string): Promise<WriteResult | undefined> {
   assertDesktopRuntime("Exporting local files");
   const result = await invoke<WriteResult | null>("export_runtime_dialog", {

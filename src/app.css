@@ -2485,6 +2485,13 @@ button:disabled {
   border-radius: 8px;
 }
 
+/* Keep the speaker popover's action row reachable when it extends toward the
+   floating minimap. The minimap returns as soon as the selector closes. */
+.canvas-shell:has(.speaker-selector-menu) .react-flow__minimap {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .react-flow__minimap.nested-scope-minimap {
   background: var(--wn-editor-bg) !important;
 }
@@ -4067,7 +4074,8 @@ button:disabled {
    always render on top. */
 .react-flow__node:has(.story-node.speech-beat-node:hover),
 .react-flow__node:has(.story-node.direction-beat-node:hover),
-.react-flow__node:has(.speech-beat-connector.open) {
+.react-flow__node:has(.speech-beat-connector.open),
+.react-flow__node:has(.speaker-selector-menu) {
   z-index: 1000 !important;
 }
 
@@ -7813,6 +7821,327 @@ button:disabled {
   color: var(--wn-danger);
 }
 
+.everend-bridge-panel {
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.bridge-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--wn-border);
+  border-radius: 8px;
+  background: var(--wn-panel-2);
+}
+
+.bridge-tabs button {
+  min-height: 30px;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--wn-muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.bridge-tabs button:hover,
+.bridge-tabs button.active {
+  border-color: var(--wn-border);
+  background: var(--wn-panel);
+  color: var(--wn-text);
+}
+
+.bridge-dashboard-tab,
+.bridge-tab-panel {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.bridge-dashboard-tab {
+  max-width: 520px;
+  padding-top: 6px;
+}
+
+.bridge-dashboard-tab .bridge-server-card {
+  min-height: 104px;
+}
+
+.bridge-service-toggle {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--wn-border);
+  border-radius: 7px;
+  background: var(--wn-panel);
+  color: var(--wn-text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.bridge-service-toggle.start {
+  border-color: color-mix(in srgb, var(--wn-accent) 62%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-accent) 15%, var(--wn-panel));
+}
+
+.bridge-service-toggle.stop {
+  border-color: color-mix(in srgb, var(--wn-danger) 62%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-danger) 13%, var(--wn-panel));
+  color: var(--wn-danger);
+}
+
+.bridge-service-toggle:hover,
+.bridge-service-toggle:focus-visible {
+  filter: brightness(1.08);
+}
+
+.everend-bridge-panel .settings-grid,
+.everend-bridge-panel .settings-grid label,
+.everend-bridge-panel .settings-grid input,
+.everend-bridge-panel .settings-grid select {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.everend-bridge-panel > * {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.bridge-server-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 13px 14px;
+  border: 1px solid var(--wn-border);
+  border-radius: 9px;
+  background: var(--wn-panel-2);
+}
+
+.bridge-server-card.online {
+  border-color: color-mix(in srgb, var(--wn-accent) 42%, var(--wn-border));
+}
+
+.bridge-server-card.offline {
+  border-color: color-mix(in srgb, var(--wn-danger) 45%, var(--wn-border));
+}
+
+.bridge-server-copy {
+  display: grid;
+  flex: 1 1 260px;
+  min-width: 0;
+  gap: 3px;
+}
+
+.bridge-eyebrow {
+  color: var(--wn-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bridge-server-copy strong {
+  color: var(--wn-text);
+  font-size: 0.92rem;
+}
+
+.bridge-server-copy small,
+.bridge-connection-detail {
+  color: var(--wn-muted);
+  font-size: 0.72rem;
+}
+
+.bridge-server-status,
+.bridge-connection-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--wn-border);
+  border-radius: 999px;
+  background: var(--wn-panel);
+  color: var(--wn-text);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bridge-server-status.offline {
+  border-color: color-mix(in srgb, var(--wn-danger) 72%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-danger) 15%, var(--wn-panel));
+  color: var(--wn-danger);
+}
+
+.bridge-server-status.online {
+  border-color: color-mix(in srgb, var(--wn-accent) 64%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-accent) 13%, var(--wn-panel));
+  color: var(--wn-accent);
+}
+
+.bridge-server-status.unknown {
+  border-color: color-mix(in srgb, var(--wn-warning) 64%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-warning) 12%, var(--wn-panel));
+  color: var(--wn-warning);
+}
+
+.bridge-server-status:hover,
+.bridge-server-status:focus-visible {
+  filter: brightness(1.08);
+}
+
+.bridge-server-dot,
+.bridge-connection-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.bridge-connection-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bridge-connection-pill.connected {
+  border-color: color-mix(in srgb, var(--wn-accent) 52%, var(--wn-border));
+  color: var(--wn-accent);
+}
+
+.bridge-connection-pill.disconnected,
+.bridge-connection-pill.error {
+  border-color: color-mix(in srgb, var(--wn-danger) 58%, var(--wn-border));
+  color: var(--wn-danger);
+}
+
+.bridge-connection-pill.connecting,
+.bridge-connection-pill.reconnecting {
+  border-color: color-mix(in srgb, var(--wn-warning) 55%, var(--wn-border));
+  color: var(--wn-warning);
+}
+
+.bridge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.bridge-actions button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.bridge-actions .bridge-primary-action {
+  border-color: color-mix(in srgb, var(--wn-accent) 62%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-accent) 15%, var(--wn-panel));
+}
+
+.bridge-actions .bridge-danger-action {
+  border-color: color-mix(in srgb, var(--wn-danger) 58%, var(--wn-border));
+  color: var(--wn-danger);
+}
+
+@media (max-width: 700px) {
+  .bridge-server-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .bridge-server-copy {
+    width: 100%;
+    flex: 0 1 auto;
+  }
+
+  .bridge-server-status {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-backdrop {
+    padding: 10px;
+  }
+
+  .settings-modal {
+    width: calc(100dvw - 20px);
+    height: calc(100dvh - 20px);
+    max-width: calc(100dvw - 20px);
+  }
+
+  .settings-body {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--wn-border);
+  }
+
+  .settings-nav-group {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .settings-nav-group p {
+    display: none;
+  }
+
+  .app-settings-group {
+    margin-top: 0;
+  }
+
+  .settings-nav button {
+    white-space: nowrap;
+  }
+
+  .settings-section {
+    padding: 12px;
+    min-width: 0;
+  }
+
+  .settings-panel,
+  .settings-grid {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .settings-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-grid label {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .settings-grid input,
+  .settings-grid select {
+    width: 100%;
+  }
+}
+
 .inspector-header {
   display: flex;
   justify-content: space-between;
@@ -8293,6 +8622,23 @@ button:disabled {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.speaker-selector-source {
+  color: var(--wn-muted);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.speaker-selector-create {
+  border-top: 1px solid var(--wn-border);
+  color: var(--wn-accent);
+}
+
+.speaker-selector-create:hover {
+  color: var(--wn-accent);
 }
 
 .speaker-selector-empty {
@@ -10102,8 +10448,10 @@ button:disabled {
 }
 
 /* Logic is a distinct canvas language: narrative controls and artwork are not
-   merely dimmed, they leave the node entirely so conditions and effects own it. */
-.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > :not(.node-logic-bands):not(.logic-outcome-ports):not(.react-flow__handle):not(.react-flow__node-toolbar) {
+   merely dimmed, they leave the node entirely so conditions and effects own it.
+   Decision option rows stay mounted and visible because their source handles
+   are also the canonical Visual connections. */
+.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > :not(.node-logic-bands):not(.decision-options):not(.react-flow__handle):not(.react-flow__node-toolbar) {
   display: none;
 }
 
@@ -10126,47 +10474,6 @@ button:disabled {
 .canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) .logic-band-summary {
   flex-wrap: wrap;
   overflow: visible;
-}
-
-.logic-outcome-ports {
-  display: grid;
-  gap: 5px;
-  margin-top: 1px;
-}
-
-.logic-outcome-port {
-  position: relative;
-  display: grid;
-  gap: 2px;
-  min-height: 34px;
-  padding: 6px 12px 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--pb-decision) 38%, var(--wn-border));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--pb-decision) 7%, var(--wn-card));
-}
-
-.logic-outcome-port > span {
-  color: var(--wn-muted);
-  font-size: 0.48rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.logic-outcome-port > b {
-  overflow: hidden;
-  color: var(--wn-text);
-  font-size: 0.62rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.logic-outcome-port .logic-outcome-handle {
-  width: 8px;
-  height: 8px;
-  right: -5px;
-  border: 2px solid var(--wn-card);
-  background: var(--pb-decision);
 }
 
 .story-node.route-junction {

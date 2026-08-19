@@ -35,6 +35,7 @@ import { ExportPanel } from "./components/ExportPanel.js";
 import { EventScriptWorkspace } from "./components/EventScriptWorkspace.js";
 import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
 import { ConnectPanel } from "./components/ConnectPanel.js";
+import { EverendBridgePanel } from "./components/EverendBridgePanel.js";
 import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
 import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
@@ -110,7 +111,6 @@ import {
   OctagonAlert,
   Package,
   RefreshCw,
-  SearchCheck,
   Settings,
   ShieldCheck,
   Split,
@@ -230,7 +230,7 @@ import {
   scriptBlockTextKey,
   updateLocalizedEntry,
 } from "./localization.js";
-import { UNKNOWN_SPEAKER_REF } from "./speakerRoles.js";
+import { UNKNOWN_SPEAKER_REF, speakerLabel } from "./speakerRoles.js";
 import { automaticNarrativeName } from "./narrativeNaming.js";
 import * as mutations from "./projectMutations.js";
 import {
@@ -248,7 +248,6 @@ import {
   indexCanonAssets,
   saveWorkingCopy,
   saveUniverseTextFile,
-  verifyDesktopBridge,
   type ProjectFileState,
 } from "./projectPersistence.js";
 import { DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE } from "./projectSerialization.js";
@@ -840,8 +839,16 @@ type DialoguePresetSpeakerOption = {
   id: string;
   label: string;
   portraitUrl?: string;
+  kind?: string;
   variants: Array<{ id: string; label: string; portraitUrl?: string }>;
+  source?: "canon" | "local" | "published";
 };
+
+function localEntityIsSpeaker(project: BranchingProject, entity: LocalExplorerEntity) {
+  const normalizedType = entity.type.replace(/^type:/i, "").trim().toLowerCase();
+  return normalizedType === "character" || normalizedType === "speaker" ||
+    propertyIsEntityPresentable(project, "local", `type:${normalizedType}`);
+}
 
 function recentDialoguePresets(
   nodes: StoryCanvasNode[],
@@ -888,21 +895,22 @@ function recentDialoguePresets(
     const node = nodeById.get(nodeId);
     if (node?.data.kind !== "speechBeat") return;
     const block = node.data.details?.block as ScriptBlock | undefined;
+    // An empty speaker reference is a recently used Narrator beat; the
+    // explicit unknown-speaker reference is the recently used `???` option.
     const characterRef = block?.characterRef ?? block?.speakerRef;
-    if (!characterRef || characterRef === UNKNOWN_SPEAKER_REF) return;
-    const speaker = speakerOptions.find((option) => option.id === characterRef);
-    const canonRef = canonRefs.find((ref) => ref.id === characterRef);
+    const speaker = characterRef ? speakerOptions.find((option) => option.id === characterRef) : undefined;
+    const canonRef = characterRef ? canonRefs.find((ref) => ref.id === characterRef) : undefined;
     const characterVariantId = canonRef
       ? resolveCanonVariantId(canonRef, block?.characterVariantId)
-      : block?.characterVariantId ?? "base";
-    const presetKey = `${characterRef}:${characterVariantId}`;
+      : "base";
+    const presetKey = `${characterRef === UNKNOWN_SPEAKER_REF ? "unknown" : characterRef ?? "narrator"}:${characterVariantId}`;
     if (seenPresets.has(presetKey)) return;
     seenPresets.add(presetKey);
     const variant = speaker?.variants.find((option) => option.id === characterVariantId);
     presets.push({
       characterRef,
       characterVariantId,
-      label: speaker?.label ?? characterRef,
+      label: speaker?.label ?? speakerLabel(characterRef),
       variantLabel: variant?.label,
       portraitUrl: variant?.portraitUrl ?? speaker?.portraitUrl,
     });
@@ -3304,18 +3312,6 @@ function EventCategoriesSettings({
   );
 }
 
-function bridgeLastCheckedLabel(value?: number) {
-  if (!value) return "Never";
-  return new Date(value).toLocaleString();
-}
-
-function bridgeStatusLabel(settings: WorldNotionBridgeSettings) {
-  if (!settings.connected) return "Disconnected";
-  if (settings.lastStatus === "ok") return "Connected";
-  if (settings.lastStatus === "error") return "Connection issue";
-  return "Connected, not verified";
-}
-
 function PathBranchingSettingsModal({
   project,
   fileState,
@@ -3334,9 +3330,6 @@ function PathBranchingSettingsModal({
   onInspectorDebugEnabledChange,
   onShowStatusMessagesChange,
   onLocalePreferenceChange,
-  onConnectBridge,
-  onVerifyBridge,
-  onDisconnectBridge,
   onOpenUniverse,
   onOpenRecentUniverse,
   onRemoveRecentUniverse,
@@ -3364,9 +3357,6 @@ function PathBranchingSettingsModal({
   onInspectorDebugEnabledChange: (value: boolean) => void;
   onShowStatusMessagesChange: (value: boolean) => void;
   onLocalePreferenceChange: (value: AppSettings["localePreference"]) => void;
-  onConnectBridge: () => void;
-  onVerifyBridge: () => void;
-  onDisconnectBridge: () => void;
   onOpenUniverse: () => void;
   onOpenRecentUniverse: (path: string) => void;
   onRemoveRecentUniverse: (path: string) => void;
@@ -3809,68 +3799,7 @@ function PathBranchingSettingsModal({
 
             {activeSection === "bridge" ? (
               <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>WorldNotion bridge</h3>
-                  <p>
-                    Use the bridge only when Everend PathBranching should read a
-                    local WorldNotion universe folder.
-                  </p>
-                </div>
-                <div className="settings-grid">
-                  <label>
-                    <span>Status</span>
-                    <input
-                      value={bridgeStatusLabel(settings.worldnotionBridge)}
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Runtime</span>
-                    <input
-                      value={
-                        isTauriRuntime() ? "Tauri desktop IPC" : "Web preview"
-                      }
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Last check</span>
-                    <input
-                      value={bridgeLastCheckedLabel(
-                        settings.worldnotionBridge.lastCheckedAt,
-                      )}
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Last universe</span>
-                    <input
-                      value={settings.lastOpenedProject ?? "None"}
-                      readOnly
-                    />
-                  </label>
-                </div>
-                <div className="settings-action-list">
-                  <button type="button" onClick={onConnectBridge}>
-                    <Link size={15} />
-                    Connect bridge
-                  </button>
-                  <button type="button" onClick={onVerifyBridge}>
-                    <SearchCheck size={15} />
-                    Verify connection
-                  </button>
-                  <button type="button" onClick={onDisconnectBridge}>
-                    <X size={15} />
-                    Disconnect bridge
-                  </button>
-                </div>
-                {settings.worldnotionBridge.lastMessage ? (
-                  <p
-                    className={`bridge-status-note ${settings.worldnotionBridge.lastStatus ?? "disconnected"}`}
-                  >
-                    {settings.worldnotionBridge.lastMessage}
-                  </p>
-                ) : null}
+                <EverendBridgePanel project={project} fileState={fileState} />
               </div>
             ) : null}
 
@@ -9383,6 +9312,7 @@ function StoryCanvas({
   onImportEventCoverImage,
   onAuxiliaryPanelChange,
   onUpdateScriptBlock,
+  onCreateLocalSpeaker,
   onUpdateLocalizedText,
   onDeleteDialogueBeat,
   onDeleteEventDialogueBeat,
@@ -9559,6 +9489,7 @@ function StoryCanvas({
   onImportEventCoverImage: (eventId: string) => void;
   onAuxiliaryPanelChange: (nodeId: string, panel: "directorNote" | "sceneImage" | "coverImage" | "description", open: boolean) => void;
   onUpdateScriptBlock: (scriptId: string, blockId: string, updates: Partial<ScriptBlock>) => void;
+  onCreateLocalSpeaker: (eventId: string, scriptId: string, blockId: string, name: string) => void;
   onUpdateLocalizedText: (textKey: string, locale: string, value: string) => void;
   onDeleteDialogueBeat: (eventId: string, dialogueId: string, beatId: string) => void;
   onDeleteEventDialogueBeat: (eventId: string, beatId: string) => void;
@@ -10064,7 +9995,7 @@ function StoryCanvas({
                     : lengthTarget.unit === "words"
                       ? activeText.trim() ? activeText.trim().split(/\s+/u).length : 0
                       : Array.from(activeText).length;
-                  const speakerOptions: DialoguePresetSpeakerOption[] = project.canonRefs
+                  const canonSpeakerOptions: DialoguePresetSpeakerOption[] = project.canonRefs
                     .filter((canonRef) => canonRefIsEntityPresentable(project, propertiesConfig, canonRef))
                     .map((canonRef) => {
                       const variants = canonVariantsForRef(canonRef).map((variant) => {
@@ -10084,8 +10015,19 @@ function StoryCanvas({
                         label: canonRef.label ?? canonRef.id,
                         portraitUrl: portrait,
                         variants,
+                        source: "canon" as const,
                       };
                     });
+                  const localSpeakerOptions: DialoguePresetSpeakerOption[] = (project.localExplorerEntities ?? [])
+                    .filter((entity) => localEntityIsSpeaker(project, entity))
+                    .map((entity) => ({
+                      id: entity.id,
+                      label: entity.name,
+                      kind: entity.type,
+                      variants: [{ id: "base", label: entity.name }],
+                      source: entity.publishedPath ? "published" as const : "local" as const,
+                    }));
+                  const speakerOptions = [...canonSpeakerOptions, ...localSpeakerOptions];
                   const dialoguePresets = recentDialoguePresets(
                     nodes,
                     edges,
@@ -10165,6 +10107,9 @@ function StoryCanvas({
                         onUpdateEvent(beatEvent.id, { presentEntityRefs: [...presentEntityRefs, characterRef] });
                       }
                     },
+                    onCreateSpeaker: beatEventId
+                      ? (name: string) => onCreateLocalSpeaker(beatEventId, blockRef.scriptId, blockRef.blockId, name)
+                      : undefined,
                     onCharacterVariantUpdate: (characterVariantId: string) =>
                       onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, {
                         characterVariantId: characterVariantId === "base" ? undefined : characterVariantId,
@@ -10233,7 +10178,7 @@ function StoryCanvas({
         };
       }),
     }),
-    [activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig],
+    [activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateLocalSpeaker, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig],
   );
   const activeEventScope =
     activeScope?.kind === "event"
@@ -13321,85 +13266,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [],
   );
 
-  const checkBridgeConnection = useCallback(async (connect: boolean) => {
-    if (!isTauriRuntime()) {
-      const lastMessage =
-        "Bridge unavailable in web preview. Open Everend PathBranching desktop to connect a local universe folder.";
-      setSettings((current) => ({
-        ...current,
-        worldnotionBridge: {
-          ...current.worldnotionBridge,
-          connected: false,
-          lastCheckedAt: Date.now(),
-          lastStatus: "error",
-          lastMessage,
-        },
-      }));
-      setMessage(lastMessage);
-      return false;
-    }
-
-    try {
-      const status = await verifyDesktopBridge();
-      const lastMessage =
-        status.message || "Everend PathBranching desktop bridge is available.";
-      setSettings((current) => ({
-        ...current,
-        worldnotionBridge: {
-          ...current.worldnotionBridge,
-          connected: connect ? true : current.worldnotionBridge.connected,
-          lastCheckedAt: Date.now(),
-          lastStatus: status.ok ? "ok" : "error",
-          lastMessage,
-        },
-      }));
-      setError(undefined);
-      setMessage(connect ? "WorldNotion bridge connected." : lastMessage);
-      return status.ok;
-    } catch (bridgeError) {
-      const lastMessage =
-        bridgeError instanceof Error
-          ? bridgeError.message
-          : String(bridgeError);
-      setSettings((current) => ({
-        ...current,
-        worldnotionBridge: {
-          ...current.worldnotionBridge,
-          connected: false,
-          lastCheckedAt: Date.now(),
-          lastStatus: "error",
-          lastMessage,
-        },
-      }));
-      setError(lastMessage);
-      return false;
-    }
-  }, []);
-
-  const connectBridge = useCallback(() => {
-    void checkBridgeConnection(true);
-  }, [checkBridgeConnection]);
-
-  const verifyBridge = useCallback(() => {
-    void checkBridgeConnection(false);
-  }, [checkBridgeConnection]);
-
-  const disconnectBridge = useCallback(() => {
-    const lastMessage =
-      "WorldNotion bridge disconnected. Everend PathBranching will not auto-open or listen through the bridge.";
-    setSettings((current) => ({
-      ...current,
-      worldnotionBridge: {
-        ...current.worldnotionBridge,
-        connected: false,
-        lastCheckedAt: Date.now(),
-        lastStatus: "disconnected",
-        lastMessage,
-      },
-    }));
-    setMessage(lastMessage);
-  }, []);
-
   const openProject = useCallback(async () => {
     if (!(await confirmDiscardChanges())) {
       return;
@@ -15670,6 +15536,61 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       );
     },
     [project, runCanvasMutation],
+  );
+
+  const createCanvasLocalSpeaker = useCallback(
+    (eventId: string, scriptId: string, blockId: string, name: string) => {
+      const currentProject = projectRef.current;
+      const trimmedName = name.trim();
+      const event = currentProject?.events.find((candidate) => candidate.id === eventId);
+      if (!currentProject || !event || !trimmedName) return;
+
+      const existingIds = new Set([
+        ...currentProject.canonRefs.map((ref) => ref.id),
+        ...(currentProject.localExplorerEntities ?? []).map((entity) => entity.id),
+      ]);
+      const baseEntity = createLocalExplorerEntity("character", trimmedName);
+      let entity = baseEntity;
+      let suffix = 2;
+      while (existingIds.has(entity.id)) {
+        entity = { ...baseEntity, id: `${baseEntity.id}-${suffix}` };
+        suffix += 1;
+      }
+
+      const presentEntityRefs = event.presentEntityRefs ?? event.canonRefs ?? [];
+      void commitStructuralAction("Created local character from speech beat", {
+        project: {
+          ...currentProject,
+          localExplorerEntities: [
+            ...(currentProject.localExplorerEntities ?? []),
+            entity,
+          ],
+          scriptDocuments: (currentProject.scriptDocuments ?? []).map((document) =>
+            document.id === scriptId
+              ? {
+                  ...document,
+                  blocks: document.blocks.map((block) =>
+                    block.id === blockId
+                      ? { ...block, characterRef: entity.id, characterVariantId: undefined }
+                      : block,
+                  ),
+                }
+              : document,
+          ),
+          events: currentProject.events.map((candidate) =>
+            candidate.id === eventId
+              ? {
+                  ...candidate,
+                  presentEntityRefs: presentEntityRefs.includes(entity.id)
+                    ? presentEntityRefs
+                    : [...presentEntityRefs, entity.id],
+                }
+              : candidate,
+          ),
+        },
+      });
+    },
+    [commitStructuralAction],
   );
 
   const updateCanvasLocalizedText = useCallback(
@@ -17958,9 +17879,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       onInspectorDebugEnabledChange={changeInspectorDebugEnabled}
       onShowStatusMessagesChange={changeShowStatusMessages}
       onLocalePreferenceChange={(localePreference) => setSettings((current) => ({ ...current, localePreference }))}
-      onConnectBridge={connectBridge}
-      onVerifyBridge={verifyBridge}
-      onDisconnectBridge={disconnectBridge}
       onOpenUniverse={openProject}
       onOpenRecentUniverse={openRecentProject}
       onRemoveRecentUniverse={removeRecentProject}
@@ -18317,6 +18235,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onImportEventCoverImage={importEventCoverImage}
             onAuxiliaryPanelChange={changeAuxiliaryPanel}
             onUpdateScriptBlock={updateCanvasScriptBlock}
+            onCreateLocalSpeaker={createCanvasLocalSpeaker}
             onUpdateLocalizedText={updateCanvasLocalizedText}
             onDeleteDialogueBeat={deleteDialogueBeat}
             onDeleteEventDialogueBeat={deleteEventDialogueBeat}
@@ -18408,7 +18327,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onContextMenu={openPanelContextMenu}
             onExport={(mode) => void exportRuntime(mode)}
             onImportTwine={importTwine}
-            onUpdate={(nextProject) => updateProject(nextProject)}
           /> : null}
           {panelVisibility.connect ? <ConnectPanel
             collapsed={panelCollapsed.connect}
