@@ -12,6 +12,9 @@
   // layout those scripts import.
   "include": [
     "src/index.ts",
+    "src/authoringEngine.ts",
+    "src/authoringMutations.ts",
+    "src/authoringDrafts.ts",
     "src/projectMutations.ts",
     "src/eventScriptModel.ts",
     "src/eventInspectorState.ts",
