@@ -40,6 +40,11 @@ import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
 import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
 import { Topbar } from "./components/Topbar.js";
+import { diagnosticSelection, findingPresentation } from "./diagnosticPresentation.js";
+import { useOverlayFocus } from "./components/useOverlayFocus.js";
+import { AdaptiveWorkspace, WorkspacePanelSlot } from "./components/AdaptiveWorkspace.js";
+import { StoriesPanel } from "./components/StoriesPanel.js";
+import { AccessibleTabs } from "./components/AccessibleTabs.js";
 import { FeedbackModal } from "./components/FeedbackModal.js";
 import { UniverseIconFrame } from "./components/UniverseIconFrame.js";
 import {
@@ -320,7 +325,7 @@ import {
   type WorkspacePanelId,
   type WorkspacePanelState,
 } from "./workspaceSettings.js";
-import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale } from "./i18n.js";
+import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale, useInterfaceLocale, authoringUiCopy, onboardingUiCopy, homeUiCopy, inspectorUiCopy } from "./i18n.js";
 import { validateProject } from "./validate.js";
 import {
   buildStoryCanvasModel,
@@ -2349,20 +2354,10 @@ function InspectorContentTabs({
   tabs: Array<{ id: string; label: string }>;
   onChange: (value: string) => void;
 }) {
-  return (
-    <nav className="inspector-subtabs" aria-label="Inspector sections">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          className={value === tab.id ? "active" : ""}
-          onClick={() => onChange(tab.id)}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </nav>
-  );
+  const locale = useInterfaceLocale();
+  const copy = authoringUiCopy(locale);
+  const labels: Record<string, string> = locale === "es" ? { Overview: "Resumen", Content: "Contenido", Path: "Texto", Connections: "Conexiones", Conditions: "Condiciones", Consequences: "Consecuencias", Choices: "Opciones", Logic: "Lógica", Routes: "Rutas" } : {};
+  return <AccessibleTabs className="inspector-subtabs" value={value} tabs={tabs.map((tab) => ({ ...tab, label: labels[tab.label] ?? tab.label }))} onChange={onChange} ariaLabel={copy.inspectorSections} />;
 }
 
 function InDevelopmentPlaceholder({ title }: { title: string }) {
@@ -2840,6 +2835,8 @@ function HomeDashboard({
   onExportRuntime: () => void;
   onFeedback: () => void;
 }) {
+  const useLocale = useInterfaceLocale();
+  const c = homeUiCopy(useLocale);
   const activeSequence =
     project?.sequences.find(
       (sequence) => sequence.id === activeSequenceId(project),
@@ -2847,10 +2844,10 @@ function HomeDashboard({
   const hasTransientStory = Boolean(workspace?.createdDefaultStory);
   const canEnterWorkspace = Boolean(project);
   const documentStatus = !project
-    ? "No universe"
+    ? c.noUniverse
     : hasTransientStory
-      ? "No story yet"
-      : "Ready";
+      ? c.noStory
+      : c.ready;
 
   return (
     <main className="home-shell">
@@ -2864,7 +2861,7 @@ function HomeDashboard({
           />
           <div>
             <h1>Pathbranching</h1>
-            <p>Story-flow authoring workspace</p>
+            <p>{c.tagline}</p>
           </div>
         </div>
         <div className="home-topbar-actions">
@@ -2872,7 +2869,7 @@ function HomeDashboard({
             type="button"
             className="dock-icon-button"
             onClick={onOpenSettings}
-            title="Pathbranching settings"
+            title={c.settings} aria-label={c.settings}
           >
             <Settings size={15} />
           </button>
@@ -2880,8 +2877,8 @@ function HomeDashboard({
             type="button"
             className="dock-icon-button"
             onClick={onFeedback}
-            title="Enviar feedback"
-            aria-label="Enviar feedback"
+            title={c.feedback}
+            aria-label={c.feedback}
           >
             <MessageSquareText size={15} />
           </button>
@@ -2889,8 +2886,8 @@ function HomeDashboard({
             type="button"
             className="dock-icon-button"
             onClick={onToggleTheme}
-            title={`Toggle theme (${themeById(theme).label})`}
-            aria-label="Toggle theme"
+            title={`${c.theme} (${themeById(theme).label})`}
+            aria-label={c.theme}
           >
             {isDarkTheme(theme) ? <Sun size={15} /> : <Moon size={15} />}
           </button>
@@ -2900,13 +2897,9 @@ function HomeDashboard({
       <section className="home-panel">
         <div className="home-hero">
           <div className="home-copy">
-            <p className="eyebrow">Home</p>
-            <h2>Open a universe</h2>
-            <p>
-              Pathbranching reads the same universe folder as Worldnotion,
-              previews its Markdown canon, and stores branching stories in
-              `.everend/.pathbranching`.
-            </p>
+            <p className="eyebrow">{c.home}</p>
+            <h2>{c.open}</h2>
+            <p>{c.description}</p>
           </div>
 
           {project ? (
@@ -2938,12 +2931,12 @@ function HomeDashboard({
             onClick={onOpenProject}
           >
             <FolderOpen size={16} />
-            Open Universe
+            {c.openUniverse}
           </button>
           {onOpenDemoUniverse ? (
             <button type="button" onClick={onOpenDemoUniverse}>
               <Sparkles size={16} />
-              Open Demo Universe
+              {c.demo}
             </button>
           ) : null}
           <button
@@ -2952,7 +2945,7 @@ function HomeDashboard({
             disabled={!canEnterWorkspace}
           >
             <GitBranch size={16} />
-            Workspace
+            {c.workspace}
           </button>
           <button
             type="button"
@@ -2960,47 +2953,47 @@ function HomeDashboard({
             disabled={!canEnterWorkspace}
           >
             <Download size={16} />
-            Export Runtime
+            {c.export}
           </button>
         </div>
 
         <div className="home-metrics">
           <div>
             <strong>{project?.sequences.length ?? 0}</strong>
-            <span>Sequences</span>
+            <span>{c.sequences}</span>
           </div>
           <div>
             <strong>{project?.branches.length ?? 0}</strong>
-            <span>Branches</span>
+            <span>{c.branches}</span>
           </div>
           <div>
             <strong>{project?.events.length ?? 0}</strong>
-            <span>Events</span>
+            <span>{c.events}</span>
           </div>
           <div>
             <strong>{project?.projectDataObjects?.length ?? 0}</strong>
-            <span>Data objects</span>
+            <span>{c.objects}</span>
           </div>
           <div>
-            <strong>{activeSequence?.name ?? "None"}</strong>
-            <span>Active sequence</span>
+            <strong>{activeSequence?.name ?? c.none}</strong>
+            <span>{c.activeSequence}</span>
           </div>
           <div>
             <strong>{documentStatus}</strong>
-            <span>Document</span>
+            <span>{c.document}</span>
           </div>
         </div>
 
         {findings.length ? (
           <section className="dashboard-findings">
-            <h3>Validation</h3>
+            <h3>{c.validation}</h3>
             <div className="stack-list">
               {findings.slice(0, 5).map((finding) => (
                 <div
                   className={`finding ${finding.severity}`}
                   key={`${finding.code}:${finding.id ?? ""}:${finding.ref ?? ""}`}
                 >
-                  <strong>{finding.code}</strong>
+                  <strong>{project ? findingPresentation(finding, project, useLocale).title : finding.code}</strong>
                   <span>{finding.message}</span>
                 </div>
               ))}
@@ -3010,7 +3003,7 @@ function HomeDashboard({
 
         {settings.recentProjects.length ? (
           <section className="recent-section">
-            <h3>Recent universes</h3>
+            <h3>{c.recents}</h3>
             <div className="recent-list">
               {settings.recentProjects.map((path, itemIndex) => (
                 <div
@@ -3034,7 +3027,7 @@ function HomeDashboard({
                       <strong>{projectFileName(path)}</strong>
                       <small>
                         {missingRecentProjects.has(path)
-                          ? "Missing folder"
+                          ? c.missingFolder
                           : path}
                       </small>
                     </span>
@@ -3044,7 +3037,7 @@ function HomeDashboard({
                     type="button"
                     className="recent-remove-button"
                     onClick={() => onRemoveRecentProject(path)}
-                    title="Remove recent universe"
+                    title={c.removeRecent} aria-label={c.removeRecent}
                   >
                     <X size={14} />
                   </button>
@@ -3076,6 +3069,9 @@ function NamePromptDialog({
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(initialValue ?? "");
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const locale = useInterfaceLocale();
+  useOverlayFocus(dialogRef, open, onCancel, true, "input");
 
   useEffect(() => {
     if (open) {
@@ -3090,6 +3086,10 @@ function NamePromptDialog({
   return (
     <div className="modal-backdrop">
       <form
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className="modal-dialog"
         onSubmit={(event) => {
           event.preventDefault();
@@ -3105,7 +3105,6 @@ function NamePromptDialog({
           <input
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            autoFocus
           />
         </label>
         <div className="inspector-actions">
@@ -3113,7 +3112,7 @@ function NamePromptDialog({
             {confirmLabel}
           </button>
           <button type="button" onClick={onCancel}>
-            Cancel
+            {locale === "es" ? "Cancelar" : "Cancel"}
           </button>
         </div>
       </form>
@@ -3136,13 +3135,16 @@ function ConfirmActionDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const locale = useInterfaceLocale();
+  useOverlayFocus(dialogRef, open, onCancel, true);
   if (!open) {
     return null;
   }
 
   return (
     <div className="modal-backdrop">
-      <section className="modal-dialog">
+      <section ref={dialogRef} className="modal-dialog" role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         <p>{message}</p>
         <div className="inspector-actions">
@@ -3150,7 +3152,7 @@ function ConfirmActionDialog({
             {confirmLabel}
           </button>
           <button type="button" onClick={onCancel}>
-            Cancel
+            {locale === "es" ? "Cancelar" : "Cancel"}
           </button>
         </div>
       </section>
@@ -3373,6 +3375,9 @@ function PathBranchingSettingsModal({
   const settingsText = pathbranchingSettingsCopy(
     resolveInterfaceLocale(suiteSettings?.localePreference ?? settings.localePreference),
   );
+  const locale = useInterfaceLocale();
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useOverlayFocus(overlayRef, true, onClose, true);
   const errorCount = findings.filter(
     (finding) => finding.severity === "error",
   ).length;
@@ -3404,6 +3409,7 @@ function PathBranchingSettingsModal({
 
   return (
     <div
+      ref={overlayRef}
       className="settings-backdrop"
       role="dialog"
       aria-modal="true"
@@ -4038,12 +4044,12 @@ function PathBranchingSettingsModal({
             {activeSection === "tutorials" ? (
               <div className="settings-panel">
                 <div className="settings-page-title">
-                  <h3>Tutoriales</h3>
-                  <p>Vuelve a mostrar la guía básica de PathBranching para este universo.</p>
+                  <h3>{settingsText.tutorials}</h3>
+                  <p>{locale === "es" ? "Vuelve a mostrar la guía básica de PathBranching para este universo." : "Show the introductory guide again for this universe."}</p>
                 </div>
                 <button type="button" onClick={onResetOnboarding}>
                   <RefreshCw size={15} />
-                  Reiniciar tutorial
+                  {locale === "es" ? "Reiniciar tutorial" : "Restart tutorial"}
                 </button>
               </div>
             ) : null}
@@ -4079,6 +4085,8 @@ function PanelShell({
   dataOnboardingTarget?: string;
   children: ReactNode;
 }) {
+  const ui = authoringUiCopy(useInterfaceLocale());
+  const displayTitle = title === "Stories" ? ui.stories : title;
   const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!resizable || !onResize) return;
     event.preventDefault();
@@ -4106,8 +4114,8 @@ function PanelShell({
   if (!open) {
     return (
       <aside className="side-rail" data-onboarding-target={dataOnboardingTarget} onContextMenu={onContextMenu}>
-        <button type="button" title={`Open ${title}`} onClick={onToggle}>
-          <span>{railLabel}</span>
+        <button type="button" title={`${ui.stories === "Historias" ? "Abrir" : "Open"} ${displayTitle}`} onClick={onToggle}>
+          <span>{railLabel === "Stories" ? ui.stories : railLabel}</span>
         </button>
       </aside>
     );
@@ -4117,9 +4125,9 @@ function PanelShell({
     <aside className="side-panel" data-onboarding-target={dataOnboardingTarget} onContextMenu={onContextMenu}>
       <div className="panel-title">
         <div>
-          <strong>{title}</strong>
+          <strong>{displayTitle}</strong>
         </div>
-        <button type="button" title={`Collapse ${title}`} onClick={onToggle}>
+        <button type="button" title={`${ui.stories === "Historias" ? "Contraer" : "Collapse"} ${displayTitle}`} onClick={onToggle}>
           <span aria-hidden="true">&lt;</span>
         </button>
       </div>
@@ -4326,6 +4334,7 @@ function SequenceOutlinePanel({
   onSelect: (id: string) => void;
   onUpdateSequence: (id: string, updates: Partial<Sequence>) => void;
 }) {
+  const es = useInterfaceLocale() === "es";
   const connections = buildSequenceConnectionPreview(project).filter(
     (connection) =>
       connection.fromSequenceId === sequence?.id ||
@@ -4355,9 +4364,9 @@ function SequenceOutlinePanel({
         <span>{sequence.id}</span>
         <OutlineBadges
           badges={[
-            sequence.id === project.entrySequenceId ? "entry sequence" : "",
-            `${sequence.eventIds.length} events`,
-            `${sequence.branchIds?.length ?? 0} branches`,
+            sequence.id === project.entrySequenceId ? (es ? "secuencia inicial" : "entry sequence") : "",
+            `${sequence.eventIds.length} ${es ? "eventos" : "events"}`,
+            `${sequence.branchIds?.length ?? 0} ${es ? "ramas" : "branches"}`,
             conditionCount(sequence.availability)
               ? `${conditionCount(sequence.availability)} conditions`
               : "",
@@ -4369,7 +4378,7 @@ function SequenceOutlinePanel({
       </button>
       <section className="outline-editor">
         <label className="field-label">
-          Name
+          {es ? "Nombre" : "Name"}
           <input
             value={sequence.name}
             onChange={(event) =>
@@ -4378,7 +4387,7 @@ function SequenceOutlinePanel({
           />
         </label>
         <label className="field-label">
-          Entry Event
+          {es ? "Evento inicial" : "Entry Event"}
           <select
             value={sequence.entryEventId}
             onChange={(event) =>
@@ -4395,7 +4404,7 @@ function SequenceOutlinePanel({
           </select>
         </label>
         <label className="field-label">
-          Protagonist
+          {es ? "Protagonista" : "Protagonist"}
           <select
             value={sequence.characterRef ?? ""}
             onChange={(event) =>
@@ -4404,7 +4413,7 @@ function SequenceOutlinePanel({
               })
             }
           >
-            <option value="">No protagonist</option>
+            <option value="">{es ? "Sin protagonista" : "No protagonist"}</option>
             {characterOptions.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.label}
@@ -4414,7 +4423,7 @@ function SequenceOutlinePanel({
         </label>
       </section>
       <section className="outline-section">
-        <h3>Sequence Connections</h3>
+        <h3>{es ? "Conexiones de secuencia" : "Sequence Connections"}</h3>
         {connections.length ? (
           connections.map((connection) => (
             <button
@@ -4440,7 +4449,7 @@ function SequenceOutlinePanel({
             </button>
           ))
         ) : (
-          <span className="empty-line">No cross-sequence transitions yet.</span>
+          <span className="empty-line">{es ? "Todavía no hay rutas entre secuencias." : "No cross-sequence transitions yet."}</span>
         )}
       </section>
     </div>
@@ -4856,6 +4865,7 @@ function FilesPanel({
   activeOutlineTab: StoryOutlineTab;
   onOutlineTabChange: (tab: StoryOutlineTab) => void;
 }) {
+  const ui = authoringUiCopy(useInterfaceLocale());
   const currentSequenceId = activeSequenceId(project) ?? "";
   const activeSequence = currentSequenceId
     ? findSequence(project, currentSequenceId)
@@ -4878,129 +4888,16 @@ function FilesPanel({
       onResizeStateChange={onResizeStateChange}
       onContextMenu={onContextMenu}
     >
-      <div className="stories-sequence-toolbar story-management-toolbar">
-        <label>
-          <span>Story</span>
-          <select
-            data-onboarding-target="pathbranching.story-selector"
-            value={activeStoryId ?? ""}
-            onChange={(event) => onStoryChange(event.target.value)}
-            aria-label="Select active story"
-          >
-            <option value="">None</option>
-            {stories.map((story) => (
-              <option key={story.id} value={story.id}>
-                {story.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="toolbar-button-row">
-          <button type="button" data-onboarding-target="pathbranching.create-story" onClick={onCreateStory} title="Create story" aria-label="Create story">
-            <FilePlus2 size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={onRenameStory}
-            title="Rename story"
-            disabled={!activeStoryId}
-          >
-            <Pencil size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={onDeleteStory}
-            title="Delete story"
-            disabled={stories.length <= 1}
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-      </div>
-      {activeStoryId ? <div className="stories-sequence-toolbar story-management-toolbar">
-        <label>
-          <span>Sequence</span>
-          <select
-            data-onboarding-target="pathbranching.sequence-selector"
-            value={currentSequenceId}
-            onChange={(event) => {
-              if (event.target.value === NEW_SEQUENCE_SELECT_VALUE) {
-                onCreateSequence();
-                return;
-              }
-              onSequenceChange(event.target.value);
-            }}
-            aria-label="Select active sequence"
-          >
-            {project.sequences.map((sequence) => (
-              <option key={sequence.id} value={sequence.id}>
-                {sequence.name}
-              </option>
-            ))}
-            <option value={NEW_SEQUENCE_SELECT_VALUE}>
-              Create new sequence...
-            </option>
-          </select>
-        </label>
-        <div className="toolbar-button-row">
-          <button
-            type="button"
-            data-onboarding-target="pathbranching.create-sequence"
-            onClick={onCreateSequence}
-            title="Create sequence"
-            disabled={!activeStoryId}
-          >
-            <FilePlus2 size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={onRenameSequence}
-            title="Rename sequence"
-            disabled={!activeSequence}
-          >
-            <Pencil size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={onDeleteSequence}
-            title="Delete sequence"
-            disabled={!activeSequence}
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-        <p>
-          {activeSequence
-            ? `${activeSequence.eventIds.length} events`
-            : "No sequence loaded"}
-          {totalItems ? ` / ${totalItems} files` : ""}
-        </p>
-      </div> : null}
+      <StoriesPanel stories={stories} activeStoryId={activeStoryId}
+        sequences={project.sequences} activeSequenceId={currentSequenceId}
+        eventCount={activeSequence?.eventIds.length ?? 0} fileCount={totalItems}
+        onStoryChange={onStoryChange} onSequenceChange={onSequenceChange}
+        onCreateStory={onCreateStory} onRenameStory={onRenameStory} onDeleteStory={onDeleteStory}
+        onCreateSequence={onCreateSequence} onRenameSequence={onRenameSequence} onDeleteSequence={onDeleteSequence} />
       {activeStoryId && activeSequence ? <div className="panel-scroll">
-        <div
-          className="story-outline-tabs"
-          role="tablist"
-          aria-label="Story outline tabs"
-        >
-          {(["sequence", "branches", "paths"] as StoryOutlineTab[]).map(
-            (tab) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeOutlineTab === tab}
-                className={activeOutlineTab === tab ? "active" : ""}
-                key={tab}
-                onClick={() => onOutlineTabChange(tab)}
-              >
-                {tab === "sequence"
-                  ? "Sequence"
-                  : tab === "branches"
-                    ? "Branches"
-                    : "Paths"}
-              </button>
-            ),
-          )}
-        </div>
+        <AccessibleTabs className="story-outline-tabs" value={activeOutlineTab}
+          tabs={[{ id: "sequence", label: ui.sequence }, { id: "branches", label: ui.branches }, { id: "paths", label: ui.paths }]}
+          onChange={(tab) => onOutlineTabChange(tab as StoryOutlineTab)} ariaLabel={ui.stories} />
         {activeOutlineTab === "sequence" ? (
           <SequenceOutlinePanel
             project={project}
@@ -5237,6 +5134,7 @@ function EventInspectorTabPreview({
   event: EventNode;
   compact?: boolean;
 }) {
+  const c = inspectorUiCopy(useInterfaceLocale());
   const cover = eventCoverImageForNode(project, event);
   const branch = event.branchRef
     ? project.branches.find((candidate) => candidate.id === event.branchRef)
@@ -5259,20 +5157,20 @@ function EventInspectorTabPreview({
         )}
       </div>
       <div className="event-inspector-tab-preview-copy">
-        <strong className="event-inspector-tab-preview-name">{event.name || "Untitled event"}</strong>
+        <strong className="event-inspector-tab-preview-name">{event.name || c.untitled}</strong>
         {!compact ? (
           <span className="event-inspector-tab-preview-description">
-            {description ? description.slice(0, 120) : "No description yet."}
+            {description ? description.slice(0, 120) : c.noDescription}
           </span>
         ) : null}
         <span className="event-inspector-tab-preview-tags">
-          <span title="Event type"><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
-          <span title="Branch"><GitBranch size={11} aria-hidden="true" />{branch?.title ?? "No branch"}</span>
+          <span title={c.eventType}><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
+          <span title={c.branch}><GitBranch size={11} aria-hidden="true" />{branch?.title ?? c.noBranch}</span>
           {!compact ? (
             <>
-              <span title="Decisions"><CircleDot size={11} aria-hidden="true" />{event.decisions?.length ?? 0}</span>
-              <span title="Outcomes"><Split size={11} aria-hidden="true" />{outcomeCount}</span>
-              <span title="Dialogue elements"><MessageSquare size={11} aria-hidden="true" />{dialogueCount}</span>
+              <span title={c.decisions}><CircleDot size={11} aria-hidden="true" />{event.decisions?.length ?? 0}</span>
+              <span title={c.outcomes}><Split size={11} aria-hidden="true" />{outcomeCount}</span>
+              <span title={c.dialogues}><MessageSquare size={11} aria-hidden="true" />{dialogueCount}</span>
             </>
           ) : null}
         </span>
@@ -5288,6 +5186,7 @@ function EventInspectorTabHeader({
   project: BranchingProject;
   event: EventNode;
 }) {
+  const c = inspectorUiCopy(useInterfaceLocale());
   const branch = event.branchRef
     ? project.branches.find((candidate) => candidate.id === event.branchRef)
     : undefined;
@@ -5296,11 +5195,11 @@ function EventInspectorTabHeader({
     <div className="event-inspector-tab-header">
       <strong className="event-inspector-tab-header-main" title={event.name}>
         <GitBranch className="event-header-icon" size={14} aria-hidden="true" />
-        <span>{event.name || "Untitled event"}</span>
+        <span>{event.name || c.untitled}</span>
       </strong>
       <span className="event-inspector-tab-preview-tags" aria-label="Event metadata">
-        <span title="Event type"><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
-        <span title="Branch"><GitBranch size={11} aria-hidden="true" />{branch?.title ?? "No branch"}</span>
+        <span title={c.eventType}><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
+        <span title={c.branch}><GitBranch size={11} aria-hidden="true" />{branch?.title ?? c.noBranch}</span>
       </span>
     </div>
   );
@@ -6192,6 +6091,7 @@ function Inspector({
   onDeleteSelection: (selection: Selection) => void;
   onOpenRule: (id: string) => void;
 }) {
+  const c = inspectorUiCopy(useInterfaceLocale());
   const [transitionInspectorTab, setTransitionInspectorTab] = useState<
     "route" | "conditions" | "consequences"
   >("route");
@@ -6817,9 +6717,9 @@ function Inspector({
               <div className="event-inspector-overview-preview">
                 <EventInspectorTabPreview project={project} event={event} />
               </div>
-              <h2>Event overview</h2>
+              <h2>{c.overview}</h2>
               <label className="field-label">
-                Description
+                {c.description}
                 <textarea
                   rows={3}
                   value={event.description ?? ""}
@@ -6831,7 +6731,7 @@ function Inspector({
                 />
               </label>
               <label className="field-label">
-                Cover image
+                {c.cover}
                 <select
                   value={event.coverImage?.assetId ?? ""}
                   onChange={(inputEvent) => {
@@ -6846,7 +6746,7 @@ function Inspector({
                     });
                   }}
                 >
-                  <option value="">No cover image</option>
+                  <option value="">{c.noCover}</option>
                   {(project.assets ?? [])
                     .filter((asset) => asset.kind === "image")
                     .map((asset) => (
@@ -6857,7 +6757,7 @@ function Inspector({
                 </select>
               </label>
               <label className="field-label">
-                Category
+                {c.category}
                 <select
                   value={event.type}
                   onChange={(inputEvent) =>
@@ -9062,117 +8962,48 @@ const FIXABLE_FINDING_CODES = new Set<ValidationFinding["code"]>([
   "orphan_script_block",
 ]);
 
-function CanvasFindingsButton({
-  findings,
-  onLocateFinding,
-  onFixFinding,
-}: {
-  findings: ValidationFinding[];
+function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding }: {
+  findings: ValidationFinding[]; project: BranchingProject;
   onLocateFinding: (finding: ValidationFinding) => void;
   onFixFinding: (finding: ValidationFinding) => void;
 }) {
+  const locale = useInterfaceLocale();
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const errorCount = findings.filter(
-    (finding) => finding.severity === "error",
-  ).length;
-  const warningCount = findings.filter(
-    (finding) => finding.severity === "warning",
-  ).length;
-  const status =
-    errorCount > 0 ? "error" : warningCount > 0 ? "warning" : "clean";
-  const label =
-    status === "error"
-      ? `${errorCount} error${errorCount === 1 ? "" : "s"}`
-      : status === "warning"
-        ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
-        : "No validation issues";
-
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const errors = findings.filter((finding) => finding.severity === "error").length;
+  const warnings = findings.filter((finding) => finding.severity === "warning").length;
+  const status = errors ? "error" : warnings ? "warning" : "clean";
+  const label = findings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
   useEffect(() => {
     if (!open) return;
-    function handlePointerDown(event: PointerEvent) {
-      if (wrapperRef.current?.contains(event.target as Node)) return;
-      setOpen(false);
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
+    function pointer(event: PointerEvent) { if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false); }
+    function key(event: KeyboardEvent) { if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); } }
+    document.addEventListener("pointerdown", pointer); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); };
   }, [open]);
-
-  return (
-    <div className="canvas-findings-anchor" ref={wrapperRef}>
-      <button
-        type="button"
-        className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`}
-        onClick={() => setOpen((current) => !current)}
-        title={label}
-        aria-label={`Validation status: ${label}`}
-        aria-expanded={open}
-      >
-        {status === "error" ? (
-          <OctagonAlert size={14} />
-        ) : status === "warning" ? (
-          <AlertTriangle size={14} />
-        ) : (
-          <CheckCircle2 size={14} />
-        )}
-      </button>
-      {open ? (
-        <div className="canvas-findings-popup">
-          <div className="canvas-findings-popup-header">
-            <strong>{label}</strong>
-            <span>
-              {findings.length} total finding{findings.length === 1 ? "" : "s"}
-            </span>
+  return <div className="canvas-findings-anchor" ref={wrapperRef}>
+    <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={() => setOpen((current) => !current)} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
+      {status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+      {findings.length ? <span className="canvas-findings-count">{findings.length}</span> : null}
+    </button>
+    {open ? <div className="canvas-findings-popup" role="region" aria-label={locale === "es" ? "Hallazgos de validación" : "Validation findings"}>
+      <div className="canvas-findings-popup-header"><strong>{label}</strong></div>
+      {findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
+        const presentation = findingPresentation(finding, project, locale);
+        const locatable = Boolean(diagnosticSelection(project, finding.id) ?? diagnosticSelection(project, finding.ref)) || finding.code === "orphan_script_block";
+        return <div className={`finding ${finding.severity}`} key={`${finding.code}:${finding.id}:${finding.ref}:${index}`}>
+          <strong>{finding.severity === "error" ? "⚠" : "ⓘ"} {presentation.title}</strong>
+          {locale === "en" ? <span>{presentation.message}</span> : <span>{locale === "es" ? "Localiza el elemento y revisa su configuración. Los detalles incluyen la causa concreta." : ""}</span>}
+          <details><summary>{locale === "es" ? "Detalles" : "Details"}</summary><span>{presentation.technical}</span></details>
+          <div className="finding-actions">
+            {locatable ? <button type="button" onClick={() => onLocateFinding(finding)}>{locale === "es" ? "Localizar" : "Locate"}</button> : null}
+            {FIXABLE_FINDING_CODES.has(finding.code) && (finding.id || finding.ref) ? <button type="button" className={finding.code === "invalid_transition_order" ? "" : "danger"} onClick={() => onFixFinding(finding)}>{finding.code === "invalid_transition_order" ? (locale === "es" ? "Corregir orden" : "Fix order") : finding.code === "orphan_script_block" ? (locale === "es" ? "Eliminar bloque huérfano" : "Delete orphan") : (locale === "es" ? "Quitar referencia" : "Remove reference")}</button> : null}
           </div>
-          {findings.length ? (
-            <div className="stack-list">
-              {findings.map((finding) => (
-                <div
-                  className={`finding ${finding.severity}`}
-                  key={`${finding.code}:${finding.id ?? ""}:${finding.ref ?? ""}`}
-                >
-                  <strong>{finding.code}</strong>
-                  <span>{finding.message}</span>
-                  {FIXABLE_FINDING_CODES.has(finding.code) && (finding.id || finding.ref) ? (
-                    <div className="finding-actions">
-                      <button
-                        type="button"
-                        onClick={() => onLocateFinding(finding)}
-                      >
-                        Locate
-                      </button>
-                      {finding.code === "invalid_transition_order" ? (
-                        <button type="button" onClick={() => onFixFinding(finding)}>
-                          Fix order
-                        </button>
-                      ) : finding.code === "orphan_script_block" ? (
-                        <button type="button" className="danger" onClick={() => onFixFinding(finding)}>
-                          Delete orphan
-                        </button>
-                      ) : (
-                        <button type="button" className="danger" onClick={() => onFixFinding(finding)}>
-                          Remove reference
-                        </button>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <span className="clean">Story graph is clean.</span>
-          )}
-        </div>
-      ) : null}
-    </div>
-  );
+        </div>;
+      })}</div> : <span className="clean">{locale === "es" ? "La historia no tiene hallazgos." : "Story graph is clean."}</span>}
+    </div> : null}
+  </div>;
 }
 
 function BreadcrumbCrumb({
@@ -9584,6 +9415,7 @@ function StoryCanvas({
   onSaveManualInspector: () => void;
   onOpenRule: (id: string) => void;
 }) {
+  const ui = authoringUiCopy(useInterfaceLocale());
   const shellRef = useRef<HTMLElement | null>(null);
   const [logicFocus, setLogicFocus] = useState<{
     selectionKey: string;
@@ -10032,6 +9864,7 @@ function StoryCanvas({
                     languages: normalizeLocaleList(primaryLocale, locales),
                     localeNames,
                     characterRef: currentCharacterRef,
+                    characterLabel: project.canonRefs.find((ref) => ref.id === currentCharacterRef)?.label ?? project.localExplorerEntities?.find((entity) => entity.id === currentCharacterRef)?.name,
                     characterVariantId: currentCanonRef
                       ? resolveCanonVariantId(currentCanonRef, block?.characterVariantId)
                       : undefined,
@@ -10249,9 +10082,22 @@ function StoryCanvas({
           (candidate) => `${owner.id}:${candidate.id}` === findingItem.ref,
         );
         if (owner && block) onFocusScriptBlock({ scriptId: owner.id, blockId: block.id });
+      }      const target = diagnosticSelection(project, findingItem.id) ?? diagnosticSelection(project, findingItem.ref);
+      if (target) {
+        if (target.type === "edge") {
+          const owner = project.events.find((event) => event.transitions?.some((item) => item.id === target.id));
+          if (owner) onNavigateScope({ kind: "event", id: owner.id }, target);
+        } else if (target.type === "node") {
+          const event = project.events.find((item) => item.id === target.id);
+          const sequence = project.sequences.find((item) => item.id === target.id || item.eventIds.includes(target.id));
+          if (event) onNavigateScope({ kind: "event", id: event.id }, target);
+          else if (sequence) onNavigateScope({ kind: "sequence", id: sequence.id }, target);
+          else onOpenCanvasInspector(target);
+        } else onOpenCanvasInspector(target);
       }
+
     },
-    [onFocusScriptBlock, onNavigateScope, project.events, project.scriptDocuments, project.sequences],
+    [onFocusScriptBlock, onNavigateScope, onOpenCanvasInspector, project],
   );
   const fixFinding = useCallback(
     (findingItem: ValidationFinding) => {
@@ -10769,6 +10615,10 @@ function StoryCanvas({
     };
   }, [clearDirectedNodeHold, directedNodeOpening, nodeForPointerTarget, startDirectedNodeHold]);
 
+  const actionNode = selection?.type === "node" ? nodes.find((node) => node.id === selection.id) : undefined;
+  const contextSelection: Selection | undefined = selection ?? (activeScope ? { type: "node", id: activeScope.id } : undefined);
+  const contextLabel = actionNode?.data.title ?? (selection?.type === "node" ? project.events.find((event) => event.id === selection.id)?.name : undefined) ?? breadcrumbs.at(-1)?.label ?? project.name;
+  const canEnterSelection = Boolean(actionNode && ["event", "dialogue"].includes(actionNode.data.kind));
   return (
     <main
       className={`canvas-shell canvas-layer-${canvasLayerMode} ${activeScope?.kind === "event" || activeScope?.kind === "dialogue" ? "nested-scope" : ""} ${draggingEvent ? "dragging-event" : ""}`}
@@ -10779,8 +10629,14 @@ function StoryCanvas({
         <div className="canvas-message">{message}</div>
       ) : null}
 
+      <div className="canvas-selection-actions" role="group" aria-label={ui.inspector}>
+        <strong title={String(contextLabel)}>{String(contextLabel)}</strong>
+        <button type="button" disabled={!contextSelection} onClick={() => { if (contextSelection) onOpenCanvasInspector(contextSelection); }}><Eye size={13} />{ui.inspect}</button>
+        {canEnterSelection ? <button type="button" onClick={() => { if (actionNode) openNodeCanvas(actionNode); }}><FolderOpen size={13} />{ui.enter}</button> : null}
+      </div>
       <div className="canvas-modebar">
         <div className="canvas-breadcrumb" aria-label="Canvas path">
+          <span className="canvas-breadcrumb-story" title={project.name}>{project.name}</span>
           {breadcrumbs.map((crumb, index) => {
             const last = index === breadcrumbs.length - 1;
             const crumbEvent =
@@ -10821,16 +10677,16 @@ function StoryCanvas({
           })}
         </div>
       </div>
-      <div className="canvas-layer-switch" role="radiogroup" aria-label="Canvas layer">
+      <div className="canvas-layer-switch" role="radiogroup" aria-label={ui.canvasLayer}>
         <button
           type="button"
           role="radio"
           aria-checked={canvasLayerMode === "visual"}
           className={canvasLayerMode === "visual" ? "active" : ""}
           onClick={() => onCanvasLayerModeChange("visual")}
-          title="Show narrative structure without route logic"
+          title={ui.visualHint}
         >
-          <Eye size={13} aria-hidden="true" /> Visual
+          <Eye size={13} aria-hidden="true" /> {ui.visual}
         </button>
         <button
           type="button"
@@ -10838,15 +10694,15 @@ function StoryCanvas({
           aria-checked={canvasLayerMode === "logic"}
           className={canvasLayerMode === "logic" ? "active" : ""}
           onClick={() => onCanvasLayerModeChange("logic")}
-          title="Show and edit node and route logic"
+          title={ui.logicHint}
         >
-          <GitBranch size={13} aria-hidden="true" /> Logic
+          <GitBranch size={13} aria-hidden="true" /> {ui.logic}
         </button>
       </div>
       <div className="canvas-locale-control">
         <button
           type="button"
-          aria-label="Canvas language"
+          aria-label={ui.contentLanguage}
           aria-haspopup="listbox"
           aria-expanded={canvasLocaleMenuOpen}
           onClick={() => setCanvasLocaleMenuOpen((open) => !open)}
@@ -11015,6 +10871,7 @@ function StoryCanvas({
           <Controls position="bottom-left">
             <CanvasFindingsButton
               findings={findings}
+              project={project}
               onLocateFinding={locateFinding}
               onFixFinding={fixFinding}
             />
@@ -11587,6 +11444,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     applyInterfaceLocale(suiteChrome?.suiteSettings?.localePreference ?? settings.localePreference);
   }, [settings.localePreference, suiteChrome?.suiteSettings?.localePreference]);
   const activeTheme = (suiteChrome?.suiteSettings?.style ?? settings.theme) as ThemeId;
+  const uiLocale = resolveInterfaceLocale(suiteChrome?.suiteSettings?.localePreference ?? settings.localePreference);
+  const uiLocaleRef = useRef(uiLocale);
+  uiLocaleRef.current = uiLocale;
+  const uiCopy = authoringUiCopy(uiLocale);
   const [view, setView] = useState<AppView>(
     () => loadSettings().lastView ?? "home",
   );
@@ -11606,6 +11467,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [fileState, setFileState] = useState<ProjectFileState>({
     dirty: false,
   });
+  const [saveInProgress, setSaveInProgress] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
+  const [requestedPanel, setRequestedPanel] = useState<{ id?: WorkspacePanelId; revision: number }>();
   const [nodes, setNodes] = useState<StoryCanvasNode[]>([]);
   const nodesRef = useRef<StoryCanvasNode[]>([]);
   const [edges, setEdges] = useState<StoryCanvasEdge[]>([]);
@@ -11918,14 +11782,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...savedSession.panelVisibility,
       });
       const isFirstTutorialRun =
-        !settingsRef.current.workspaceSessions?.[universePath] && nextWorkspace.createdDefaultStory;
+        !settingsRef.current.workspaceSessions?.[universePath];
       setPanelCollapsed(
         isFirstTutorialRun
           ? {
               assets: true,
               logic: true,
               player: true,
-              outline: true,
+              outline: false,
               export: true,
               connect: true,
             }
@@ -11965,6 +11829,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setCanvasLayerMode(restoredLayerMode);
       setFocusNodeId(savedSession.focusNodeId);
       setError(undefined);
+      setSaveError(undefined);
       setMessage(workspaceLoadWarningMessage(nextWorkspace));
     },
     [],
@@ -13082,7 +12947,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     setNodes(model.nodes);
     setEdges(model.edges);
     setFiles(model.files);
-  }, [canvasLayerMode, settings.authoringDisplay, settings.nodeColors]);
+  }, [canvasLayerMode, settings.authoringDisplay, settings.nodeColors, uiLocale]);
 
   const changeTheme = useCallback((theme: ThemeId) => {
     setSettings((current) => ({ ...current, theme }));
@@ -13414,6 +13279,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const persistProject = useCallback((options: { manual?: boolean } = {}) => {
     const run = async () => {
+      setSaveInProgress(true);
+      setSaveError(undefined);
+      try {
       const currentProject = projectRef.current;
       const currentWorkspace = workspaceRef.current;
       const currentFileState = fileStateRef.current;
@@ -13479,6 +13347,12 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           }
         }, 0);
       }
+      } catch (failure) {
+        setSaveError(failure instanceof Error ? failure.message : String(failure));
+        throw failure;
+      } finally {
+        setSaveInProgress(false);
+      }
     };
 
     const queuedSave = saveQueueRef.current.catch(() => undefined).then(run);
@@ -13491,11 +13365,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }, [persistProject]);
 
   const flushProjectAutosave = useCallback(() => {
-    void persistProjectRef.current?.().catch((saveError) => {
-      setError(
-        saveError instanceof Error ? saveError.message : String(saveError),
-      );
-    });
+    void persistProjectRef.current?.().catch(() => undefined);
   }, []);
 
   const openEventInspectorForEvent = useCallback((eventId: string) => {
@@ -14309,7 +14179,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }, [project, nodes, edges]);
   const webPreviewBanner = desktopRuntime ? null : (
     <div className="persistence-warning" role="status">
-      Vista web: selecciona una carpeta de universo para comprobar y guardar metadatos de PathBranching durante esta sesión.
+      {uiLocale === "es" ? "Vista web: selecciona una carpeta de universo para comprobar y guardar metadatos de PathBranching durante esta sesión." : "Web preview: select a universe folder to review and save PathBranching metadata during this session."}
     </div>
   );
 
@@ -17578,6 +17448,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (panel: WorkspacePanelId, collapsed: boolean) => {
       setPanelCollapsed((current) => ({ ...current, [panel]: collapsed }));
       if (panel === "outline") setFilesOpen(!collapsed);
+      if (!collapsed) setRequestedPanel((current) => ({ id: panel, revision: (current?.revision ?? 0) + 1 }));
     },
     [],
   );
@@ -17867,6 +17738,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       onResetOnboarding={() => {
         if (fileState.universePath) window.localStorage.removeItem(`${PATHBRANCHING_ONBOARDING_KEY}:${fileState.universePath}`);
         setOnboardingDismissed(false);
+        window.localStorage.removeItem(PATHBRANCHING_INTERACTION_TUTORIAL_KEY);
+        setShowInteractionTutorial(true);
+        setShowSettings(false);
       }}
       onClose={() => setShowSettings(false)}
       suiteSettings={suiteChrome?.suiteSettings}
@@ -17900,17 +17774,31 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     </>
   );
 
+  const locateExportDiagnostic = (location: string) => {
+    if (!project) return;
+    const target = diagnosticSelection(project, location);
+    setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 }));
+    if (!target) return;
+    if (target.type === "edge") {
+      const owner = project.events.find((event) => event.transitions?.some((route) => route.id === target.id));
+      if (owner) navigateCanvasScope({ kind: "event", id: owner.id }, target);
+    } else if (target.type === "node" && project.events.some((event) => event.id === target.id)) {
+      navigateCanvasScope({ kind: "event", id: target.id }, target);
+    }
+    selectWithEventDraftGuard(target);
+  };
   const activeManualInspectorDraft = (() => {
     const key = manualInspectorDraftKey(selection);
     return key ? manualInspectorDrafts[key] : undefined;
   })();
 
-  const pathBranchingOnboardingSteps = [
-    { id: "open-stories", title: "Abrir Stories", description: "Abre el panel Stories desde el rail o View.", complete: Boolean(panelVisibility.outline && !panelCollapsed.outline) },
-    { id: "create-story", title: "Crear una historia", description: "Una Story reúne las secuencias de tu narrativa.", complete: Boolean(workspace?.activeStory?.id) },
-    { id: "create-sequence", title: "Crear una secuencia", description: "Una Sequence define la primera parte de la historia.", complete: Boolean(project && activeSequenceId(project)) },
-    { id: "show-canvas", title: "Llegar al canvas", description: "El canvas aparece cuando existe una secuencia seleccionada.", complete: Boolean(project && activeSequenceId(project)) },
-  ];
+  const onboardingCompletion: Record<string, boolean> = {
+    "open-stories": Boolean(panelVisibility.outline && !panelCollapsed.outline),
+    "create-story": Boolean(workspace?.activeStory?.id),
+    "create-sequence": Boolean(project && activeSequenceId(project)),
+    "show-canvas": Boolean(project && activeSequenceId(project)),
+  };
+  const pathBranchingOnboardingSteps = onboardingUiCopy(uiLocale).steps.map((step) => ({ ...step, complete: onboardingCompletion[step.id] }));
   const openStoriesForOnboarding = () => {
     setPanelVisibility((current) => ({ ...current, outline: true }));
     setPanelCollapsedState("outline", false);
@@ -17934,7 +17822,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     suiteChrome?.suiteSettings?.localePreference ?? settings.localePreference,
   );
 
-  if (error) {
+  if (error && !project) {
     return (
       <>
         <div className="app-shell">
@@ -18048,26 +17936,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           canRedo={redoStack.length > 0}
           recentActions={actionHistory}
           suiteChrome={suiteChrome}
+          locale={uiLocale}
+          saveState={saveError ? "error" : saveInProgress ? "saving" : fileState.dirty ? "pending" : fileState.lastSavedAt ? "saved" : undefined}
+          saveError={saveError}
+          hasUnappliedDraft={Boolean(eventDraft?.dirty || Object.values(manualInspectorDrafts).some((draft) => draft.dirty) || markdownTabs.some((tab) => tab.dirty))}
+          onRetrySave={() => { void persistProject({ manual: true }).catch(() => undefined); }}
+          onOpenExportPanel={() => { setPanelVisibility((current) => ({ ...current, export: true })); setPanelCollapsedState("export", false); }}
+          onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setStoriesWidth(DEFAULT_PANEL_WIDTH); }}
           panelVisibility={panelVisibility}
           onTogglePanelVisibility={togglePanelVisibility}
         />
         {webPreviewBanner}
 
-        <div
-          className={`workspace ${panelResizing ? "resizing" : ""}`}
-          style={{
-            gridTemplateColumns: [
-              panelVisibility.assets ? `${panelCollapsed.assets ? COLLAPSED_RAIL_WIDTH : DEFAULT_PANEL_WIDTH}px` : "",
-              panelVisibility.logic ? `${panelCollapsed.logic ? COLLAPSED_RAIL_WIDTH : DEFAULT_PANEL_WIDTH}px` : "",
-              panelVisibility.outline ? `${panelCollapsed.outline ? COLLAPSED_RAIL_WIDTH : storiesWidth}px` : "",
-              "minmax(0, 1fr)",
-              panelVisibility.player ? `${panelCollapsed.player ? COLLAPSED_RAIL_WIDTH : DEFAULT_PANEL_WIDTH}px` : "",
-              panelVisibility.export ? `${panelCollapsed.export ? COLLAPSED_RAIL_WIDTH : DEFAULT_PANEL_WIDTH}px` : "",
-              panelVisibility.connect ? `${panelCollapsed.connect ? COLLAPSED_RAIL_WIDTH : DEFAULT_PANEL_WIDTH}px` : "",
-            ].filter(Boolean).join(" "),
-          }}
-        >
-          {panelVisibility.assets ? <AssetsPanel
+        {error && error !== saveError ? <div className="workspace-error-banner" role="alert"><span>{error}</span><button type="button" onClick={() => setError(undefined)}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
+        <AdaptiveWorkspace resizing={panelResizing} requestedPanel={requestedPanel}
+          onCollapsedChange={setPanelCollapsedState}
+          panels={WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
+          {panelVisibility.assets ? <WorkspacePanelSlot id="assets" side="left" title={uiCopy.assets}><AssetsPanel
             project={project}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             collapsed={panelCollapsed.assets}
@@ -18080,8 +17965,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onCreateEntity={createExplorerEntity}
             onDeleteEntity={deleteLocalExplorerEntity}
             onInitializeProperties={initializePropertiesFromTemplate}
-          /> : null}
-          {panelVisibility.logic ? <LogicPanel
+          /></WorkspacePanelSlot> : null}
+          {panelVisibility.logic ? <WorkspacePanelSlot id="logic" side="left" title={uiCopy.logic}><LogicPanel
             project={project}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             collapsed={panelCollapsed.logic}
@@ -18098,8 +17983,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onUpdateLogicTypeOverride={updateLogicTypeOverride}
             onDeleteLocalExplorerProperty={deleteLocalExplorerProperty}
             onCreateType={createExplorerType}
-          /> : null}
-          {panelVisibility.outline ? <FilesPanel
+          /></WorkspacePanelSlot> : null}
+          {panelVisibility.outline ? <WorkspacePanelSlot id="outline" side="left" title={uiCopy.stories} mode="open"><FilesPanel
             project={project}
             files={files}
             stories={workspace?.manifest.stories ?? []}
@@ -18131,7 +18016,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onNavigatePathNode={navigatePathTreeNode}
             onContextMenu={openPanelContextMenu}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
-          /> : null}
+          /></WorkspacePanelSlot> : null}
           {eventScriptWorkspace ? (
             <EventScriptWorkspace
               project={project}
@@ -18294,27 +18179,27 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               void saveActiveManualInspectorDraft();
             }}
           />}
-          {panelVisibility.player ? <PlayerPanel
+          {panelVisibility.player ? <WorkspacePanelSlot id="player" side="right" title={uiCopy.player}><PlayerPanel
             project={project}
             collapsed={panelCollapsed.player}
             onCollapsedChange={(collapsed) => setPanelCollapsedState("player", collapsed)}
             onContextMenu={openPanelContextMenu}
             onUpdate={(nextProject) => updateProject(nextProject)}
-          /> : null}
-          {panelVisibility.export ? <ExportPanel
+          /></WorkspacePanelSlot> : null}
+          {panelVisibility.export ? <WorkspacePanelSlot id="export" side="right" title={uiCopy.exportImport}><ExportPanel
             project={project}
             collapsed={panelCollapsed.export}
             onCollapsedChange={(collapsed) => setPanelCollapsedState("export", collapsed)}
             onContextMenu={openPanelContextMenu}
             onExport={(mode) => void exportRuntime(mode)}
             onImportTwine={importTwine}
-          /> : null}
-          {panelVisibility.connect ? <ConnectPanel
+          /></WorkspacePanelSlot> : null}
+          {panelVisibility.connect ? <WorkspacePanelSlot id="connect" side="right" title={uiCopy.connect}><ConnectPanel
             collapsed={panelCollapsed.connect}
             onCollapsedChange={(collapsed) => setPanelCollapsedState("connect", collapsed)}
             onContextMenu={openPanelContextMenu}
-          /> : null}
-        </div>
+          /></WorkspacePanelSlot> : null}
+        </AdaptiveWorkspace>
         {panelContextMenu ? (
           <div
             ref={panelContextMenuRef}
@@ -18339,7 +18224,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           </div>
         ) : null}
       </div>
-      {!onboardingDismissed ? (
+      {!onboardingDismissed && !showInteractionTutorial && !showSettings && !exportOpen ? (
         <OnboardingGuide
           steps={pathBranchingOnboardingSteps}
           onDismiss={dismissPathBranchingOnboarding}

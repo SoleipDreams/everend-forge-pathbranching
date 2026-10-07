@@ -1,0 +1,54 @@
+/* Authoring chrome only. Canvas node sizes and persisted layout are untouched. */
+:is(.app-shell, .settings-modal, .onboarding-guide, .interaction-tutorial-dialog) :is(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--wn-accent);
+  outline-offset: 2px;
+}
+
+:is(.side-panel, .inspector-scroll, .settings-modal, .onboarding-guide, .interaction-tutorial-dialog) :is(button, input, select, textarea) {
+  font-size: 12px;
+}
+
+:is(.side-panel, .inspector-scroll, .settings-modal) :is(.field-label, .inspector-section h2, .panel-title) {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+:is(.side-panel, .inspector-scroll, .settings-modal) :is(.empty-line, .inspector-hint, .field-hint, small) {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.onboarding-guide.completed {
+  padding: 12px 14px;
+}
+
+.onboarding-guide.completed .onboarding-guide-header {
+  align-items: flex-start;
+}
+
+.onboarding-guide.completed .onboarding-guide-restart {
+  margin-top: 8px;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.onboarding-guide-progress {
+  font-size: 11px;
+}
+
+.onboarding-guide-steps li > span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.interaction-tutorial-dialog {
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-guide, .interaction-tutorial-backdrop, .interaction-tutorial-dialog {
+    animation: none;
+    transition: none;
+  }
+}

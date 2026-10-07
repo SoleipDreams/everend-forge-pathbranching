@@ -8859,14 +8859,6 @@ button:disabled {
     flex-wrap: wrap;
   }
 
-  .workspace {
-    grid-template-columns: 36px 36px minmax(0, 1fr) !important;
-  }
-
-  .side-panel {
-    display: none;
-  }
-
   .side-rail {
     display: flex;
   }

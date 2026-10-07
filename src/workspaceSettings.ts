@@ -42,7 +42,7 @@ export const DEFAULT_WORKSPACE_PANEL_VISIBILITY: WorkspacePanelState = {
 };
 
 export const DEFAULT_WORKSPACE_PANEL_COLLAPSED: WorkspacePanelState = {
-  outline: true,
+  outline: false,
   assets: true,
   logic: true,
   player: true,
