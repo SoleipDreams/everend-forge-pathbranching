@@ -3,6 +3,9 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentT
 import type { Selection } from "../appTypes.js";
 import type { AssetKind, BranchingProject, CanonRef, LocalExplorerEntity, ProjectAsset, ProjectDataObject } from "../domain.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
+import { AccessibleTabs } from "./AccessibleTabs.js";
+import { panelUiText, useInterfaceLocale } from "../i18n.js";
+import { useOverlayFocus } from "./useOverlayFocus.js";
 
 const CLICK_SEQUENCE_WINDOW_MS = 360;
 
@@ -99,6 +102,8 @@ export function AssetsPanel({
   onDeleteEntity: (id: string) => void;
   onInitializeProperties?: () => void;
 }) {
+  const locale = useInterfaceLocale();
+  const t = (text: string) => panelUiText(locale, text);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [origin, setOrigin] = useState<"all" | ProjectAsset["origin"]>("all");
@@ -111,6 +116,7 @@ export function AssetsPanel({
   const [createEntityMenu, setCreateEntityMenu] = useState<{ top: number; left: number } | undefined>();
   const [newEntityName, setNewEntityName] = useState("");
   const createEntityRef = useRef<HTMLDivElement | null>(null);
+  useOverlayFocus(createEntityRef, Boolean(createEntityMenu), () => setCreateEntityMenu(undefined));
   const pendingInspectorClickRef = useRef<{ rowId: string; timer: number } | undefined>(undefined);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const assets = useMemo(
@@ -247,16 +253,13 @@ export function AssetsPanel({
   };
 
   return (
-    <WorkspaceSidePanel title="Assets" side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
-      <div className="explorer-view-tabs" role="tablist" aria-label="Asset views">
-        <button type="button" className={view === "entities" ? "active" : ""} onClick={() => setView("entities")}>Entities</button>
-        <button type="button" className={view === "files" ? "active" : ""} onClick={() => setView("files")}>Files</button>
-      </div>
+    <WorkspaceSidePanel title={t("Assets")} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
+      <AccessibleTabs className="explorer-view-tabs" ariaLabel={t("Asset views")} value={view} onChange={(value) => setView(value as "entities" | "files")} tabs={[{id:"entities",label:t("Entities")},{id:"files",label:t("Files")}]} />
       {view === "entities" ? (
         <>
           <div className="explorer-toolbar">
-            <label className="explorer-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search entities" /></label>
-            <button type="button" title="New local entity" onClick={(event) => {
+            <label className="explorer-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search entities")} placeholder={t("Search entities")} /></label>
+            <button type="button" title={t("New local entity")} onClick={(event) => {
               if (createEntityMenu) {
                 setCreateEntityMenu(undefined);
                 return;
@@ -271,19 +274,17 @@ export function AssetsPanel({
                 left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
               });
             }}><Plus size={15} /></button>
-            <button type="button" title="Expand all entities" onClick={expandAllAssets}><ChevronDown size={15} /></button>
-            <button type="button" title="Collapse all entities" onClick={collapseAllAssets}><ChevronRight size={15} /></button>
+            <button type="button" title={t("Expand all entities")} onClick={expandAllAssets}><ChevronDown size={15} /></button>
+            <button type="button" title={t("Collapse all entities")} onClick={collapseAllAssets}><ChevronRight size={15} /></button>
           </div>
-          <div className="explorer-filter-row" role="tablist" aria-label="Entity origin filter">
-            {(["all", "canon", "local", "data"] as const).map((value) => <button key={value} type="button" className={itemFilter === value ? "active" : ""} onClick={() => setItemFilter(value)}>{value === "all" ? "All" : value === "data" ? "Data" : value === "canon" ? "Canon" : "Local"}</button>)}
-          </div>
+          <AccessibleTabs className="explorer-filter-row" ariaLabel={t("Entity origin filter")} value={itemFilter} onChange={(value) => setItemFilter(value as typeof itemFilter)} tabs={(["all", "canon", "local", "data"] as const).map((id) => ({id,label:t(id === "all" ? "All" : id === "data" ? "Data" : id === "canon" ? "Canon" : "Local")}))} />
           <div className="explorer-tree asset-explorer-tree">
             {explorerGroups.map(([group, rows]) => {
               const expanded = !collapsedGroups.has(group);
               const GroupIcon = explorerIconFor(group);
               return <section className="explorer-type-group" key={group}>
-                <button type="button" className="explorer-type-heading" onClick={() => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}>
-                  {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<GroupIcon size={14} /><strong>{group}</strong><span>{rows.length}</span>
+                <button type="button" className="explorer-type-heading" aria-expanded={expanded} onClick={() => setCollapsedGroups((current) => { const next = new Set(current); if (next.has(group)) next.delete(group); else next.add(group); return next; })}>
+                  {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<GroupIcon size={14} /><strong>{group.replace("Project Data", t("Project Data"))}</strong><span>{rows.length}</span>
                 </button>
                 {expanded ? (() => {
                   const renderRow = (node: ExplorerTreeNode, depth = 0): ReactNode => {
@@ -298,14 +299,14 @@ export function AssetsPanel({
                             event.dataTransfer.setData("application/x-pathbranching-entity", row.id);
                             event.dataTransfer.setData("text/plain", row.id);
                             event.dataTransfer.effectAllowed = "copy";
-                          }} onPointerDown={() => handleExplorerRowPointerDown(row)} onPointerUp={() => handleExplorerRowPointerUp(row)} onPointerLeave={clearPendingInspectorClick}>
+                          }} aria-pressed={rowSelected} onClick={(event) => { if (event.detail === 0) onSelect(explorerSelection(row)); }} onPointerDown={() => handleExplorerRowPointerDown(row)} onPointerUp={() => handleExplorerRowPointerUp(row)} onPointerLeave={clearPendingInspectorClick}>
                             <RowIcon size={14} />
                             <span className="explorer-entity-name">{row.label}</span>
-                            <em className={`explorer-origin ${row.source.toLowerCase().replace(/\s+/g, "-")}`}>{row.source}</em>
+                            <em className={`explorer-origin ${row.source.toLowerCase().replace(/\s+/g, "-")}`}>{t(row.source)}</em>
                           </button>
                           {row.kind === "local" ? (
                             <div className="explorer-row-actions">
-                              <button type="button" className="icon-only" title={`Actions for ${row.label}`} onClick={(event) => {
+                              <button type="button" className="icon-only" title={`${t("Actions for")} ${row.label}`} onClick={(event) => {
                                 if (actionsForId?.id === row.id) { setActionsForId(undefined); return; }
                                 const rect = event.currentTarget.getBoundingClientRect();
                                 const width = 180;
@@ -322,9 +323,9 @@ export function AssetsPanel({
                               </button>
                               {actionsForId?.id === row.id ? (
                                 <div className="explorer-row-menu" style={{ top: actionsForId.top, left: actionsForId.left }}>
-                                  <button type="button" onClick={() => { onOpenInspector(explorerSelection(row)); setActionsForId(undefined); }}>Open inspector</button>
+                                  <button type="button" onClick={() => { onOpenInspector(explorerSelection(row)); setActionsForId(undefined); }}>{t("Open inspector")}</button>
                                   <button type="button" className="danger" onClick={() => { onDeleteEntity(row.id); setActionsForId(undefined); }}>
-                                    <Trash2 size={13} /> Delete local entity
+                                    <Trash2 size={13} /> {t("Delete local entity")}
                                   </button>
                                 </div>
                               ) : null}
@@ -345,14 +346,14 @@ export function AssetsPanel({
             })}
             {explorerGroups.length === 0 && !propertiesConfig ? (
               <div className="empty-state" style={{ padding: "16px", textAlign: "center" }}>
-                <span className="empty-line" style={{ display: "block", marginBottom: "12px" }}>No properties configured. Initialize to see canon references.</span>
-                <button 
-                  type="button" 
+                <span className="empty-line" style={{ display: "block", marginBottom: "12px" }}>{t("No properties configured. Initialize to see canon references.")}</span>
+                <button
+                  type="button"
                   onClick={onInitializeProperties}
                   style={{
                     padding: "8px 16px",
-                    backgroundColor: "#3b82f6",
-                    color: "white",
+                    backgroundColor: "var(--wn-accent)",
+                    color: "var(--wn-panel)",
                     border: "none",
                     borderRadius: "4px",
                     cursor: "pointer",
@@ -360,44 +361,44 @@ export function AssetsPanel({
                   }}
                 >
                   <Plus size={14} style={{ marginRight: "6px", verticalAlign: "middle" }} />
-                  Initialize Properties
+                  {t("Initialize Properties")}
                 </button>
               </div>
             ) : explorerGroups.length === 0 ? (
-              <span className="empty-line">No entities match this search.</span>
+              <span className="empty-line">{t("No entities match this search.")}</span>
             ) : null}
           </div>
           {createEntityMenu ? (
-            <div ref={createEntityRef} className="logic-property-editor explorer-create-menu" style={{ top: createEntityMenu.top, left: createEntityMenu.left }} role="dialog" aria-label="Create new entity">
+            <div ref={createEntityRef} className="logic-property-editor explorer-create-menu" style={{ top: createEntityMenu.top, left: createEntityMenu.left }} role="dialog" aria-modal="true" aria-label={t("Create new entity")} >
               <header className="logic-property-editor-header">
                 <span className="logic-property-editor-icon"><Plus size={15} /></span>
-                <div><strong>New entity</strong><small>Declare type and name</small></div>
-                <button type="button" className="icon-only" aria-label="Close create entity menu" onClick={() => setCreateEntityMenu(undefined)}><X size={15} /></button>
+                <div><strong>{t("New entity")}</strong><small>{t("Declare type and name")}</small></div>
+                <button type="button" className="icon-only" aria-label={t("Close create entity menu")} onClick={() => setCreateEntityMenu(undefined)}><X size={15} /></button>
               </header>
               <div className="modal-body">
                 <label className="field-label">
-                  <span>Name</span>
+                  <span>{t("Name")}</span>
                   <input
                     type="text"
                     value={newEntityName}
                     onChange={(e) => setNewEntityName(e.target.value)}
-                    placeholder="Entity name"
-                    autoFocus
+                    placeholder={t("Entity name")}
+                    data-overlay-focus
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleCreateEntity();
                     }}
                   />
                 </label>
                 <label className="field-label">
-                  <span>Type</span>
+                  <span>{t("Type")}</span>
                   <select value={newEntityType} onChange={(event) => setNewEntityType(event.target.value)}>
                     {explorerTypes.map((type) => <option key={type} value={type}>{propertyTypeMap.get(type) || displayType(type)}</option>)}
                   </select>
                 </label>
               </div>
               <footer className="modal-footer">
-                <button type="button" onClick={() => setCreateEntityMenu(undefined)}>Cancel</button>
-                <button type="button" className="primary" onClick={handleCreateEntity} disabled={!newEntityName.trim()}>Create</button>
+                <button type="button" onClick={() => setCreateEntityMenu(undefined)}>{t("Cancel")}</button>
+                <button type="button" className="primary" onClick={handleCreateEntity} disabled={!newEntityName.trim()}>{t("Create")}</button>
               </footer>
             </div>
           ) : null}
@@ -405,23 +406,23 @@ export function AssetsPanel({
       ) : (
         <>
           <div className="panel-toolbar asset-toolbar">
-            <label className="asset-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search assets" /></label>
-            <button type="button" onClick={onImport}><FolderUp size={14} /> Import</button>
+            <label className="asset-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search assets")} placeholder={t("Search assets")} /></label>
+            <button type="button" onClick={onImport}><FolderUp size={14} /> {t("Import")}</button>
           </div>
           <div className="asset-filters">
-            <select value={kind} onChange={(event) => setKind(event.target.value as AssetKind | "all")} aria-label="Asset category">
-              {kinds.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            <select value={kind} onChange={(event) => setKind(event.target.value as AssetKind | "all")} aria-label={t("Asset category")} >
+              {kinds.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
             </select>
-            <select value={origin} onChange={(event) => setOrigin(event.target.value as "all" | ProjectAsset["origin"])} aria-label="Asset origin">
+            <select value={origin} onChange={(event) => setOrigin(event.target.value as "all" | ProjectAsset["origin"])} aria-label={t("Asset origin")} >
               <option value="all">Canon + UnCanon</option><option value="canon">Canon</option><option value="uncanon">UnCanon</option>
             </select>
           </div>
           <div className="asset-list">
             {assets.map((asset) => <article className="asset-row" key={asset.id}>
               {iconFor(asset.kind)}
-              <div><strong>{asset.name}</strong><span>{asset.origin === "canon" ? "Canon · read-only" : "UnCanon"} · {asset.kind}</span></div>
+              <div><strong>{asset.name}</strong><span>{asset.origin === "canon" ? t("Canon · read-only") : "UnCanon"} · {asset.kind}</span></div>
             </article>)}
-            {assets.length === 0 ? <p className="panel-empty">No matching assets. Imported files remain UnCanon until an explicit publication flow exists.</p> : null}
+            {assets.length === 0 ? <p className="panel-empty">{t("No matching assets. Imported files remain UnCanon until an explicit publication flow exists.")}</p> : null}
           </div>
         </>
       )}

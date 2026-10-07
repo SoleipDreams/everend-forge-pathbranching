@@ -30,9 +30,6 @@ export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, r
   }, []);
   const layout = useMemo(() => allocateWorkspacePanels(width, panels, order), [width, panels, order]);
   const open = (id: WorkspacePanelId) => { onCollapsedChange(id, false); setActive(id); };
-  useEffect(() => {
-    if (requestedPanel) setActive(requestedPanel.id);
-  }, [requestedPanel]);
   // Append newly expanded panels, keeping already open panels in their existing places.
   const previousExpanded = useRef(new Set(panels.filter((panel) => !panel.collapsed).map((panel) => panel.id)));
   useEffect(() => {
@@ -44,6 +41,10 @@ export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, r
     }
     previousExpanded.current = new Set(expanded);
   }, [panels]);
+  // Explicit open/close requests win over restored panel preferences.
+  useEffect(() => {
+    if (requestedPanel) setActive(requestedPanel.id);
+  }, [requestedPanel]);
   const drawer = active && panels.some((panel) => panel.id === active && panel.visible) && !layout.inline.has(active) ? active : undefined;
   const columnIds: Array<WorkspacePanelId | "canvas"> = ["assets", "logic", "outline", "canvas", "player", "export", "connect"];
   const columns = columnIds.map((id) => id === "canvas" ? "minmax(0, 1fr)" : layout.columns(id)).filter(Boolean).join(" ");

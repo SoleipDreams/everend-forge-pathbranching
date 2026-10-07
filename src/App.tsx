@@ -326,7 +326,7 @@ import {
   type WorkspacePanelId,
   type WorkspacePanelState,
 } from "./workspaceSettings.js";
-import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale, useInterfaceLocale, authoringUiCopy, onboardingUiCopy, homeUiCopy, inspectorUiCopy } from "./i18n.js";
+import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale, useInterfaceLocale, authoringUiCopy, onboardingUiCopy, homeUiCopy, inspectorUiCopy, panelUiText } from "./i18n.js";
 import { validateProject } from "./validate.js";
 import {
   buildStoryCanvasModel,
@@ -3090,7 +3090,7 @@ function NamePromptDialog({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-label={panelUiText(locale, title)}
         className="modal-dialog"
         onSubmit={(event) => {
           event.preventDefault();
@@ -3100,9 +3100,9 @@ function NamePromptDialog({
           }
         }}
       >
-        <h2>{title}</h2>
+        <h2>{panelUiText(locale, title)}</h2>
         <label className="field-label">
-          {label}
+          {panelUiText(locale, label)}
           <input
             value={value}
             onChange={(event) => setValue(event.target.value)}
@@ -3110,7 +3110,7 @@ function NamePromptDialog({
         </label>
         <div className="inspector-actions">
           <button type="submit" disabled={!value.trim()}>
-            {confirmLabel}
+            {panelUiText(locale, confirmLabel)}
           </button>
           <button type="button" onClick={onCancel}>
             {locale === "es" ? "Cancelar" : "Cancel"}
@@ -5271,6 +5271,8 @@ function EventAuthoringDock({
   onToggleInspectorMaximized: () => void;
   children: ReactNode;
 }) {
+  const locale = useInterfaceLocale();
+  const ui = (text: string) => panelUiText(locale, text);
   const dockRef = useRef<HTMLElement | null>(null);
   const tabContextMenuRef = useRef<HTMLDivElement | null>(null);
   const manuallyCollapsedEventIdRef = useRef<string | undefined>(undefined);
@@ -5353,13 +5355,13 @@ function EventAuthoringDock({
     (variant: "stack" | "collapsed") => (
       <div
         className={`event-inspector-group-menu ${variant} ${groupMenuOpen ? "open" : ""}`}
-        aria-label="Inspector tab groups"
+        aria-label={ui("Inspector tab groups")}
       >
         <button
           type="button"
           className="event-inspector-group-trigger"
-          title="Inspector tab groups"
-          aria-label="Inspector tab groups"
+          title={ui("Inspector tab groups")}
+          aria-label={ui("Inspector tab groups")}
           aria-expanded={groupMenuOpen}
           onClick={(event) => {
             event.stopPropagation();
@@ -5551,7 +5553,7 @@ function EventAuthoringDock({
               <button
                 type="button"
                 className="inspector-maximize-button"
-                title={inspectorMaximized ? "Restore inspector" : "Expand inspector"}
+                title={inspectorMaximized ? ui("Restore inspector") : ui("Expand inspector")}
                 onClick={onToggleInspectorMaximized}
               >
                 {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -5581,15 +5583,15 @@ function EventAuthoringDock({
                       <strong><TabIcon className="event-header-icon" size={14} /><span className="event-header-copy"><span className="event-header-name">{tab.title}</span></span></strong>
                     </button>
                     <div className="event-editor-actions">
-                      <button type="button" className="inspector-locate-button" title="Locate on canvas" aria-label="Locate on canvas" onClick={() => onLocateInspectorTab(tab.selection)}>
+                      <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
                         <Crosshair size={14} />
                       </button>
-                      <button type="button" title={expanded ? "Minimize inspector" : "Expand inspector"} onClick={() => toggleInspectorTab(tab.id)}>
+                      <button type="button" title={expanded ? ui("Minimize inspector") : ui("Expand inspector")} onClick={() => toggleInspectorTab(tab.id)}>
                         {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
                       </button>
                       {tab.mode === "debug" ? (
                         <button type="button" title="Disable Inspector Debug" onClick={onDisableInspectorDebug}><Power size={14} /></button>
-                      ) : <button type="button" title="Close inspector" onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
+                      ) : <button type="button" title={ui("Close inspector")} onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
                     </div>
                   </div>
                   {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
@@ -5651,7 +5653,7 @@ function EventAuthoringDock({
               <button
                 type="button"
                 className="inspector-maximize-button"
-                title={inspectorMaximized ? "Restore inspector" : "Expand inspector"}
+                title={inspectorMaximized ? ui("Restore inspector") : ui("Expand inspector")}
                 onClick={onToggleInspectorMaximized}
               >
                 {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -5677,13 +5679,13 @@ function EventAuthoringDock({
                     <strong><TabIcon className="event-header-icon" size={14} /><span className="event-header-copy"><span className="event-header-name">{tab.title}</span></span></strong>
                   </button>
                   <div className="event-editor-actions">
-                    <button type="button" className="inspector-locate-button" title="Locate on canvas" aria-label="Locate on canvas" onClick={() => onLocateInspectorTab(tab.selection)}>
+                    <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
                       <Crosshair size={14} />
                     </button>
-                    <button type="button" title={expanded ? "Minimize inspector" : "Expand inspector"} onClick={() => toggleInspectorTab(tab.id)}>{expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
+                    <button type="button" title={expanded ? ui("Minimize inspector") : ui("Expand inspector")} onClick={() => toggleInspectorTab(tab.id)}>{expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
                     {tab.mode === "debug" ? (
                       <button type="button" title="Disable Inspector Debug" onClick={onDisableInspectorDebug}><Power size={14} /></button>
-                    ) : <button type="button" title="Close inspector" onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
+                    ) : <button type="button" title={ui("Close inspector")} onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
                   </div>
                 </div>
                 {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
@@ -5738,8 +5740,8 @@ function EventAuthoringDock({
                     <button
                       type="button"
                       className="inspector-locate-button"
-                      title="Locate on canvas"
-                      aria-label="Locate on canvas"
+                      title={ui("Locate on canvas")}
+                      aria-label={ui("Locate on canvas")}
                       onClick={() => onLocateInspectorTab({ type: "node", id: event.id })}
                     >
                       <Crosshair size={14} />
@@ -5747,7 +5749,7 @@ function EventAuthoringDock({
                     <button
                       type="button"
                       title={
-                        isExpanded ? "Minimize inspector" : "Expand inspector"
+                        isExpanded ? ui("Minimize inspector") : ui("Expand inspector")
                       }
                       onClick={() =>
                         isExpanded
@@ -5763,7 +5765,7 @@ function EventAuthoringDock({
                     </button>
                     <button
                       type="button"
-                      title="Close inspector"
+                      title={ui("Close inspector")}
                       onClick={() => closeInspector(event.id)}
                       onContextMenu={(contextEvent) =>
                         openTabCloseMenu(contextEvent, event.id)
@@ -11784,6 +11786,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...DEFAULT_WORKSPACE_PANEL_VISIBILITY,
         ...savedSession.panelVisibility,
       });
+      setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 }));
       const isFirstTutorialRun =
         !settingsRef.current.workspaceSessions?.[universePath];
       setPanelCollapsed(
@@ -11883,7 +11886,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           gridSize: settingsRef.current.canvasBackground.gridSize,
           authoringDisplay: settingsRef.current.authoringDisplay,
           canvasLayerMode: canvasLayerModeRef.current,
-        interfaceLocale: uiLocaleRef.current,
+          interfaceLocale: uiLocaleRef.current,
         });
         setProject(snapshot.project);
         setActiveScopeState(snapshotScope);
@@ -17948,7 +17951,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           hasUnappliedDraft={Boolean(eventDraft?.dirty || Object.values(manualInspectorDrafts).some((draft) => draft.dirty) || markdownTabs.some((tab) => tab.dirty))}
           onRetrySave={() => { void persistProject({ manual: true }).catch(() => undefined); }}
           onOpenExportPanel={() => { setPanelVisibility((current) => ({ ...current, export: true })); setPanelCollapsedState("export", false); }}
-          onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setStoriesWidth(DEFAULT_PANEL_WIDTH); }}
+          onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setStoriesWidth(DEFAULT_PANEL_WIDTH); setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 })); }}
           panelVisibility={panelVisibility}
           onTogglePanelVisibility={togglePanelVisibility}
         />
@@ -18236,6 +18239,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       {project ? <ExportPreviewDialog project={project} mode={exportPreviewMode} open={exportOpen} onClose={() => setExportOpen(false)} onExport={(mode) => void exportRuntime(mode)} /> : null}
       {!onboardingDismissed && !showInteractionTutorial && !showSettings && !exportOpen ? (
         <OnboardingGuide
+          locale={uiLocale}
           steps={pathBranchingOnboardingSteps}
           onDismiss={dismissPathBranchingOnboarding}
           onRestart={restartPathBranchingOnboarding}

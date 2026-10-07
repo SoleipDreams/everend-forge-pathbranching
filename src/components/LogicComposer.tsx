@@ -532,16 +532,18 @@ export function LogicEffectEditor({ project, contextEntityIds, value, onChange, 
 }
 
 function LogicPresentationToken({ item }: { item: LogicPresentation }) {
+  const c = conditionUiCopy(useInterfaceLocale());
+  const warning = item.status === "enabled" ? "" : c[item.status];
   return <span
     className={`logic-presentation-token${item.status === "enabled" ? "" : " warning"}`}
-    title={item.status === "enabled" ? item.text : `${item.text} · capability ${item.status}`}
+    title={item.status === "enabled" ? item.text : `${item.text} · ${warning}`}
     style={item.color ? { "--logic-subject-color": item.color } as CSSProperties : undefined}
   >
     <i aria-hidden="true" />
     <span>{item.subjectLabel}</span>
     <b>{item.fieldLabel}</b>
     <em>{item.operatorLabel}{item.valueLabel ? ` ${item.valueLabel}` : ""}</em>
-    {item.status !== "enabled" ? <CircleAlert size={10} aria-label={`Capability ${item.status}`} /> : null}
+    {item.status !== "enabled" ? <CircleAlert size={10} aria-label={warning} /> : null}
   </span>;
 }
 

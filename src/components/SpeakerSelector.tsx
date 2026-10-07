@@ -1,6 +1,7 @@
 import { ChevronDown, Search, UserRound, Package, GitBranch, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
+import { useInterfaceLocale } from "../i18n.js";
 
 type SpeakerOption = {
   id: string;
@@ -20,6 +21,7 @@ function entityGroup(kind: string | undefined) {
 
 export function SpeakerSelector({
   value,
+  displayLabel,
   options,
   presentEntityIds,
   onChange,
@@ -29,6 +31,7 @@ export function SpeakerSelector({
   onCanvasInteraction,
 }: {
   value?: string;
+  displayLabel?: string;
   options: SpeakerOption[];
   presentEntityIds: string[];
   onChange: (speakerId?: string) => void;
@@ -37,6 +40,7 @@ export function SpeakerSelector({
   onClose: () => void;
   onCanvasInteraction: (event: React.PointerEvent | React.MouseEvent | React.KeyboardEvent) => void;
 }) {
+  const es = useInterfaceLocale() === "es";
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -129,7 +133,7 @@ export function SpeakerSelector({
       <button
         type="button"
         className="speech-beat-menu-trigger speech-beat-speaker"
-        aria-label="Character"
+        aria-label={es ? "Hablante" : "Speaker"}
         aria-haspopup="dialog"
         aria-expanded={searchOpen}
         onPointerDown={onCanvasInteraction}
@@ -138,7 +142,7 @@ export function SpeakerSelector({
           setSearchOpen(!searchOpen);
         }}
       >
-        <span>{speakerLabel(value, selectedSpeaker?.label)}</span>
+        <span title={value}>{speakerLabel(value, selectedSpeaker?.label ?? displayLabel)}</span>
         <span className="speech-beat-menu-chevron" aria-hidden="true">⌄</span>
       </button>
 

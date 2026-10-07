@@ -49,6 +49,9 @@ import {
   type CanonExplorerProperty,
 } from "../explorerSchema.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
+import { AccessibleTabs } from "./AccessibleTabs.js";
+import { panelUiText, useInterfaceLocale } from "../i18n.js";
+import { useOverlayFocus } from "./useOverlayFocus.js";
 
 const CLICK_SEQUENCE_WINDOW_MS = 360;
 const variableTypes: LogicVariableType[] = ["text", "number", "boolean", "list", "canonRef"];
@@ -124,6 +127,8 @@ export function LogicPanel({
   onDeleteLocalExplorerProperty?: (id: string) => void;
   onCreateType?: () => void;
 }) {
+  const locale = useInterfaceLocale();
+  const t = (text: string) => panelUiText(locale, text);
   const [tab, setTab] = useState<"properties" | "variables">("properties");
   const [propertySearch, setPropertySearch] = useState("");
   const [collapsedCanonTypes, setCollapsedCanonTypes] = useState<Set<string>>(() => {
@@ -154,6 +159,8 @@ export function LogicPanel({
   });
   const editorRef = useRef<HTMLDivElement>(null);
   const createPropertyRef = useRef<HTMLDivElement | null>(null);
+  useOverlayFocus(editorRef, Boolean(propertyEditor), () => setPropertyEditor(undefined));
+  useOverlayFocus(createPropertyRef, Boolean(createPropertyMenu), () => setCreatePropertyMenu(undefined));
   const pendingInspectorClickRef = useRef<{ propertyId: string; source: PropertySource; timer: number } | undefined>(undefined);
   const groups = [...(project.logicVariableGroups ?? [])].sort((a, b) => a.order - b.order);
   const canonPropertyTypes = useMemo(() => canonExplorerPropertyTypes(propertiesConfig), [propertiesConfig]);
@@ -232,7 +239,7 @@ export function LogicPanel({
   const collapseAllProperties = () => {
     setCollapsedCanonTypes(new Set(canonPropertyTypes.map((type) => type.id)));
   };
-  
+
   const clearPendingInspectorClick = () => {
     if (pendingInspectorClickRef.current) {
       window.clearTimeout(pendingInspectorClickRef.current.timer);
@@ -297,7 +304,7 @@ export function LogicPanel({
     });
     onSelect({ type: "explorerProperty", id, source });
   };
-  
+
   const propertySelected = (id: string, source: PropertySource) => selected?.type === "explorerProperty" && selected.id === id && selected.source === source;
   const propertyCount = (properties: CanonExplorerProperty[]): number => properties.reduce((count, property) => count + 1 + propertyCount(property.children), 0);
 
@@ -332,7 +339,7 @@ export function LogicPanel({
     }
   };
   const updateOptions = (options: ExplorerPropertyOption[]) => updateLocal({ options: options.length ? options : undefined });
-  
+
   const renderCapabilityCard = (
     icon: ReactNode,
     title: string,
@@ -349,8 +356,8 @@ export function LogicPanel({
     >
       <div className="logic-capability-icon">{icon}</div>
       <div className="logic-capability-content">
-        <strong>{title}</strong>
-        <span>{description}</span>
+        <strong>{t(title)}</strong>
+        <span>{t(description)}</span>
       </div>
       <div className="logic-capability-toggle">
         {checked ? <CheckCircle2 size={18} /> : <Circle size={18} />}
@@ -362,21 +369,21 @@ export function LogicPanel({
     if (!editingProperty) return null;
     const options = editingProperty.options ?? [];
     return <div className="logic-property-options">
-      <div className="logic-property-editor-subheading"><strong>Options</strong><span>{options.length}</span></div>
+      <div className="logic-property-editor-subheading"><strong>{t("Options")}</strong><span>{options.length}</span></div>
       {options.map((option, index) => <div className="logic-property-option" key={`${option.value}-${index}`}>
-        <input aria-label={`Option ${index + 1} value`} disabled={isCanonEditor} value={option.value} onChange={(event) => updateOptions(options.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))} />
-        <input aria-label={`Option ${index + 1} label`} disabled={isCanonEditor} value={option.label} onChange={(event) => updateOptions(options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} />
-        {!isCanonEditor ? <button type="button" className="icon-only" aria-label={`Remove option ${index + 1}`} onClick={() => updateOptions(options.filter((_, itemIndex) => itemIndex !== index))}><X size={13} /></button> : null}
+        <input aria-label={`${t("Value")} ${index + 1}`} disabled={isCanonEditor} value={option.value} onChange={(event) => updateOptions(options.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))} />
+        <input aria-label={`${t("Label")} ${index + 1}`} disabled={isCanonEditor} value={option.label} onChange={(event) => updateOptions(options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} />
+        {!isCanonEditor ? <button type="button" className="icon-only" aria-label={`${t("Remove option")} ${index + 1}`} onClick={() => updateOptions(options.filter((_, itemIndex) => itemIndex !== index))}><X size={13} /></button> : null}
       </div>)}
-      {!isCanonEditor ? <button type="button" className="logic-property-add-option" onClick={() => updateOptions([...options, { value: optionKey(options.length), label: `Option ${options.length + 1}` }])}><Plus size={13} /> Add option</button> : null}
+      {!isCanonEditor ? <button type="button" className="logic-property-add-option" onClick={() => updateOptions([...options, { value: optionKey(options.length), label: `Option ${options.length + 1}` }])}><Plus size={13} /> {t("Add option")}</button> : null}
     </div>;
   };
 
-  const renderPropertyAction = (property: { id: string }, source: PropertySource) => <button
+  const renderPropertyAction = (property: { id: string; label?: string }, source: PropertySource) => <button
     type="button"
     className="icon-only logic-property-edit-button"
-    title={source === "canon" ? "View imported property" : "Edit property"}
-    aria-label={source === "canon" ? `View ${property.id}` : `Edit ${property.id}`}
+    title={t(source === "canon" ? "View imported property" : "Edit property")}
+    aria-label={`${t(source === "canon" ? "View imported property" : "Edit property")}: ${property.label ?? property.id}`}
     onClick={(event) => openPropertyEditor(event, property.id, source)}
   ><MoreHorizontal size={14} /></button>;
 
@@ -387,21 +394,22 @@ export function LogicPanel({
           type="button"
           className="explorer-entity-open"
           title={property.label}
+          onClick={(event) => { if (event.detail === 0) onSelect({type:"explorerProperty",id:property.id,source:"canon"}); }}
           onPointerDown={() => handlePropertyPointerDown(property.id, "canon")}
           onPointerUp={() => handlePropertyPointerUp(property.id, "canon")}
           onPointerLeave={clearPendingInspectorClick}
         >
           {property.valueType === "group" ? <Boxes size={14} /> : <CircleDot size={14} />}
           <span className="explorer-entity-name">{property.label}</span>
-          <em className="explorer-origin canon">{property.valueType}</em>
-          <LockKeyhole className="logic-property-lock" size={12} aria-label="Imported from canon" />
+          <em className="explorer-origin canon">{t(property.valueType)}</em>
+          <LockKeyhole className="logic-property-lock" size={12} aria-label={t("Imported from canon")} />
         </button>
         <div className="explorer-row-actions">
           <button
             type="button"
             className="icon-only"
-            title="View imported property"
-            aria-label={`View ${property.id}`}
+            title={t("View imported property")}
+            aria-label={`${t("View imported property")}: ${property.label}`}
             onClick={(event) => openPropertyEditor(event, property.id, "canon")}
           >
             <MoreHorizontal size={15} />
@@ -423,20 +431,21 @@ export function LogicPanel({
           type="button"
           className="explorer-entity-open"
           title={property.label}
+          onClick={(event) => { if (event.detail === 0) onSelect({type:"explorerProperty",id:property.id,source:"local"}); }}
           onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
           onPointerUp={() => handlePropertyPointerUp(property.id, "local")}
           onPointerLeave={clearPendingInspectorClick}
         >
           <CircleDot size={14} />
           <span className="explorer-entity-name">{property.label}</span>
-          <em className="explorer-origin local">{property.valueType}</em>
+          <em className="explorer-origin local">{t(property.valueType)}</em>
         </button>
         <div className="explorer-row-actions">
           <button
             type="button"
             className="icon-only"
-            title="Edit property"
-            aria-label={`Edit ${property.id}`}
+            title={t("Edit property")}
+            aria-label={`${t("Edit property")}: ${property.label}`}
             onClick={(event) => openPropertyEditor(event, property.id, "local")}
           >
             <MoreHorizontal size={15} />
@@ -456,7 +465,8 @@ export function LogicPanel({
             type="button"
             className="explorer-entity-open logic-canon-type-row"
             title={property.label}
-            onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
+            onClick={(event) => { if (event.detail === 0) onSelect({type:"explorerProperty",id:property.id,source:"local"}); }}
+          onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
             onPointerUp={() => handlePropertyPointerUp(property.id, "local")}
             onPointerLeave={clearPendingInspectorClick}
           >
@@ -471,22 +481,19 @@ export function LogicPanel({
     </section>
   );
 
-  const panelTitle = "Logic";
+  const panelTitle = t("Logic");
 
   return (
     <WorkspaceSidePanel title={panelTitle} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
-      <div className="explorer-view-tabs logic-view-tabs" role="tablist" aria-label="Logic views">
-        <button type="button" role="tab" aria-selected={tab === "properties"} className={tab === "properties" ? "active" : ""} onClick={() => setTab("properties")}>Properties</button>
-        <button type="button" role="tab" aria-selected={tab === "variables"} className={tab === "variables" ? "active" : ""} onClick={() => setTab("variables")}>Variables</button>
-      </div>
+      <AccessibleTabs className="explorer-view-tabs logic-view-tabs" ariaLabel={t("Logic views")} value={tab} onChange={(value) => setTab(value as typeof tab)} tabs={[{id:"properties",label:t("Properties")},{id:"variables",label:t("Variables")}]} />
       {tab === "properties" ? (
         <>
           <div className="explorer-toolbar">
             <label className="explorer-search">
               <Search size={14} />
-              <input value={propertySearch} onChange={(event) => setPropertySearch(event.target.value)} placeholder="Search properties" />
+              <input value={propertySearch} onChange={(event) => setPropertySearch(event.target.value)} aria-label={t("Search properties")} placeholder={t("Search properties")} />
             </label>
-            <button type="button" title="Add property" onClick={(event) => {
+            <button type="button" title={t("Add property")} onClick={(event) => {
               if (createPropertyMenu) {
                 setCreatePropertyMenu(undefined);
                 return;
@@ -501,8 +508,8 @@ export function LogicPanel({
                 left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
               });
             }}><Plus size={15} /></button>
-            <button type="button" title="Expand all properties" onClick={expandAllProperties}><ChevronDown size={15} /></button>
-            <button type="button" title="Collapse all properties" onClick={collapseAllProperties}><ChevronRight size={15} /></button>
+            <button type="button" title={t("Expand all properties")} onClick={expandAllProperties}><ChevronDown size={15} /></button>
+            <button type="button" title={t("Collapse all properties")} onClick={collapseAllProperties}><ChevronRight size={15} /></button>
           </div>
           <div className="explorer-tree asset-explorer-tree">
             {canonPropertyTypes.map((type) => {
@@ -516,7 +523,7 @@ export function LogicPanel({
                     <button
                       type="button"
                       className="logic-canon-type-toggle"
-                      aria-label={`${typeExpanded ? "Collapse" : "Expand"} ${type.label}`}
+                      aria-label={`${t(typeExpanded ? "Collapse" : "Expand")} ${type.label}`}
                       onClick={() => toggleCanonType(type.id)}
                     >
                       {typeExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -532,7 +539,7 @@ export function LogicPanel({
                       >
                         <CircleDot size={14} />
                         <span className="explorer-entity-name">{type.label}</span>
-                        <LockKeyhole className="logic-property-lock" size={12} aria-label="Imported from canon" />
+                        <LockKeyhole className="logic-property-lock" size={12} aria-label={t("Imported from canon")} />
                         <span className="logic-canon-type-count">{count}</span>
                       </button>
                       <div className="explorer-row-actions">
@@ -541,7 +548,7 @@ export function LogicPanel({
                     </div>
                   </div>
                   {typeExpanded && type.properties.map((property) => renderCanonProperty(property))}
-                  {typeExpanded && !type.properties.length ? <span className="empty-line">No properties for this type.</span> : null}
+                  {typeExpanded && !type.properties.length ? <span className="empty-line">{t("No properties for this type.")}</span> : null}
                 </section>
               ) : null;
             })}
@@ -551,14 +558,14 @@ export function LogicPanel({
             {canonPropertyTypes.length === 0 && localProperties.length === 0 ? (
               !propertiesConfig ? (
                 <div className="empty-state" style={{ padding: "16px", textAlign: "center" }}>
-                  <span className="empty-line" style={{ display: "block", marginBottom: "12px" }}>No properties configured.</span>
-                  <button 
-                    type="button" 
+                  <span className="empty-line" style={{ display: "block", marginBottom: "12px" }}>{t("No properties configured.")}</span>
+                  <button
+                    type="button"
                     onClick={onInitializeProperties}
                     style={{
                       padding: "8px 16px",
-                      backgroundColor: "#3b82f6",
-                      color: "white",
+                      backgroundColor: "var(--wn-accent)",
+                      color: "var(--wn-panel)",
                       border: "none",
                       borderRadius: "4px",
                       cursor: "pointer",
@@ -566,26 +573,26 @@ export function LogicPanel({
                     }}
                   >
                     <Plus size={14} style={{ marginRight: "6px", verticalAlign: "middle" }} />
-                    Initialize Properties
+                    {t("Initialize Properties")}
                   </button>
                 </div>
               ) : (
-                <span className="empty-line">No properties.</span>
+                <span className="empty-line">{t("No properties.")}</span>
               )
             ) : null}
           </div>
-          {propertyEditor && editingProperty ? <div ref={editorRef} className="logic-property-editor" style={{ top: propertyEditor.top, left: propertyEditor.left }} role="dialog" aria-label={`${isCanonEditor ? "Imported" : "Edit"} property`}>
+          {propertyEditor && editingProperty ? <div ref={editorRef} className="logic-property-editor" style={{ top: propertyEditor.top, left: propertyEditor.left }} role="dialog" aria-label={t(isCanonEditor ? "View imported property" : "Edit property")} aria-modal="true">
         <header className="logic-property-editor-header">
           <span className="logic-property-editor-icon">{isCanonEditor ? <LockKeyhole size={15} /> : <ShieldCheck size={15} />}</span>
-          <div><strong>{editingProperty.label}</strong><small>{isCanonEditor ? "Imported canon property" : "Local property"}</small></div>
+          <div><strong>{editingProperty.label}</strong><small>{t(isCanonEditor ? "Imported canon property" : "Local property")}</small></div>
           <div style={{ display: "flex", gap: "4px" }}>
-            {!isCanonEditor ? <button type="button" className="icon-only" title="Delete property" aria-label="Delete property" onClick={() => { onDeleteLocalExplorerProperty?.(editingProperty.id); setPropertyEditor(undefined); }}><Trash2 size={15} /></button> : null}
-            <button type="button" className="icon-only" aria-label="Close property editor" onClick={() => setPropertyEditor(undefined)}><X size={15} /></button>
+            {!isCanonEditor ? <button type="button" className="icon-only" title={t("Delete property")} aria-label={t("Delete property")} onClick={() => { onDeleteLocalExplorerProperty?.(editingProperty.id); setPropertyEditor(undefined); }}><Trash2 size={15} /></button> : null}
+            <button type="button" className="icon-only" data-overlay-focus aria-label={t("Close property editor")} onClick={() => setPropertyEditor(undefined)}><X size={15} /></button>
           </div>
         </header>
-        <div className={`logic-property-protection ${isCanonEditor ? "canon" : "local"}`}><LockKeyhole size={13} />{isCanonEditor ? "Canon property — only capabilities can be overridden" : "Local property"}</div>
+        <div className={`logic-property-protection ${isCanonEditor ? "canon" : "local"}`}><LockKeyhole size={13} />{t(isCanonEditor ? "Canon property — only capabilities can be overridden" : "Local property")}</div>
         <div className="logic-property-capabilities">
-          <div className="logic-property-editor-subheading"><strong>PathBranching capabilities</strong><span>Configure behavior</span></div>
+          <div className="logic-property-editor-subheading"><strong>{t("PathBranching capabilities")}</strong><span>{t("Configure behavior")}</span></div>
           {(editingTypeId || editingProperty?.valueType === "entity-type") ? renderCapabilityCard(
             <Package size={16} />,
             "Grantable",
@@ -619,9 +626,9 @@ export function LogicPanel({
             "Present as entity",
             "Values can appear as characters/items in events",
             editingCapability?.entityPresentable ?? false,
-            (checked) => updateCapability({ 
-              entityPresentable: checked, 
-              dialogueTrigger: checked ? editingCapability?.dialogueTrigger : false 
+            (checked) => updateCapability({
+              entityPresentable: checked,
+              dialogueTrigger: checked ? editingCapability?.dialogueTrigger : false
             }),
           )}
           {editingCapability?.entityPresentable ? renderCapabilityCard(
@@ -632,32 +639,32 @@ export function LogicPanel({
             (checked) => updateCapability({ dialogueTrigger: checked }),
             true,
           ) : null}
-          <label className="field-label">Can relate to<input value={(editingCapability?.relationTargetTypes ?? []).join(", ")} placeholder="character, worldbuilding" onChange={(event) => updateCapability({ relationTargetTypes: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
+          <label className="field-label">{t("Can relate to")}<input value={(editingCapability?.relationTargetTypes ?? []).join(", ")} placeholder={t("character, worldbuilding")} onChange={(event) => updateCapability({ relationTargetTypes: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
         </div>
         <details className="logic-property-technical-info">
-          <summary><Info size={12} /> Schema fields</summary>
+          <summary><Info size={12} /> {t("Schema fields")}</summary>
           <div className="logic-property-technical-content">
-            <label className="field-label">Name<input value={editingProperty.label} disabled={isCanonEditor} onChange={(event) => updateLocal({ label: event.target.value })} /></label>
-            <label className="field-label">Value type<select value={editingProperty.valueType} disabled={isCanonEditor} onChange={(event) => updateLocal({ valueType: event.target.value as LocalExplorerProperty["valueType"] })}>{!propertyTypes.some(([value]) => value === editingProperty.valueType) ? <option value={editingProperty.valueType}>{editingProperty.valueType}</option> : null}{propertyTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label className="field-label">Applies to types<input value={(editingProperty.appliesToTypes ?? []).join(", ")} disabled={isCanonEditor} placeholder="All types" onChange={(event) => updateLocal({ appliesToTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
+            <label className="field-label">{t("Name")}<input value={editingProperty.label} disabled={isCanonEditor} onChange={(event) => updateLocal({ label: event.target.value })} /></label>
+            <label className="field-label">{t("Value type")}<select value={editingProperty.valueType} disabled={isCanonEditor} onChange={(event) => updateLocal({ valueType: event.target.value as LocalExplorerProperty["valueType"] })}>{!propertyTypes.some(([value]) => value === editingProperty.valueType) ? <option value={editingProperty.valueType}>{editingProperty.valueType}</option> : null}{propertyTypes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
+            <label className="field-label">{t("Applies to types")}<input value={(editingProperty.appliesToTypes ?? []).join(", ")} disabled={isCanonEditor} placeholder={t("All types")} onChange={(event) => updateLocal({ appliesToTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
             {!isCanonEditor && (editingProperty.valueType === "entity-ref" || editingProperty.valueType === "entity-ref-list") ? (
-              <label className="field-label">Target entity types<input value={((editingProperty as LocalExplorerProperty).targetTypes ?? []).join(", ")} placeholder="All entities" onChange={(event) => updateLocal({ targetTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
+              <label className="field-label">{t("Target entity types")}<input value={((editingProperty as LocalExplorerProperty).targetTypes ?? []).join(", ")} placeholder={t("All entities")} onChange={(event) => updateLocal({ targetTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
             ) : null}
-            <label className="field-label">Description<textarea rows={3} value={editingProperty.description ?? ""} disabled={isCanonEditor} onChange={(event) => updateLocal({ description: event.target.value })} /></label>
-            <label className="logic-property-checkbox"><input type="checkbox" checked={editingProperty.required ?? false} disabled={isCanonEditor} onChange={(event) => updateLocal({ required: event.target.checked })} /> Required</label>
+            <label className="field-label">{t("Description")}<textarea rows={3} value={editingProperty.description ?? ""} disabled={isCanonEditor} onChange={(event) => updateLocal({ description: event.target.value })} /></label>
+            <label className="logic-property-checkbox"><input type="checkbox" checked={editingProperty.required ?? false} disabled={isCanonEditor} onChange={(event) => updateLocal({ required: event.target.checked })} /> {t("Required")}</label>
             {renderEditorOptions()}
           </div>
         </details>
         <details className="logic-property-technical-info">
-          <summary><Info size={12} /> Technical information</summary>
+          <summary><Info size={12} /> {t("Technical information")}</summary>
           <div className="logic-property-technical-content">
             <div className="logic-property-technical-field">
-              <label>Property ID</label>
+              <label>{t("Property ID")}</label>
               <code>{editingProperty.id}</code>
             </div>
             {"path" in editingProperty && editingProperty.path && editingProperty.path.length > 0 ? (
               <div className="logic-property-technical-field">
-                <label>YAML path</label>
+                <label>{t("YAML path")}</label>
                 <code>{(editingProperty as any).path.join(".")}</code>
               </div>
             ) : null}
@@ -667,30 +674,40 @@ export function LogicPanel({
         </>
       ) : (
         <>
-          <div className="panel-toolbar"><strong>Variables</strong><button type="button" onClick={addGroup}><Plus size={14} /> Group</button></div>
+          <div className="panel-toolbar"><strong>{t("Variables")}</strong><button type="button" onClick={addGroup}><Plus size={14} /> {t("Group")}</button></div>
           <div className="logic-groups">{groups.map((group, index) => <section className="logic-group" key={group.id}>
-            <header><input aria-label="Group name" value={group.name} onChange={(event) => updateGroups(groups.map((item) => item.id === group.id ? { ...item, name: event.target.value } : item))} /><button type="button" disabled={index === 0} onClick={() => updateGroups(groups.map((item, position) => position === index ? { ...item, order: index - 1 } : position === index - 1 ? { ...item, order: index } : item))}><ChevronUp size={13} /></button><button type="button" disabled={index === groups.length - 1} onClick={() => updateGroups(groups.map((item, position) => position === index ? { ...item, order: index + 1 } : position === index + 1 ? { ...item, order: index } : item))}><ChevronDown size={13} /></button><button type="button" disabled={group.id === "ungrouped"} onClick={() => updateGroups(groups.filter((item) => item.id !== group.id))}><Trash2 size={13} /></button></header>
-            {(project.logicVariables ?? []).filter((variable) => variable.groupId === group.id).map((variable) => <div className="logic-variable" key={variable.id}><input aria-label="Variable name" value={variable.name} onChange={(event) => updateVariable(variable.id, { name: event.target.value })} /><select value={variable.type} onChange={(event) => updateVariable(variable.id, { type: event.target.value as LogicVariableType, value: event.target.value === "boolean" ? false : event.target.value === "number" ? 0 : event.target.value === "list" ? [] : "" })}>{variableTypes.map((type) => <option key={type}>{type}</option>)}</select><input aria-label="Variable value" value={variableValue(variable)} onChange={(event) => updateVariable(variable.id, { value: variable.type === "number" ? Number(event.target.value) || 0 : variable.type === "list" ? event.target.value.split(",").map((item) => item.trim()).filter(Boolean) : event.target.value })} /><button type="button" onClick={() => updateVariables((project.logicVariables ?? []).filter((item) => item.id !== variable.id))}><Trash2 size={13} /></button></div>)}
-            <button type="button" className="logic-add-variable" onClick={() => addVariable(group.id)}><Plus size={13} /> Variable</button>
+            <header>
+              <input aria-label={t("Group name")} value={group.name} onChange={(event) => updateGroups(groups.map((item) => item.id === group.id ? { ...item, name: event.target.value } : item))} />
+              <button type="button" aria-label={`${t("Move group up")}: ${group.name}`} disabled={index === 0} onClick={() => updateGroups(groups.map((item, position) => position === index ? { ...item, order: index - 1 } : position === index - 1 ? { ...item, order: index } : item))}><ChevronUp size={13} /></button>
+              <button type="button" aria-label={`${t("Move group down")}: ${group.name}`} disabled={index === groups.length - 1} onClick={() => updateGroups(groups.map((item, position) => position === index ? { ...item, order: index + 1 } : position === index + 1 ? { ...item, order: index } : item))}><ChevronDown size={13} /></button>
+              <button type="button" aria-label={`${t("Delete group")}: ${group.name}`} disabled={group.id === "ungrouped"} onClick={() => updateGroups(groups.filter((item) => item.id !== group.id))}><Trash2 size={13} /></button>
+            </header>
+            {(project.logicVariables ?? []).filter((variable) => variable.groupId === group.id).map((variable) => <div className="logic-variable" key={variable.id}>
+              <input aria-label={t("Variable name")} value={variable.name} onChange={(event) => updateVariable(variable.id, { name: event.target.value })} />
+              <select aria-label={`${t("Variable type")}: ${variable.name}`} value={variable.type} onChange={(event) => updateVariable(variable.id, { type: event.target.value as LogicVariableType, value: event.target.value === "boolean" ? false : event.target.value === "number" ? 0 : event.target.value === "list" ? [] : "" })}>{variableTypes.map((type) => <option key={type} value={type}>{t(type)}</option>)}</select>
+              <input aria-label={`${t("Variable value")}: ${variable.name}`} value={variableValue(variable)} onChange={(event) => updateVariable(variable.id, { value: variable.type === "number" ? Number(event.target.value) || 0 : variable.type === "list" ? event.target.value.split(",").map((item) => item.trim()).filter(Boolean) : event.target.value })} />
+              <button type="button" aria-label={`${t("Delete variable")}: ${variable.name}`} onClick={() => updateVariables((project.logicVariables ?? []).filter((item) => item.id !== variable.id))}><Trash2 size={13} /></button>
+            </div>)}
+            <button type="button" className="logic-add-variable" onClick={() => addVariable(group.id)}><Plus size={13} /> {t("Variable")}</button>
           </section>)}</div>
         </>
       )}
     {createPropertyMenu ? (
-      <div ref={createPropertyRef} className="logic-property-editor explorer-create-menu" style={{ top: createPropertyMenu.top, left: createPropertyMenu.left }} role="dialog" aria-label="Create new property">
+      <div ref={createPropertyRef} className="logic-property-editor explorer-create-menu" style={{ top: createPropertyMenu.top, left: createPropertyMenu.left }} role="dialog" aria-modal="true" aria-label={t("Create new property")} >
         <header className="logic-property-editor-header">
           <span className="logic-property-editor-icon"><Plus size={15} /></span>
-          <div><strong>New property</strong><small>Declare a local property</small></div>
-          <button type="button" className="icon-only" aria-label="Close create property menu" onClick={() => setCreatePropertyMenu(undefined)}><X size={15} /></button>
+          <div><strong>{t("New property")}</strong><small>{t("Declare a local property")}</small></div>
+          <button type="button" className="icon-only" aria-label={t("Close create property menu")} onClick={() => setCreatePropertyMenu(undefined)}><X size={15} /></button>
         </header>
         <div className="modal-body" style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
             <label className="field-label">
-              <span>Label</span>
+              <span>{t("Label")}</span>
               <input
                 type="text"
                 value={newPropertyState.label}
                 onChange={(e) => setNewPropertyState({ ...newPropertyState, label: e.target.value })}
-                placeholder="Property label"
-                autoFocus
+                placeholder={t("Property label")}
+                data-overlay-focus
                   onKeyDown={(e) => {
                     if (e.key === "Enter") handleCreateProperty();
                     if (e.key === "Escape") setCreatePropertyMenu(undefined);
@@ -698,18 +715,18 @@ export function LogicPanel({
               />
             </label>
             <label className="field-label">
-              <span>Type</span>
+              <span>{t("Type")}</span>
               <select value={newPropertyState.valueType} onChange={(event) => setNewPropertyState({ ...newPropertyState, valueType: event.target.value as LocalExplorerProperty["valueType"], options: [], targetTypes: [] })}>
-                {propertyTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                {propertyTypes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
               </select>
             </label>
             <label className="field-label">
-              <span>Description</span>
+              <span>{t("Description")}</span>
               <textarea
                 rows={2}
                 value={newPropertyState.description}
                 onChange={(e) => setNewPropertyState({ ...newPropertyState, description: e.target.value })}
-                placeholder="Optional description"
+                placeholder={t("Optional description")}
               />
             </label>
             <label className="logic-property-checkbox">
@@ -718,48 +735,48 @@ export function LogicPanel({
                 checked={newPropertyState.required}
                 onChange={(e) => setNewPropertyState({ ...newPropertyState, required: e.target.checked })}
               />
-              Required
+              {t("Required")}
             </label>
             {newPropertyState.valueType === "entity-type" ? (
               <>
                 <label className="field-label">
-                  <span>Icon</span>
+                  <span>{t("Icon")}</span>
                   <input
                     type="text"
                     value={newPropertyState.icon || ""}
                     onChange={(e) => setNewPropertyState({ ...newPropertyState, icon: e.target.value || undefined })}
-                    placeholder="circle, person, map-pin, etc."
+                    placeholder={t("circle, person, map-pin, etc.")}
                   />
                 </label>
                 <label className="field-label">
-                  <span>Color (optional)</span>
+                  <span>{t("Color (optional)")}</span>
                   <input
                     type="text"
                     value={newPropertyState.color || ""}
                     onChange={(e) => setNewPropertyState({ ...newPropertyState, color: e.target.value || undefined })}
-                    placeholder="#FF5733 or blue"
+                    placeholder={t("#FF5733 or blue")}
                   />
                 </label>
                 <label className="field-label">
-                  <span>Suggested folder (optional)</span>
+                  <span>{t("Suggested folder (optional)")}</span>
                   <input
                     type="text"
                     value={newPropertyState.suggestedFolder || ""}
                     onChange={(e) => setNewPropertyState({ ...newPropertyState, suggestedFolder: e.target.value || undefined })}
-                    placeholder="characters, locations, etc."
+                    placeholder={t("characters, locations, etc.")}
                   />
                 </label>
               </>
             ) : null}
             {(newPropertyState.valueType === "select" || newPropertyState.valueType === "multiselect") ? (
               <div className="field-label">
-                <span>Options</span>
+                <span>{t("Options")}</span>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   {newPropertyState.options.map((option, index) => (
                     <div key={index} style={{ display: "flex", gap: "4px" }}>
                       <input
                         type="text"
-                        placeholder="Value"
+                        placeholder={t("Value")}
                         value={option.value}
                         onChange={(e) => {
                           const updated = [...newPropertyState.options];
@@ -770,7 +787,7 @@ export function LogicPanel({
                       />
                       <input
                         type="text"
-                        placeholder="Label"
+                        placeholder={t("Label")}
                         value={option.label}
                         onChange={(e) => {
                           const updated = [...newPropertyState.options];
@@ -782,6 +799,7 @@ export function LogicPanel({
                       <button
                         type="button"
                         className="icon-only"
+                        aria-label={`${t("Remove option")} ${index + 1}`}
                         onClick={() => {
                           const updated = newPropertyState.options.filter((_, i) => i !== index);
                           setNewPropertyState({ ...newPropertyState, options: updated });
@@ -803,14 +821,14 @@ export function LogicPanel({
                     }}
                   >
                     <Plus size={12} style={{ marginRight: "4px", verticalAlign: "middle" }} />
-                    Add option
+                    {t("Add option")}
                   </button>
                 </div>
               </div>
             ) : null}
             {(newPropertyState.valueType === "entity-ref" || newPropertyState.valueType === "entity-ref-list") ? (
               <label className="field-label">
-                <span>Target entity types</span>
+                <span>{t("Target entity types")}</span>
                 <input
                   type="text"
                   value={newPropertyState.targetTypes.join(", ")}
@@ -818,12 +836,12 @@ export function LogicPanel({
                     ...newPropertyState,
                     targetTypes: e.target.value.split(",").map((v) => v.trim()).filter(Boolean),
                   })}
-                  placeholder="character, location (comma-separated)"
+                  placeholder={t("character, location (comma-separated)")}
                 />
               </label>
             ) : null}
             <label className="field-label">
-              <span>Applies to types (optional)</span>
+              <span>{t("Applies to types (optional)")}</span>
               <input
                 type="text"
                 value={newPropertyState.appliesToTypes.join(", ")}
@@ -831,13 +849,13 @@ export function LogicPanel({
                   ...newPropertyState,
                   appliesToTypes: e.target.value.split(",").map((v) => v.trim()).filter(Boolean),
                 })}
-                placeholder="Leave blank for all types"
+                placeholder={t("Leave blank for all types")}
               />
             </label>
           </div>
           <footer className="modal-footer">
-            <button type="button" onClick={() => setCreatePropertyMenu(undefined)}>Cancel</button>
-            <button type="button" className="primary" onClick={handleCreateProperty} disabled={!newPropertyState.label.trim()}>Create</button>
+            <button type="button" onClick={() => setCreatePropertyMenu(undefined)}>{t("Cancel")}</button>
+            <button type="button" className="primary" onClick={handleCreateProperty} disabled={!newPropertyState.label.trim()}>{t("Create")}</button>
           </footer>
         </div>
     ) : null}

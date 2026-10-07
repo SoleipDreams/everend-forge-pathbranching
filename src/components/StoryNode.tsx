@@ -7,6 +7,7 @@ import type { LocaleNames } from "../localization.js";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
 import { SpeakerSelector } from "./SpeakerSelector.js";
 import { LogicBands } from "./LogicComposer.js";
+import { useInterfaceLocale } from "../i18n.js";
 
 function badgeText(value: string) {
   return value.length > 22 ? `${value.slice(0, 19)}...` : value;
@@ -183,6 +184,7 @@ type BeatQuickEditor = {
   languages: string[];
   localeNames?: LocaleNames;
   characterRef?: string;
+  characterLabel?: string;
   characterVariantId?: string;
   textCounter?: { count: number; unit: "words" | "characters"; target: number };
   counterPreference?: {
@@ -346,6 +348,7 @@ function stopCanvasInteraction(event: { stopPropagation: () => void }) {
 }
 
 function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
+  const interfaceLocale = useInterfaceLocale();
   const nodeData = data as StoryCanvasNodeData;
   const updateNodeInternals = useUpdateNodeInternals();
   const routeGateHandleSignature = nodeData.kind === "routeGate"
@@ -727,8 +730,8 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
       </> : <>
         <div className="route-gate-kicker"><GitBranch size={11} /> LOGIC GATE</div>
         <div className="route-gate-summary">
-          <strong>{routeOptions.length} {routeOptions.length === 1 ? "route" : "routes"}</strong>
-          <span>{routeOptions.some((option) => option.mode === "fallback") ? "First valid route, then ELSE" : "First valid route wins"}</span>
+          <strong>{routeOptions.length} {interfaceLocale === "es" ? (routeOptions.length === 1 ? "ruta" : "rutas") : (routeOptions.length === 1 ? "route" : "routes")}</strong>
+          <span>{interfaceLocale === "es" ? (routeOptions.some((option) => option.mode === "fallback") ? "Primera ruta válida, después ELSE" : "Se elige la primera ruta válida") : (routeOptions.some((option) => option.mode === "fallback") ? "First valid route, then ELSE" : "First valid route wins")}</span>
         </div>
         {routeOptions.length ? <Handle
           id="route:output"
@@ -1110,7 +1113,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
       (variant) => variant.id === selectedVariantId,
     );
     const speakerPortraitUrl = selectedVariant?.portraitUrl ?? selectedSpeaker?.portraitUrl;
-    const speakerDisplayName = speakerLabel(speakerRef, selectedSpeaker?.label);
+    const speakerDisplayName = speakerLabel(speakerRef, selectedSpeaker?.label ?? quickEditor?.characterLabel);
     const isSpeech = nodeData.kind === "speechBeat";
     const textCounter = isSpeech ? quickEditor?.textCounter : undefined;
     const portraitFallback = !speakerRef
@@ -1186,6 +1189,7 @@ function StoryNode({ id, data, selected }: NodeProps<StoryCanvasNode>) {
             <div className="speech-beat-menu-anchor nodrag nopan" onPointerDown={stopCanvasInteraction}>
               <SpeakerSelector
                 value={speakerRef}
+                displayLabel={speakerDisplayName}
                 options={speakerOptions}
                 presentEntityIds={quickEditor?.presentEntityIds ?? []}
                 onChange={(characterId) => {

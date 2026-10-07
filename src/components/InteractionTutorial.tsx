@@ -1,5 +1,8 @@
-import { useEffect } from "react";
+import { useRef } from "react";
 import { Hand, Layers, MousePointerClick, Sparkles, X } from "lucide-react";
+import { useInterfaceLocale } from "../i18n.js";
+import { useOverlayFocus } from "./useOverlayFocus.js";
+import "../accessibleUi.css";
 
 type InteractionTutorialLocale = "en" | "es";
 
@@ -57,19 +60,17 @@ const STEP_ICONS = [MousePointerClick, Hand, Layers] as const;
 export function InteractionTutorial({
   locale,
   onDismiss,
+  visible = true,
 }: {
-  locale: InteractionTutorialLocale;
+  locale?: InteractionTutorialLocale;
   onDismiss: () => void;
+  visible?: boolean;
 }) {
-  const copy = COPY[locale] ?? COPY.en;
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onDismiss();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onDismiss]);
+  const interfaceLocale = useInterfaceLocale();
+  const copy = COPY[locale ?? interfaceLocale];
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useOverlayFocus(dialogRef, visible, onDismiss);
+  if (!visible) return null;
 
   return (
     <div
@@ -79,9 +80,12 @@ export function InteractionTutorial({
     >
       <div
         className="interaction-tutorial-dialog"
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="interaction-tutorial-title"
+        aria-describedby="interaction-tutorial-description"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="interaction-tutorial-header">
@@ -103,7 +107,7 @@ export function InteractionTutorial({
             <X size={16} />
           </button>
         </header>
-        <p className="interaction-tutorial-description">{copy.description}</p>
+        <p id="interaction-tutorial-description" className="interaction-tutorial-description">{copy.description}</p>
         <ol className="interaction-tutorial-steps">
           {copy.steps.map((step, index) => {
             const StepIcon = STEP_ICONS[index] ?? MousePointerClick;

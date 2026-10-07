@@ -198,6 +198,10 @@ const panelSpanish: Record<string, string> = {
   "Entity type": "Tipo de entidad", "Text": "Texto", "Number": "Número", "Boolean": "Booleano", "Date": "Fecha", "Select": "Selección", "Multi-select": "Selección múltiple", "Group (nested properties)": "Grupo (propiedades anidadas)",
   "text": "texto", "number": "número", "boolean": "booleano", "list": "lista", "canonRef": "referencia al canon", "select": "selección", "multiselect": "selección múltiple", "date": "fecha", "entity-type": "tipo de entidad", "group": "grupo",
   "Expand": "Expandir", "Collapse": "Contraer", "Actions for": "Acciones de", "Remove option": "Eliminar opción",
+  "Inspector tab groups": "Grupos de pestañas del inspector", "Locate on canvas": "Localizar en el canvas",
+  "Create Story": "Crear historia", "Story name": "Nombre de la historia", "Rename Story": "Renombrar historia",
+  "Create Sequence": "Crear secuencia", "Sequence name": "Nombre de la secuencia", "Rename Sequence": "Renombrar secuencia", "Save": "Guardar",
+  "Close inspector": "Cerrar inspector", "Minimize inspector": "Contraer inspector", "Expand inspector": "Ampliar inspector", "Restore inspector": "Restaurar inspector",
   "character, worldbuilding": "character, worldbuilding", "character, location (comma-separated)": "character, location (separados por comas)",
   "circle, person, map-pin, etc.": "circle, person, map-pin, etc.", "#FF5733 or blue": "#FF5733 o blue", "characters, locations, etc.": "characters, locations, etc.",
 };

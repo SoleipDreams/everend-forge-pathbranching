@@ -64,6 +64,7 @@ function presentDiagnostic(project: BranchingProject, diagnostic: { location?: s
   }
   const cause = diagnostic.message.split("\n").at(-1)?.replace(/^Error: /u, "") ?? diagnostic.message;
   let message = inkCauseCopy[cause]?.[es ? 1 : 0];
+  if (!message && cause.startsWith("Missing entity ")) message = es ? "La condición hace referencia a una entidad que ya no existe. Corrige la referencia para exportar a Ink." : "The condition refers to an entity that no longer exists. Fix the reference to export to Ink.";
   if (!message && cause.startsWith("Destination ")) message = es ? "Una ruta apunta a un nodo interno que este perfil de Ink no puede ejecutar." : "A route targets an internal node that this Ink profile cannot execute.";
   if (!message && cause.startsWith("Unsupported operator ")) message = es ? "El operador de esta condición no está admitido por este perfil de Ink." : "This condition's operator is not supported by this Ink profile.";
   if (!message && cause.startsWith("Unsupported or incompatible effect ")) message = es ? "Una consecuencia usa una operación no admitida o incompatible con el tipo del valor." : "An effect uses an unsupported operation or one incompatible with the value type.";

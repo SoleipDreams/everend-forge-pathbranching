@@ -6,6 +6,9 @@ Current milestone: [Authoring cycle closure](AUTHORING_CLOSURE.md). Unity live
 synchronization is deferred while the authoring, persistence and export loop is
 validated.
 
+Current UI refinement and verification: [Authoring UX results](UX_REFINEMENT.md).
+Browser checks are recorded separately from pending manual Tauri acceptance.
+
 1. [Design](DESIGN.md)
 2. [Integration Architecture](INTEGRATION_ARCHITECTURE.md)
 3. [Ontology and Projection Reanalysis](ONTOLOGY_PROJECTION_REANALYSIS.md)
