@@ -17,8 +17,15 @@ import type {
   LogicPredicate,
   LogicSubject,
   LogicMoment,
+  InstanceQuery,
+  InstanceEffect,
 } from "../domain.js";
-import { asConditionExpressions, isConditionSet, migrateConditionInput, migrateConsequence } from "../logic.js";
+import { authoringDraftKey, getAuthoringDraft, setAuthoringDraft } from "../authoringDrafts.js";
+import { useAuthoringDraft } from "./useAuthoringDraft.js";
+import { EntityOwnerPicker } from "./EntityOwnerPicker.js";
+import { NarrativeEffectEditor } from "./NarrativeEffectEditor.js";
+import { entityDefinition } from "../authoringEntities.js";
+import { asConditionExpressions, isConditionSet, migrateConditionInput, migrateConsequence, orderedMomentEffects, splitNarrativeEffects } from "../logic.js";
 import { grantableEntities } from "../explorerSchema.js";
 import {
   LOGIC_COMPARISON_OPERATORS as comparisonOperators,
@@ -40,7 +47,38 @@ type LogicComposerProps = {
   contextEntityIds?: string[];
   compact?: boolean;
   locale?: ConditionUiLocale;
+  draftId?: string;
 };
+
+function configureEntity(entityId?: string) {
+  window.dispatchEvent(new CustomEvent("pathbranching:configure-entity", { detail: { entityId } }));
+}
+
+function incompleteCondition(value: ConditionInput | undefined, project: BranchingProject): boolean {
+  if (conditionStructureIssues(value).length) return true;
+  const visit = (input: ConditionInput | undefined): boolean => {
+    if (!input) return false;
+    if (Array.isArray(input)) return input.some(visit);
+    if (isConditionSet(input)) return "not" in input ? visit(input.not) : ("all" in input ? input.all : input.any).some(visit);
+    if (input.type === "instanceQuery") { const query = input as InstanceQuery; return query.quantifier === "count" && (typeof query.value !== "number" || !Number.isFinite(query.value) || query.value < 0) || visit(query.filters); }
+    return conditionFieldIssues(project, input as LogicPredicate).some(issue => issue.field === "value" || issue.field === "operator");
+  };
+  return visit(value);
+}
+
+function useConditionDraft(project: BranchingProject, draftId: string | undefined, saved: ConditionInput | undefined, onChange: (value: ConditionInput | undefined) => void) {
+  const temporaryId = useId();
+  const key = authoringDraftKey(project.projectId, draftId ?? `temporary:${temporaryId}`, "condition");
+  const fallback = JSON.stringify(saved ?? null);
+  const [serialized, setSerialized, clear] = useAuthoringDraft(key, fallback);
+  let value = saved;
+  try { value = JSON.parse(serialized) ?? undefined; } catch { /* Keep original condition if recovery data is malformed. */ }
+  const change = (next: ConditionInput | undefined) => {
+    if (incompleteCondition(next, project)) setSerialized(JSON.stringify(next ?? null));
+    else { onChange(next); clear(); }
+  };
+  return { value, change, draft: serialized !== fallback, clear };
+}
 
 function valueEditor(value: unknown, valueType: string | undefined, onChange: (value: unknown) => void, attributes: InputHTMLAttributes<HTMLInputElement> = {}, locale: ConditionUiLocale = "en") {
   const c = conditionUiCopy(locale);
@@ -50,7 +88,13 @@ function valueEditor(value: unknown, valueType: string | undefined, onChange: (v
   if (valueType === "list" || valueType === "multiselect" || valueType === "entity-ref-list") {
     return <input {...attributes} type="text" value={Array.isArray(value) ? value.join(", ") : String(value ?? "")} onChange={(event) => onChange(event.target.value.split(",").map((item) => item.trim()).filter(Boolean))} />;
   }
-  return <input {...attributes} type={["number", "integer", "float"].includes(valueType ?? "") ? "number" : valueType === "date" ? "date" : "text"} value={String(value ?? "")} onChange={(event) => onChange(["number", "integer", "float"].includes(valueType ?? "") ? (event.target.value === "" ? undefined : Number(event.target.value)) : event.target.value)} />;
+  const numeric = ["number", "integer", "float"].includes(valueType ?? "");
+  // Keep incomplete numeric text in the recovery draft instead of letting the
+  // native number input discard it (including values retained after retargeting).
+  return <input {...attributes} type={valueType === "date" ? "date" : "text"} inputMode={numeric ? "decimal" : undefined} value={String(value ?? "")} onChange={(event) => {
+    const text = event.target.value;
+    onChange(numeric ? !text.trim() ? undefined : Number.isFinite(Number(text)) ? Number(text) : text : text);
+  }} />;
 }
 
 function variableValueEditor(value: unknown, type: string | undefined, operation: string, onChange: (value: unknown) => void, attributes: InputHTMLAttributes<HTMLInputElement> = {}, locale: ConditionUiLocale = "en") {
@@ -112,6 +156,7 @@ function GenericPredicateRow({ project, options, predicate, onChange, onRemove, 
       {variableValueEditor('value' in predicate ? predicate.value : undefined, selectedField.valueType, predicate.operator, value => onChange({...predicate, value} as LogicPredicate), attrs('value'), locale)}{fieldError('value')}
     </label> : null}
     <div className="condition-row-actions">
+      {selectedField.status !== "enabled" ? <button type="button" onClick={() => configureEntity(predicate.subject.kind === "entity" ? predicate.subject.entityId : undefined)}>{locale === "es" ? "Configurar uso" : "Configure use"}</button> : null}
       {onNegate ? <button type="button" aria-label={`NOT · ${clauseLabel}`} onClick={onNegate}>NOT</button> : null}
       <button type="button" className="danger" aria-label={`${c.remove} · ${clauseLabel}`} onClick={onRemove}><Trash2 size={13} aria-hidden="true"/> {c.remove}</button>
     </div>
@@ -157,7 +202,7 @@ function GenericEffectRow({ project, options, effect, onChange, onRemove, locale
     }}>{fields.map((field) => <option key={`${field.kind}:${field.key}`} value={field.key}>{field.status === "enabled" ? conditionFieldLabel(field, locale) : `${conditionFieldLabel(field, locale)} · ${c.incompatible}`}</option>)}</select>
     <select aria-label={`${c.action} · ${c.consequence}`} value={effect.operation} onChange={(event) => onChange({ ...effect, operation: event.target.value as LogicEffectOperation })}>{operations.map((item) => <option key={item} value={item}>{effectOperationLabel(item, locale)}</option>)}</select>
     {!['toggle', 'clear', 'grant', 'ungrant', 'unlock', 'lock', 'discover', 'hide', 'enter', 'leave'].includes(effect.operation) ? valueEditor("value" in effect ? effect.value : undefined, selectedField?.valueType, (value) => onChange({ ...effect, value }), {"aria-label": c.effectValue}, locale) : null}
-    {resolvedField.status !== "enabled" ? <span className="logic-row-capability-warning" title="Enable this capability in the Explorer type or property configuration"><CircleAlert size={12} /> Configure capability</span> : null}
+    {resolvedField.status !== "enabled" ? <button type="button" className="logic-row-capability-warning" onClick={() => configureEntity(effect.subject.kind === "entity" ? effect.subject.entityId : undefined)}><CircleAlert size={12} /> {locale === "es" ? "Configurar uso" : "Configure use"}</button> : null}
     <button type="button" className="icon-only danger" aria-label={`${c.remove} · ${c.consequence}`} onClick={onRemove}><Trash2 size={13} /></button>
   </div>;
 }
@@ -274,7 +319,11 @@ function PredicateRow({ project, options, predicate, onChange, onChangeMany, onR
   return <GenericPredicateRow project={project} options={options} predicate={predicate} onChange={onChange} onRemove={onRemove} clauseLabel="Condition"/>;
 }
 
-function EffectRow({ project, options, effect, onChange, onChangeMany, onRemove, locale = "en" }: {
+function EffectRow(props: { project: BranchingProject; options: SubjectOption[]; effect: LogicEffect; locale?: ConditionUiLocale; onChange: (effect: LogicEffect) => void; onChangeMany?: (effects: LogicEffect[]) => void; onRemove: () => void }) {
+  return <GenericEffectRow {...props} />;
+}
+
+function LegacyEffectRow({ project, options, effect, onChange, onChangeMany, onRemove, locale = "en" }: {
   project: BranchingProject;
   options: SubjectOption[];
   effect: LogicEffect;
@@ -353,6 +402,10 @@ function EffectRow({ project, options, effect, onChange, onChangeMany, onRemove,
 }
 
 function firstPredicate(project: BranchingProject, options: SubjectOption[]): LogicPredicate | undefined {
+  if (options.length === 1 && options[0].subject.kind === "context" && options[0].subject.role === "self") {
+    const field = fieldOptions(project, options[0].subject, "condition")[0];
+    return field ? predicateFor(options[0].subject, field) : undefined;
+  }
   const firstGrantable = grantableEntities(project)[0];
   if (firstGrantable) return grantablePredicate(firstGrantable.id);
   const firstVariable = project.logicVariables?.[0];
@@ -373,7 +426,7 @@ function firstEffect(project: BranchingProject, options: SubjectOption[]): Logic
     const field = fieldOptions(project, option.subject, "effect")[0];
     if (field) return effectFor(option.subject, field);
   }
-  return grantableEffect("");
+  return undefined;
 }
 
 function isEditableConditionTree(value: unknown): boolean {
@@ -383,15 +436,31 @@ function isEditableConditionTree(value: unknown): boolean {
   const object = value as Record<string, unknown>;
   if ('all' in object || 'any' in object) {const children = object.all ?? object.any; return Array.isArray(children) && children.every(isEditableConditionTree);}
   if ('not' in object) return object.not !== undefined && isEditableConditionTree(object.not);
+  if (object.type === "instanceQuery") return isEditableConditionTree(object.filters);
   return conditionStructureIssues(value).length === 0;
 }
 
-function ConditionTree({ expression, project, options, onChange, onRemove, depth = 0, path = '1', locale = 'en' }: {
+function InstanceQueryEditor({ project, query, onChange, onRemove, locale, path, draftId }: { project: BranchingProject; query: InstanceQuery; onChange: (query: InstanceQuery) => void; onRemove: () => void; locale: ConditionUiLocale; path: string; draftId?: string }) {
+  const es = locale === "es";
+  const entities = [...project.canonRefs.map(entity => entity.id), ...(project.localExplorerEntities ?? []).map(entity => entity.id)];
+  return <fieldset className="condition-tree-group instance-query-editor"><legend>{es ? "Copias en inventario o contenedor" : "Copies in inventory or container"}</legend>
+    <label className="condition-field">{es ? "Cuántas deben cumplir" : "Copies that must match"}<select value={query.quantifier} onChange={event => { const quantifier = event.target.value as InstanceQuery["quantifier"]; onChange({ ...query, quantifier, ...(quantifier === "count" ? { operator: query.operator ?? ">=", value: query.value ?? 1 } : {}) }); }}><option value="some">{es ? "Alguna copia" : "Some copy"}</option><option value="all">{es ? "Todas las copias" : "All copies"}</option><option value="count">{es ? "Cantidad de copias" : "Copy count"}</option></select></label>
+    <label className="condition-field">{es ? "Entidad de origen" : "Entity definition"}<select value={query.entityId ?? ""} onChange={event => onChange({ ...query, entityId: event.target.value || undefined })}><option value="">{es ? "Cualquier entidad" : "Any entity"}</option>{query.entityId && !entities.includes(query.entityId) ? <option value={query.entityId}>{es ? "Referencia desaparecida" : "Missing reference"} · {query.entityId}</option> : null}{entities.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
+    <EntityOwnerPicker project={project} value={query.owner} context label={es ? "Dentro del inventario de" : "Inside inventory of"} onChange={owner => onChange({ ...query, owner })} />
+    <p className="condition-result-value">{es ? "Sin poseedor filtra todas las copias. Los filtros se comprueban juntos sobre cada copia." : "No owner searches every copy. Filters are evaluated together for each copy."}</p>
+    {query.quantifier === "count" ? <div className="condition-predicate-row"><label className="condition-field">{es ? "Comparación" : "Comparison"}<select value={query.operator ?? ">="} onChange={event => onChange({ ...query, operator: event.target.value as InstanceQuery["operator"] })}>{["==", "!=", ">", ">=", "<", "<="].map(operator => <option key={operator}>{operator}</option>)}</select></label><label className="condition-field">{es ? "Cantidad" : "Count"}<input type="number" min={0} value={query.value ?? ""} aria-invalid={query.value === undefined || query.value < 0} onChange={event => onChange({ ...query, value: event.target.value === "" ? undefined : event.target.valueAsNumber })} /></label></div> : null}
+    <LogicConditionEditor project={project} draftId={draftId ? `${draftId}:copies:${path}` : undefined} value={query.filters} onChange={filters => onChange({ ...query, filters })} locale={locale} label={es ? "Filtros de la misma copia (Origen)" : "Filters on the same copy (Self)"} copyFilter hideTester />
+    <div className="logic-composer-actions"><button type="button" onClick={() => onChange({ ...query, filters: { all: [...asConditionExpressions(query.filters), { type: "state", subject: { kind: "context", role: "self" }, stateId: "discovered", operator: "has" }] } })}>{es ? "Añadir filtro sobre esta copia" : "Add filter on this copy"}</button><button type="button" onClick={() => configureEntity(query.entityId)}>{es ? "Configurar entidad" : "Configure entity"}</button><button type="button" className="danger" onClick={onRemove}>{conditionUiCopy(locale).remove}</button></div>
+  </fieldset>;
+}
+
+function ConditionTree({ expression, project, options, onChange, onRemove, depth = 0, path = '1', locale = 'en', draftId }: {
   expression: ConditionExpression; project: BranchingProject; options: SubjectOption[];
-  onChange: (expression: ConditionExpression) => void; onRemove: () => void; depth?: number; path?: string; locale?: ConditionUiLocale;
+  onChange: (expression: ConditionExpression) => void; onRemove: () => void; depth?: number; path?: string; locale?: ConditionUiLocale; draftId?: string;
 }) {
   const c = conditionUiCopy(locale);
   if (Array.isArray(expression)) return <ConditionTree expression={{all: expression}} project={project} options={options} onChange={onChange} onRemove={onRemove} depth={depth} path={path} locale={locale}/>;
+  if (!isConditionSet(expression) && expression.type === "instanceQuery") return <InstanceQueryEditor project={project} query={expression as InstanceQuery} onChange={onChange} onRemove={onRemove} locale={locale} path={path} draftId={draftId} />;
   if (!isConditionSet(expression)) return <div className="condition-tree-leaf">
     <GenericPredicateRow project={project} options={options} predicate={expression as LogicPredicate} onChange={onChange}
       onRemove={onRemove} onNegate={depth < 63 ? () => onChange({not: expression}) : undefined} locale={locale} clauseLabel={`${c.condition} ${path}`}/>
@@ -408,17 +477,24 @@ function ConditionTree({ expression, project, options, onChange, onRemove, depth
       {kind === 'not' ? <button type="button" onClick={() => onChange(children[0])}>{c.removeNot}</button> : null}
       <button type="button" className="danger" aria-label={`${c.removeGroup} · ${path}`} onClick={onRemove}>{c.removeGroup}</button>
     </div>
-    {children.map((child, index) => <ConditionTree key={index} expression={child} project={project} options={options} depth={depth + 1} path={`${path}.${index + 1}`} locale={locale}
+    {children.map((child, index) => <ConditionTree key={index} expression={child} project={project} options={options} depth={depth + 1} path={`${path}.${index + 1}`} locale={locale} draftId={draftId}
       onChange={next => replace(children.map((item, i) => i === index ? next : item))} onRemove={() => kind === 'not' ? onRemove() : replace(children.filter((_, i) => i !== index))}/>)}
     {!children.length ? <p className="condition-field-error" role="status">{locale === 'es' ? 'Este grupo está vacío. Añade una condición o elimina el grupo.' : 'This group is empty. Add a condition or remove the group.'}</p> : null}
     {kind !== 'not' && depth < 63 ? <div className="logic-composer-actions">
       <button type="button" disabled={!firstPredicate(project, options)} onClick={() => add()}><Plus size={13} aria-hidden="true"/> {c.addCondition}</button>
+      <button type="button" onClick={() => replace([...children, { type: "instanceQuery", quantifier: "some", owner: { kind: "context", role: "actor" } }])}>{locale === "es" ? "Añadir condición de copias" : "Add copy condition"}</button>
       <details><summary>{c.addGroup}</summary><button type="button" disabled={!firstPredicate(project, options)} onClick={() => add('all')}>AND</button><button type="button" disabled={!firstPredicate(project, options)} onClick={() => add('any')}>OR</button></details>
     </div> : null}
   </fieldset>;
 }
 
-export function LogicConditionEditor({project, contextEntityIds, value, onChange, label = 'WHEN', compact, locale: localeOverride}: LogicComposerProps & {value?: ConditionInput; onChange: (value: ConditionInput | undefined) => void; label?: string}) {
+type ConditionEditorProps = LogicComposerProps & { value?: ConditionInput; onChange: (value: ConditionInput | undefined) => void; label?: string; copyFilter?: boolean; hideTester?: boolean };
+export function LogicConditionEditor(props: ConditionEditorProps) {
+  const draft = useConditionDraft(props.project, props.draftId, props.value, props.onChange);
+  const es = useInterfaceLocale() === "es";
+  return <><ConditionEditorContent {...props} value={draft.value} onChange={draft.change} />{draft.draft ? <p className="condition-field-error" role="status">{es ? "Borrador recuperable: completa los campos para incorporarlo a la historia." : "Recoverable draft: complete the fields to update the story."} <button type="button" onClick={draft.clear}>{es ? "Descartar borrador" : "Discard draft"}</button></p> : null}</>;
+}
+function ConditionEditorContent({project, contextEntityIds, value, onChange, label = 'WHEN', compact, locale: localeOverride, draftId, copyFilter, hideTester}: ConditionEditorProps) {
   const interfaceLocale = useInterfaceLocale();
   const locale = localeOverride ?? interfaceLocale;
   const c = conditionUiCopy(locale);
@@ -428,7 +504,7 @@ export function LogicConditionEditor({project, contextEntityIds, value, onChange
   const firstDropButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {if (dropChoice) firstDropButton.current?.focus();}, [dropChoice]);
   const closeDropChoice = () => {setDropChoice(undefined); sectionRef.current?.focus();};
-  const options = useMemo(() => subjectOptions(project, contextEntityIds).filter(option => fieldOptions(project, option.subject, 'condition').length > 0), [project, contextEntityIds]);
+  const options = useMemo(() => subjectOptions(project, contextEntityIds).filter(option => (!copyFilter || option.subject.kind === "context" && option.subject.role === "self") && fieldOptions(project, option.subject, 'condition').length > 0), [project, contextEntityIds, copyFilter]);
   const structuralIssues = conditionStructureIssues(value);
   const editableStructure = isEditableConditionTree(value) && structuralIssues.every(issue => issue.message === "Condition group must not be empty");
   const migrated = migrateConditionInput(value, project.logicVariables ?? []);
@@ -441,21 +517,45 @@ export function LogicConditionEditor({project, contextEntityIds, value, onChange
     onDragOver={event => {if (event.dataTransfer.types.includes('application/x-pathbranching-canon-ref') || event.dataTransfer.types.includes('application/x-pathbranching-entity')) {event.preventDefault(); event.dataTransfer.dropEffect = 'copy';}}}
     onDrop={event => {const id = event.dataTransfer.getData('application/x-pathbranching-entity') || event.dataTransfer.getData('application/x-pathbranching-canon-ref'); if (!id || !editableStructure) return; event.preventDefault(); const option = options.find(o => o.subject.kind === 'entity' && o.subject.entityId === id); const fields = option ? fieldOptions(project, option.subject, 'condition') : []; if (!option || !fields.length) {setMessage(c.readCapability); return;} if (fields.length > 1) {setDropChoice({option, fields}); return;} const predicate = predicateFor(option.subject, fields[0]); onChange(root ? {all: [root, predicate]} : predicate); setMessage('');}}>
     <header><strong>{label}</strong><span className="condition-tree-summary" title={summary.abbreviated ? conditionTreeSummary(project, value, locale, Number.MAX_SAFE_INTEGER).text : undefined}>{summary.text}</span></header>
-    {root && editableStructure ? <ConditionTree expression={root} project={project} options={options} onChange={onChange} onRemove={() => onChange(undefined)} locale={locale}/> : null}
+    {root && editableStructure ? <ConditionTree expression={root} project={project} options={options} onChange={onChange} onRemove={() => onChange(undefined)} locale={locale} draftId={draftId}/> : null}
     {structuralIssues.length && !editableStructure ? <div role="status"><p className="condition-field-error">{c.invalidStructure}</p><ul>{structuralIssues.map(item => <li key={item.path}>{item.path}: {conditionDiagnosticMessage(item.message, locale)}</li>)}</ul><details><summary>JSON</summary><pre>{JSON.stringify(value, null, 2)}</pre></details><button type="button" className="danger" onClick={() => onChange(undefined)}>{c.removeGroup}</button></div> : null}
     {editableStructure ? <div className="logic-composer-actions"><button type="button" disabled={!canAdd} onClick={() => add()}><Plus size={13} aria-hidden="true"/> {c.addCondition}</button>
+      {!copyFilter ? <button type="button" onClick={() => { const query: InstanceQuery = { type: "instanceQuery", quantifier: "some", owner: { kind: "context", role: "actor" } }; onChange(root ? { all: [root, query] } : query); }}>{locale === "es" ? "Añadir condición de copias" : "Add copy condition"}</button> : null}
       <details><summary>{c.addGroup}</summary><button type="button" disabled={!canAdd} onClick={() => add('all')}>AND</button><button type="button" disabled={!canAdd} onClick={() => add('any')}>OR</button></details>
     </div> : null}
     {dropChoice ? <div className="condition-drop-chooser" role="group" aria-label={`${c.chooseField} · ${dropChoice.option.label}`} onKeyDown={event => {if (event.key === 'Escape') {event.preventDefault(); closeDropChoice();}}}>
       <h4>{dropChoice.option.label} · {c.chooseField}</h4><div>{dropChoice.fields.map((field, index) => <button ref={index === 0 ? firstDropButton : undefined} type="button" key={`${field.kind}:${field.key}`} onClick={() => {const predicate = predicateFor(dropChoice.option.subject, field); onChange(root ? {all: [root, predicate]} : predicate); closeDropChoice();}}>{field.label}</button>)}<button type="button" onClick={closeDropChoice}>{c.cancel}</button></div>
     </div> : null}
     {message ? <p role="status">{message}</p> : null}
-    {!options.length ? <p className="condition-empty">{c.noConditions}</p> : null}
-    <ConditionTester key={project.projectId} project={project} conditions={value} locale={locale}/>
+    {!options.length ? <p className="condition-empty">{c.noConditions} <button type="button" onClick={() => configureEntity()}>{locale === "es" ? "Configurar usos en esta historia" : "Configure uses in this story"}</button></p> : null}
+    {!hideTester ? <ConditionTester key={project.projectId} project={project} conditions={value} locale={locale}/> : null}
   </section>;
 }
 
-export function LogicEffectEditor({ project, contextEntityIds, value, onChange, label = "THEN", compact, locale: localeOverride }: LogicComposerProps & {
+type EffectEditorProps = LogicComposerProps & { value?: Consequence[]; onChange: (value: Consequence[] | undefined) => void; label?: string };
+export function LogicEffectEditor(props: EffectEditorProps) {
+  const id = useId();
+  const key = authoringDraftKey(props.project.projectId, props.draftId ?? `temporary:${id}`, "effects");
+  const fallback = JSON.stringify(props.value ?? []);
+  const [serialized, setSerialized, clear] = useAuthoringDraft(key, fallback);
+  let value = props.value;
+  try { value = JSON.parse(serialized); } catch { /* Preserve the saved expression. */ }
+  const onChange = (next: Consequence[] | undefined) => {
+    const incomplete = (next ?? []).some(item => {
+      const effect = migrateConsequence(item, props.project.logicVariables ?? []);
+      if (["toggle", "clear", "grant", "ungrant", "unlock", "lock", "discover", "hide", "enter", "leave", "call"].includes(effect.operation)) return false;
+      const kind = effect.type === "property" ? "property" : effect.type === "state" ? "state" : "value";
+      const fieldId = effect.type === "property" ? effect.propertyId : effect.type === "state" ? effect.stateId : "value";
+      const field = resolveLogicField(props.project, effect.subject, "effect", kind, fieldId);
+      return !conditionValueMatchesType("value" in effect ? effect.value : undefined, ["append", "remove"].includes(effect.operation) ? "text" : field.valueType);
+    });
+    if (incomplete) setSerialized(JSON.stringify(next ?? []));
+    else { props.onChange(next); clear(); }
+  };
+  const es = useInterfaceLocale() === "es";
+  return <><EffectEditorContent {...props} value={value} onChange={onChange} />{serialized !== fallback ? <p role="status" className="condition-field-error">{es ? "Borrador recuperable: introduce un valor válido." : "Recoverable draft: enter a valid value."} <button type="button" onClick={clear}>{es ? "Descartar borrador" : "Discard draft"}</button></p> : null}</>;
+}
+function EffectEditorContent({ project, contextEntityIds, value, onChange, label = "THEN", compact, locale: localeOverride }: LogicComposerProps & {
   value?: Consequence[];
   onChange: (value: Consequence[] | undefined) => void;
   label?: string;
@@ -471,10 +571,8 @@ export function LogicEffectEditor({ project, contextEntityIds, value, onChange, 
   const closeEffectDrop = () => {setDropChoice(undefined); effectSectionRef.current?.focus();};
   const options = useMemo(
     () => {
-      const grantableIds = new Set(grantableEntities(project).map((entity) => entity.id));
       return subjectOptions(project, contextEntityIds).filter((option) => {
-      if (option.subject.kind === "entity" && !grantableIds.has(option.subject.entityId)) return false;
-      if (!["entity", "variable"].includes(option.subject.kind)) return false;
+      if (option.subject.kind === "progress") return false;
       if (option.subject.kind === "external") {
         const functionId = option.subject.functionId;
         const kind = project.externalFunctions.find((item) => item.name === functionId)?.kind;
@@ -519,7 +617,7 @@ export function LogicEffectEditor({ project, contextEntityIds, value, onChange, 
     <header><strong>{label}</strong><span>{effects.length ? `${effects.length} ${c.consequence.toLowerCase()}${effects.length === 1 ? "" : "s"}` : c.noEffects}</span></header>
     <div className="logic-composer-rows">{effects.map((effect, index) => <EffectRow key={`${effect.type}:${index}`} locale={locale} project={project} options={options} effect={effect} onChange={(next) => onChange(effects.map((item, itemIndex) => itemIndex === index ? next : item))} onChangeMany={(nextEffects) => onChange(effects.flatMap((item, itemIndex) => itemIndex === index ? nextEffects : [item]))} onRemove={() => onChange(effects.filter((_, itemIndex) => itemIndex !== index))} />)}</div>
     <div className="logic-composer-actions"><button type="button" disabled={!canAddEffect} title={canAddEffect ? c.addConsequence : locale === "es" ? "Crea un tipo otorgable o una variable primero" : "Create a Grantable type or Variable first"} onClick={() => { const effect = firstEffect(project, options); if (effect) onChange([...effects, effect]); }}><Plus size={13} /> {c.addConsequence}</button></div>
-    {!canAddEffect ? <p className="logic-composer-empty-state">{c.createEffectValues}</p> : null}
+    {!canAddEffect ? <p className="logic-composer-empty-state">{c.noEffectFields} <button type="button" onClick={() => configureEntity()}>{locale === "es" ? "Configurar usos en esta historia" : "Configure uses in this story"}</button></p> : null}
     {dropChoice ? <div className="logic-composer-drop-choice" role="group" aria-label={`${c.chooseField} · ${dropChoice.option.label}`} onKeyDown={event => {if (event.key === "Escape") {event.preventDefault(); closeEffectDrop();}}}>
       <strong>{dropChoice.option.label}</strong><span>{c.chooseWritable}</span>
       <div>{dropChoice.fields.map((field, index) => <button ref={index === 0 ? firstEffectDropButton : undefined} type="button" key={`${field.kind}:${field.key}`} onClick={() => {
@@ -581,17 +679,18 @@ export function LogicBands({
 }
 
 /** One moment editor shared by availability, choices, dialogues and guarded effects. */
-export function LogicMomentEditor({project, value, onChange, hideWhen = false, locale: localeOverride}: {project: BranchingProject; value?: LogicMoment; onChange: (value: LogicMoment) => void; hideWhen?: boolean; locale?: ConditionUiLocale}) {
+export function LogicMomentEditor({project, value, onChange, hideWhen = false, locale: localeOverride, draftId}: {project: BranchingProject; value?: LogicMoment; onChange: (value: LogicMoment) => void; hideWhen?: boolean; locale?: ConditionUiLocale; draftId?: string}) {
   const interfaceLocale = useInterfaceLocale();
   const locale = localeOverride ?? interfaceLocale;
   const c = conditionUiCopy(locale);
   const rules = value?.rules ?? [];
   return <section className="logic-moment-editor condition-ux">
-    {!hideWhen ? <LogicConditionEditor project={project} value={value?.when} locale={locale} onChange={when => onChange({...value, when})}/> : null}
-    <LogicEffectEditor project={project} value={value?.then} locale={locale} onChange={then => onChange({...value, then})}/>
+    {!hideWhen ? <LogicConditionEditor project={project} draftId={draftId} value={value?.when} locale={locale} onChange={when => onChange({...value, when})}/> : null}
+    <NarrativeEffectEditor project={project} draftId={draftId} value={orderedMomentEffects(value)} onChange={effects => onChange({ ...value, ...splitNarrativeEffects(effects) })} />
+    <label className="condition-field">{locale === "es" ? "Aplicar consecuencias" : "Apply consequences"}<select value={value?.repeat ?? "once"} onChange={event => onChange({ ...value, repeat: event.target.value as "once" | "each-entry" })}><option value="once">{locale === "es" ? "Una vez por recorrido" : "Once per traversal"}</option><option value="each-entry">{locale === "es" ? "Cada entrada" : "Each entry"}</option></select></label>
     {rules.map((rule, index) => <fieldset key={rule.id}><legend>{c.conditionalConsequence} · {index + 1}</legend>
-      <LogicConditionEditor project={project} value={rule.when} locale={locale} onChange={when => onChange({...value, rules: rules.map((r, i) => i === index ? {...r, when: when ?? []} : r)})}/>
-      <LogicEffectEditor project={project} value={rule.then} locale={locale} onChange={then => onChange({...value, rules: rules.map((r, i) => i === index ? {...r, then: (then ?? []).map(e => migrateConsequence(e, project.logicVariables ?? []))} : r)})}/>
+      <LogicConditionEditor project={project} draftId={`${draftId ?? "moment"}:${rule.id}`} value={rule.when} locale={locale} onChange={when => onChange({...value, rules: rules.map((r, i) => i === index ? {...r, when: when ?? []} : r)})}/>
+      <LogicEffectEditor project={project} draftId={`${draftId ?? "moment"}:${rule.id}`} value={rule.then} locale={locale} onChange={then => onChange({...value, rules: rules.map((r, i) => i === index ? {...r, then: (then ?? []).map(e => migrateConsequence(e, project.logicVariables ?? []))} : r)})}/>
       <button type="button" className="danger" onClick={() => onChange({...value, rules: rules.filter((_, i) => i !== index)})}>{c.removeRule}</button>
     </fieldset>)}
     <button type="button" onClick={() => onChange({...value, rules: [...rules, {id: `rule:${crypto.randomUUID()}`, when: [], then: []}]})}>{c.addRule}</button>

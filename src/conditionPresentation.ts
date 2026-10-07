@@ -1,4 +1,5 @@
-import type { BranchingProject, ConditionExpression, ConditionInput, LogicPredicate, Transition } from './domain.js';
+import type { BranchingProject, ConditionExpression, ConditionInput, EntityOwner, InstanceQuery, LogicPredicate, Transition } from './domain.js';
+import { entityDefinition } from './authoringEntities.js';
 import { conditionStructureIssues, conditionValueMatchesType, conditionValueType, effectiveConditions, evaluateConditionDetailed, externalConditionKey, type ConditionEvaluationResult } from './conditionEvaluation.js';
 import { asConditionExpressions, isConditionSet, migrateConditionInput, orderedTransitions, type NarrativeEvaluationState } from './logic.js';
 import { logicOperatorsFor, logicSubjectKey, logicSubjectOptions, presentConditionInput, resolveLogicField, type LogicPresentation } from './logicCapabilities.js';
@@ -83,6 +84,8 @@ export function conditionFieldLabel(field: {kind: string; key: string; label: st
 export function conditionDiagnosticMessage(message: string, locale: ConditionUiLocale = 'en'): string {
   if (locale === 'en') return message;
   const replacements: Record<string, string> = {
+    'Always': 'Sin restricciones', 'ALL': 'Deben cumplirse todas las cláusulas', 'ANY': 'Debe cumplirse alguna cláusula', 'NOT': 'La cláusula no debe cumplirse',
+    'Containment cycle': 'Una copia no puede contenerse a sí misma, directa o indirectamente.', 'Unresolved owner context': 'El poseedor contextual todavía no está definido.',
     'Value is not defined': 'El valor no está definido', 'Comparison operands have incompatible types': 'Los valores comparados tienen tipos incompatibles',
     'State value must be boolean': 'El valor del estado debe ser booleano', 'Invalid condition structure': 'Estructura de condición inválida',
     'Condition group must not be empty': 'El grupo de condiciones no puede estar vacío', 'Missing condition subject': 'Falta la referencia de la condición',
@@ -94,6 +97,8 @@ export function conditionDiagnosticMessage(message: string, locale: ConditionUiL
     'Condition nesting exceeds 64 levels': 'La condición supera 64 niveles anidados', 'Condition must have exactly one expression kind': 'La condición debe tener un solo tipo de expresión',
   };
   return replacements[message] ?? message.replace(/^Missing (variable|entity|data object|event|sequence|branch|decision|outcome) /, 'Referencia ausente: ')
+    .replace(/^(some|all|count): (\d+)\/(\d+) copies match$/, '$2 de $3 copias cumplen el filtro')
+    .replace(/: does not match$/, ': no cumple').replace(/: matches$/, ': cumple')
     .replace(/^Supply a result for /, 'Introduce un resultado temporal para ')
     .replace(/^Supply state /, 'Introduce un estado temporal para ')
     .replace(/^Actual value does not match /, 'El valor utilizado no corresponde al tipo ')
@@ -133,7 +138,7 @@ export function conditionSubjectLabel(project: BranchingProject, predicate: Logi
   if (!s || typeof s !== 'object') return '?';
   if (s.kind === 'progress') return narrativeTargetLabel(project, s.targetId);
   return logicSubjectOptions(project).find(item => item.key === logicSubjectKey(s))?.label ??
-    (s.kind === 'entity' ? s.entityId : s.kind === 'variable' ? s.variableId : s.kind === 'dataObject' ? s.objectId : s.functionId);
+    (s.kind === 'entity' ? s.entityId : s.kind === 'variable' ? s.variableId : s.kind === 'dataObject' ? s.objectId : s.kind === 'instance' ? s.instanceId : s.kind === 'context' ? s.role : s.functionId);
 }
 
 export function conditionPredicateLabel(project: BranchingProject, predicate: LogicPredicate, locale: ConditionUiLocale = 'en'): string {
@@ -157,7 +162,16 @@ export function conditionTreeSummary(project: BranchingProject, input: Condition
   const render = (value: ConditionInput | undefined, nested = false): string => {
     if (!value || Array.isArray(value) && !value.length) return c.always;
     if (Array.isArray(value)) return render({all: value} as ConditionExpression, nested);
-    if (!isConditionSet(value)) { clauses++; return conditionPredicateLabel(project, value as LogicPredicate, locale); }
+    if (!isConditionSet(value)) { clauses++;
+      if (value.type === 'instanceQuery') {
+        const query = value as InstanceQuery;
+        const title = query.entityId ? project.canonRefs.find(e => e.id === query.entityId)?.label ?? project.localExplorerEntities?.find(e => e.id === query.entityId)?.name ?? query.entityId : locale === 'es' ? 'copias' : 'copies';
+        const count = query.quantifier === 'count' ? ` ${query.operator ?? '>='} ${query.value ?? 1}` : '';
+        const owner = query.owner ? ` ${locale === 'es' ? 'en' : 'inside'} ${conditionOwnerLabel(project, query.owner, locale)}` : ` · ${locale === 'es' ? 'cualquier poseedor' : 'any owner'}`;
+        return `${locale === 'es' ? ({some:'Alguna',all:'Todas',count:'Cantidad de'})[query.quantifier] : ({some:'Some',all:'All',count:'Count of'})[query.quantifier]} ${title}${owner}${count}${query.filters ? ` (${render(query.filters)})` : ''}`;
+      }
+      return conditionPredicateLabel(project, value as LogicPredicate, locale);
+    }
     if ('not' in value) return `NOT (${render(value.not)})`;
     const children = 'any' in value ? value.any : value.all;
     const body = children.map(child => render(child, true)).join('any' in value ? ' OR ' : ' AND ');
@@ -169,6 +183,14 @@ export function conditionTreeSummary(project: BranchingProject, input: Condition
   return {text: `${root} · ${clauses} ${c.clauses} · ${c.abbreviated}`, abbreviated: true, clauses};
 }
 
+export function conditionOwnerLabel(project: BranchingProject, owner: EntityOwner, locale: ConditionUiLocale = "en"): string {
+  if (owner.kind === "context") return locale === "es" ? ({ actor: "Actor", self: "Origen", target: "Destinatario" })[owner.role] : ({ actor: "Actor", self: "Self", target: "Recipient" })[owner.role];
+  if (owner.kind === "entity") return entityDefinition(project, owner.entityId)?.name ?? owner.entityId;
+  if (owner.kind === "profile") return project.playerProfiles?.find(profile => profile.id === owner.profileId)?.name ?? (owner.profileId === "default" ? locale === "es" ? "Protagonista" : "Protagonist" : owner.profileId);
+  const instance = project.entityInstances?.find(copy => copy.id === owner.instanceId);
+  return instance?.name ?? (instance ? `${entityDefinition(project, instance.entityId)?.name ?? instance.entityId} · ${locale === "es" ? "copia" : "copy"}` : owner.instanceId);
+}
+
 /** A grouped expression is a single presentation token: flattening its leaves would misstate AND/OR/NOT. */
 export function groupedConditionPresentation(project: BranchingProject, input: ConditionInput | undefined, locale: ConditionUiLocale = 'en', maxCharacters = 180): LogicPresentation[] {
   const normalized = normalizedInput(project, input);
@@ -176,7 +198,7 @@ export function groupedConditionPresentation(project: BranchingProject, input: C
   if (!input || !expressions.length && !conditionStructureIssues(input).length) return [];
   const summary = conditionTreeSummary(project, input, locale, maxCharacters);
   const leaves = conditionStructureIssues(input).length ? [] : presentConditionInput(project, normalized, Number.MAX_SAFE_INTEGER);
-  if (expressions.length === 1 && !isConditionSet(expressions[0]) && !summary.abbreviated && locale === 'en') return leaves;
+  if (expressions.length === 1 && !isConditionSet(expressions[0]) && expressions[0].type !== 'instanceQuery' && !summary.abbreviated && locale === 'en') return leaves;
   return [{id: 'condition-tree', text: summary.text, subjectLabel: summary.text, fieldLabel: '', operatorLabel: '', status: conditionStructureIssues(input).length ? 'incompatible' : leaves.find(item => item.status !== 'enabled')?.status ?? 'enabled'}];
 }
 
@@ -207,12 +229,21 @@ export function conditionFieldIssues(project: BranchingProject, predicate: Logic
 export type ConditionTestControl = {key: string; predicate: LogicPredicate; label: string; valueType?: string};
 export function conditionTestControls(project: BranchingProject, inputs: (ConditionInput | undefined)[], locale: ConditionUiLocale = 'en'): ConditionTestControl[] {
   const controls = new Map<string, ConditionTestControl>();
-  const visit = (value: ConditionInput | undefined) => {
+  const visit = (value: ConditionInput | undefined, queryEntityId?: string) => {
     if (!value) return;
-    if (Array.isArray(value)) { value.forEach(visit); return; }
-    if (isConditionSet(value)) { if ('not' in value) visit(value.not); else ('all' in value ? value.all : value.any).forEach(visit); return; }
+    if (Array.isArray(value)) { value.forEach(child => visit(child, queryEntityId)); return; }
+    if (isConditionSet(value)) { if ('not' in value) visit(value.not, queryEntityId); else ('all' in value ? value.all : value.any).forEach(child => visit(child, queryEntityId)); return; }
+    if (value.type === 'instanceQuery') {
+      const query = value as InstanceQuery;
+      visit(query.filters, query.entityId);
+      return;
+    }
     const predicate = value as LogicPredicate;
     if (!predicate.subject) return;
+    if (predicate.subject.kind === 'context' && predicate.subject.role === 'self' && queryEntityId) {
+      (project.entityInstances ?? []).filter(instance => instance.entityId === queryEntityId).forEach(instance => visit({ ...predicate, subject: { kind: 'instance', instanceId: instance.id } }));
+      return;
+    }
     const key = predicate.type === 'external' ? `external:${externalConditionKey(predicate)}` : `${logicSubjectKey(predicate.subject)}:${predicate.type}:${conditionFieldKey(predicate)}`;
     const field = resolveLogicField(project, predicate.subject, 'condition', predicate.type === 'value' ? 'value' : predicate.type, conditionFieldKey(predicate));
     const fieldLabel = predicate.type === 'external' ? copy[locale].externalResult : conditionFieldLabel(field, locale);
@@ -224,6 +255,7 @@ export function conditionTestControls(project: BranchingProject, inputs: (Condit
 }
 
 export function conditionExpressionAtPath(project: BranchingProject, input: ConditionInput | undefined, path: string): ConditionExpression | undefined {
+  if (path.includes('.copy[')) return undefined;
   let value: unknown = normalizedInput(project, input);
   for (const match of path.slice('conditions'.length).matchAll(/\.(all|any|not)\[(\d+)\]/g)) {
     const key = match[1], index = Number(match[2]);

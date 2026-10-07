@@ -1,6 +1,45 @@
 import type { BranchingProject, ValidationFinding } from "./domain.js";
 import type { Selection } from "./appTypes.js";
 
+/** Turn a reference scan path into its authored owner, keeping indices as technical detail. */
+export function authoringUsagePresentation(project: BranchingProject, path: string, locale: "en" | "es") {
+  let value: unknown = project;
+  const objects: Record<string, unknown>[] = [];
+  for (const segment of path.split(".")) {
+    if (!value || typeof value !== "object") break;
+    value = (value as Record<string, unknown>)[segment];
+    if (value && typeof value === "object" && !Array.isArray(value)) objects.push(value as Record<string, unknown>);
+  }
+  const owner = [...objects].reverse().find(item => typeof item.id === "string");
+  const scenario = objects.find(item => project.authoringScenarios?.includes(item as never));
+  const event = objects.find(item => project.events.includes(item as never));
+  const dialogue = event && objects.find(item => (event.dialogues as unknown[] | undefined)?.includes(item));
+  let nodeId = event ? String(event.id) : undefined;
+  if (event && owner && owner !== event) {
+    const beat = objects.find(item => "blockRef" in item);
+    const decision = objects.find(item => "outcomes" in item);
+    if (beat) nodeId = `beat:${event.id}:${beat.id}`;
+    else if (decision && owner !== decision && (decision.outcomes as unknown[]).includes(owner)) nodeId = `outcome:${event.id}:${decision.id}:${owner.id}`;
+    else if (decision) nodeId = `decision:${event.id}:${decision.id}`;
+    else if (dialogue) nodeId = `dialogue:${event.id}:${dialogue.id}`;
+    else nodeId = String(event.id);
+  }
+  const labels = objects.map(item => item.visibleText ?? item.name ?? item.title).filter((label): label is string => typeof label === "string" && Boolean(label));
+  const category = ({ entityInstances: ["Initial copy", "Copia inicial"], authoringScenarios: ["Scenario", "Escenario"], narrativeActions: ["Action", "Acción"], narrativeRules: ["Rule", "Regla"], entityOverrides: ["Entity exception", "Excepción de entidad"], playerProfiles: ["Player profile", "Perfil"], localExplorerEntities: ["Entity", "Entidad"] } as Record<string, string[]>)[path.split(".")[0]]?.[locale === "es" ? 1 : 0];
+  return { label: [category, ...labels].filter(Boolean).join(" → ") || (locale === "es" ? "Configuración de la historia" : "Story configuration"), nodeId, scenarioId: scenario ? String(scenario.id) : undefined, target: scenario ? undefined : authoringDiagnosticTarget(project, String(owner?.id ?? "")) };
+}
+
+export function authoringDiagnosticTarget(project: BranchingProject, location?: string): { tab: "entities" | "actions" | "rules"; id: string; entityId?: string } | undefined {
+  if (!location) return;
+  const candidates = [
+    ...(project.narrativeActions ?? []).map(action => ({ tab: "actions" as const, id: action.id })),
+    ...(project.narrativeRules ?? []).map(rule => ({ tab: "rules" as const, id: rule.id })),
+    ...(project.entityInstances ?? []).map(copy => ({ tab: "entities" as const, id: copy.id, entityId: copy.entityId })),
+    ...(project.entityOverrides ?? []).map(override => ({ tab: "entities" as const, id: override.entityId, entityId: override.entityId })),
+  ];
+  return candidates.sort((a, b) => b.id.length - a.id.length).find(candidate => location === candidate.id || location.startsWith(`${candidate.id}.`) || location.startsWith(`${candidate.id}:`));
+}
+
 /** Resolve the owning authored object, including IDs embedded in a diagnostic path. */
 export function diagnosticSelection(project: BranchingProject, location?: string): Selection | undefined {
   if (!location) return;
@@ -64,6 +103,9 @@ export function findingPresentation(finding: ValidationFinding, project: Branchi
   const labels = [...project.events, ...project.sequences, ...(project.localExplorerEntities ?? [])].map((item) => [item.id, item.name]);
   labels.push(...project.branches.map((item) => [item.id, item.title]));
   labels.push(...project.canonRefs.map((item) => [item.id, item.label ?? item.id]));
+  labels.push(...(project.narrativeActions ?? []).map(item => [item.id, item.name]));
+  labels.push(...(project.narrativeRules ?? []).map(item => [item.id, item.name]));
+  labels.push(...(project.entityInstances ?? []).map(item => [item.id, item.name ?? item.entityId]));
   for (const [id, label] of labels.sort((a, b) => b[0].length - a[0].length)) {
     const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     message = message.replace(new RegExp(`(?<![\\p{L}\\p{N}_:-])${escaped}(?![\\p{L}\\p{N}_:-])`, "gu"), () => label);

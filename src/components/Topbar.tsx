@@ -12,6 +12,7 @@ import {
   LoaderCircle,
   OctagonAlert,
   RotateCcw,
+  Info,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Check, Eye } from "lucide-react";
@@ -30,8 +31,8 @@ import "../authoringControls.css";
 export type DocumentSaveState = "pending" | "saving" | "saved" | "error";
 
 const controlsCopy = {
-  en: { workspace: "Workspace controls", noUniverse: "No universe", openUniverse: "Open a universe", universeSettings: "Universe settings", settings: "Application settings", reveal: "Reveal universe folder", openFirst: "Open a universe first", home: "Home", history: "History", undo: "Undo", redo: "Redo", recent: "Recent actions", noActions: "No actions yet.", view: "View", panels: "Panels", reset: "Reset layout", export: "Export & Import", feedback: "Send feedback", theme: "Toggle theme", everend: "Everend menu", buy: "Buy Suite", pending: "Changes pending", saving: "Saving…", saved: "Saved", error: "Save failed", retry: "Retry save", draft: "Draft not applied", draftHint: "Apply inspector changes to add them to the document.", errorHint: "The latest document changes have not been saved.", panelLabels: { assets: "Assets", logic: "Logic", player: "Player", outline: "Stories", export: "Export & Import", connect: "Connect" } },
-  es: { workspace: "Controles del espacio de trabajo", noUniverse: "Sin universo", openUniverse: "Abrir un universo", universeSettings: "Ajustes del universo", settings: "Ajustes de la aplicación", reveal: "Mostrar carpeta del universo", openFirst: "Abre un universo primero", home: "Inicio", history: "Historial", undo: "Deshacer", redo: "Rehacer", recent: "Acciones recientes", noActions: "Aún no hay acciones.", view: "Vista", panels: "Paneles", reset: "Restablecer disposición", export: "Exportar e importar", feedback: "Enviar comentarios", theme: "Cambiar tema", everend: "Menú de Everend", buy: "Comprar Suite", pending: "Cambios pendientes", saving: "Guardando…", saved: "Guardado", error: "Error de guardado", retry: "Reintentar guardado", draft: "Borrador sin aplicar", draftHint: "Aplica los cambios del inspector para incorporarlos al documento.", errorHint: "Los últimos cambios del documento no se han guardado.", panelLabels: { assets: "Recursos", logic: "Lógica", player: "Jugador", outline: "Historias", export: "Exportar e importar", connect: "Conectar" } },
+  en: { workspace: "Workspace controls", noUniverse: "No universe", openUniverse: "Open a universe", universeSettings: "Universe settings", settings: "Application settings", reveal: "Reveal universe folder", openFirst: "Open a universe first", home: "Home", history: "History", undo: "Undo", redo: "Redo", recent: "Recent actions", noActions: "No actions yet.", view: "View", panels: "Panels", reset: "Reset layout", export: "Export & Import", feedback: "Send feedback", theme: "Toggle theme", everend: "Everend menu", buy: "Buy Suite", pending: "Changes pending", saving: "Saving…", saved: "Saved", error: "Save failed", retry: "Retry save", draft: "Draft not applied", draftHint: "Complete pending fields or apply inspector changes to add them to the document.", errorHint: "The latest document changes have not been saved.", panelLabels: { assets: "Assets", logic: "Logic", player: "Player", outline: "Stories", export: "Export & Import", connect: "Connect" } },
+  es: { workspace: "Controles del espacio de trabajo", noUniverse: "Sin universo", openUniverse: "Abrir un universo", universeSettings: "Ajustes del universo", settings: "Ajustes de la aplicación", reveal: "Mostrar carpeta del universo", openFirst: "Abre un universo primero", home: "Inicio", history: "Historial", undo: "Deshacer", redo: "Rehacer", recent: "Acciones recientes", noActions: "Aún no hay acciones.", view: "Vista", panels: "Paneles", reset: "Restablecer disposición", export: "Exportar e importar", feedback: "Enviar comentarios", theme: "Cambiar tema", everend: "Menú de Everend", buy: "Comprar Suite", pending: "Cambios pendientes", saving: "Guardando…", saved: "Guardado", error: "Error de guardado", retry: "Reintentar guardado", draft: "Borrador sin aplicar", draftHint: "Completa los campos pendientes o aplica los cambios del inspector para incorporarlos al documento.", errorHint: "Los últimos cambios del documento no se han guardado.", panelLabels: { assets: "Recursos", logic: "Lógica", player: "Jugador", outline: "Historias", export: "Exportar e importar", connect: "Conectar" } },
 } as const;
 
 function menuItems(element: HTMLElement) { return Array.from(element.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]:not(:disabled)')); }
@@ -99,6 +100,7 @@ export function Topbar({
   locale: localeOverride,
   saveState,
   saveError,
+  loadWarnings,
   hasUnappliedDraft = false,
   onRetrySave,
 }: {
@@ -125,6 +127,7 @@ export function Topbar({
   locale?: "en" | "es";
   saveState?: DocumentSaveState;
   saveError?: string;
+  loadWarnings?: string[];
   hasUnappliedDraft?: boolean;
   onRetrySave?: () => void;
 }) {
@@ -271,6 +274,7 @@ export function Topbar({
           {currentSaveState === "saving" ? <LoaderCircle size={14} className="pb-save-spinner" aria-hidden="true" /> : currentSaveState === "saved" ? <CheckCircle2 size={14} aria-hidden="true" /> : <span className="pb-status-dot" aria-hidden="true" />}<span className="pb-status-full">{c[currentSaveState]}</span><span className="pb-status-compact" aria-hidden="true">{compactStatus[currentSaveState]}</span>
         </span> : null}
         {hasUnappliedDraft ? <span className="pb-draft-state" title={c.draftHint} aria-label={`${c.draft}. ${c.draftHint}`}><span className="pb-status-full">{c.draft}</span><span className="pb-status-compact" aria-hidden="true">{compactStatus.draft}</span></span> : null}
+        {loadWarnings?.length ? <details className="pb-save-details" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary className="pb-save-state"><Info size={14} aria-hidden="true" /><span>{locale === "es" ? "Notas de carga" : "Load notes"} · {loadWarnings.length}</span></summary><div className="pb-save-error-popover"><ul>{loadWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div></details> : null}
       </div>
       </div>
       <div className="dock-top-right">

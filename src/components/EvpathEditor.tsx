@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BranchingProject } from "../domain.js";
 import { parseEvpath, serializeEventEvpath, type EvpathParseError } from "../evpathFormat.js";
 import { EvpathVisualBuilder } from "./EvpathVisualBuilder.js";
+import { authoringDraftKey } from "../authoringDrafts.js";
+import { useAuthoringDraft } from "./useAuthoringDraft.js";
+import { useInterfaceLocale } from "../i18n.js";
 
 export type EvpathApplyOutcome = { errors: EvpathParseError[]; warnings: string[] };
 export type EvpathEditorMode = "visual" | "source";
@@ -37,21 +40,22 @@ function highlightLine(line: string, key: number): ReactNode {
   return <span key={key}>{parts}{"\n"}</span>;
 }
 
-function EvpathSourceEditor({ serialized, eventId, onApply, onDirtyChange }: {
+function EvpathSourceEditor({ serialized, projectId, eventId, onApply, onDirtyChange }: {
   serialized: string;
+  projectId: string;
   eventId: string;
   onApply: (eventId: string, text: string) => EvpathApplyOutcome;
   onDirtyChange: (dirty: boolean) => void;
 }) {
-  const [draft, setDraft] = useState<string>();
+  const locale = useInterfaceLocale();
+  const [value, setDraft, clearDraft] = useAuthoringDraft(authoringDraftKey(projectId, eventId, "evpath-source"), serialized);
   const [applyOutcome, setApplyOutcome] = useState<EvpathApplyOutcome>();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLPreElement>(null);
-  const value = draft ?? serialized;
-  const dirty = draft !== undefined && draft !== serialized;
+  const dirty = value !== serialized;
   const parseErrors = useMemo(() => parseEvpath(value).errors, [value]);
-  useEffect(() => setDraft((currentDraft) => currentDraft === serialized ? undefined : currentDraft), [serialized]);
-  useEffect(() => { setDraft(undefined); setApplyOutcome(undefined); }, [eventId]);
+  useEffect(() => { if (!dirty) clearDraft(); }, [dirty, clearDraft]);
+  useEffect(() => { setApplyOutcome(undefined); }, [eventId]);
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   const syncScroll = () => {
     if (!backdropRef.current || !textareaRef.current) return;
@@ -61,15 +65,19 @@ function EvpathSourceEditor({ serialized, eventId, onApply, onDirtyChange }: {
   const errors = parseErrors.length ? parseErrors : applyOutcome?.errors ?? [];
   return <>
     <div className="evpath-editor-toolbar">
-      <span className={`evpath-editor-status${dirty ? " dirty" : ""}`}>{dirty ? "Cambios sin aplicar" : "Sincronizado con el canvas"}</span>
+      <span className={`evpath-editor-status${dirty ? " dirty" : ""}`}>{dirty ? locale === "es" ? "Borrador recuperable sin aplicar" : "Recoverable unapplied draft" : locale === "es" ? "Sincronizado con el canvas" : "Synchronized with the canvas"}</span>
       <div className="evpath-editor-actions">
-        <button type="button" onClick={() => { setDraft(undefined); setApplyOutcome(undefined); }} disabled={!dirty}>Revert</button>
+        <button type="button" onClick={() => { clearDraft(); setApplyOutcome(undefined); }} disabled={!dirty}>{locale === "es" ? "Revertir" : "Revert"}</button>
         <button type="button" className="primary" onClick={() => {
           if (parseErrors.length) return;
-          const outcome = onApply(eventId, value);
-          setApplyOutcome(outcome);
-          if (!outcome.errors.length) setDraft(undefined);
-        }} disabled={!dirty || parseErrors.length > 0}>Apply</button>
+          try {
+            const outcome = onApply(eventId, value);
+            setApplyOutcome(outcome);
+            if (!outcome.errors.length) clearDraft();
+          } catch (error) {
+            setApplyOutcome({ errors: [{ line: 1, message: error instanceof Error ? error.message : String(error) }], warnings: [] });
+          }
+        }} disabled={!dirty || parseErrors.length > 0}>{locale === "es" ? "Aplicar" : "Apply"}</button>
       </div>
     </div>
     <div className="evpath-editor-surface">
@@ -81,7 +89,8 @@ function EvpathSourceEditor({ serialized, eventId, onApply, onDirtyChange }: {
   </>;
 }
 
-export function EvpathEditor({ project, eventId, onApply }: { project: BranchingProject; eventId: string; onApply: (eventId: string, text: string) => EvpathApplyOutcome }) {
+export function EvpathEditor({ project, eventId, onApply, sourceOnly = false }: { project: BranchingProject; eventId: string; onApply: (eventId: string, text: string) => EvpathApplyOutcome; sourceOnly?: boolean }) {
+  const locale = useInterfaceLocale();
   const serialized = useMemo(() => serializeEventEvpath(project, eventId), [project, eventId]);
   const [mode, setMode] = useState<EvpathEditorMode>("visual");
   const [sourceDirty, setSourceDirty] = useState(false);
@@ -89,18 +98,28 @@ export function EvpathEditor({ project, eventId, onApply }: { project: Branching
   useEffect(() => { setMode("visual"); setSourceDirty(false); setModeNotice(undefined); }, [eventId]);
   const selectMode = (next: EvpathEditorMode) => {
     if (next === "visual" && sourceDirty) {
-      setModeNotice("Aplica o revierte los cambios de Source antes de volver al Visual Builder.");
+      setModeNotice(locale === "es" ? "Aplica o revierte el borrador de Source antes de volver al Visual Builder. El borrador se conserva al cerrar el panel." : "Apply or revert the Source draft before returning to Visual Builder. Closing the panel preserves your draft.");
       return;
     }
     setModeNotice(undefined);
     setMode(next);
   };
+  const handleModeKey = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next: EvpathEditorMode = event.key === "Home" ? "visual" : event.key === "End" ? "source" : mode === "visual" ? "source" : "visual";
+    if (next === "visual" && sourceDirty) { selectMode(next); return; }
+    selectMode(next);
+    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+    buttons?.[next === "visual" ? 0 : 1]?.focus();
+  };
+  if (sourceOnly) return <div className="evpath-editor"><EvpathSourceEditor serialized={serialized} projectId={project.projectId} eventId={eventId} onApply={onApply} onDirtyChange={setSourceDirty} /></div>;
   return <div className="evpath-editor">
-    <div className="evpath-editor-mode-toggle" role="tablist" aria-label="Modo del editor EVPATH">
-      <button type="button" role="tab" aria-selected={mode === "visual"} className={mode === "visual" ? "active" : ""} onClick={() => selectMode("visual")}>Visual Builder</button>
-      <button type="button" role="tab" aria-selected={mode === "source"} className={mode === "source" ? "active" : ""} onClick={() => selectMode("source")}>Source</button>
+    <div className="evpath-editor-mode-toggle" role="tablist" aria-label={locale === "es" ? "Modo del editor EVPATH" : "EVPATH editor mode"}>
+      <button type="button" role="tab" aria-selected={mode === "visual"} tabIndex={mode === "visual" ? 0 : -1} className={mode === "visual" ? "active" : ""} onKeyDown={handleModeKey} onClick={() => selectMode("visual")}>Visual Builder</button>
+      <button type="button" role="tab" aria-selected={mode === "source"} tabIndex={mode === "source" ? 0 : -1} className={mode === "source" ? "active" : ""} onKeyDown={handleModeKey} onClick={() => selectMode("source")}>Source</button>
     </div>
     {modeNotice ? <p className="evpath-editor-mode-notice">{modeNotice}</p> : null}
-    {mode === "visual" ? <EvpathVisualBuilder source={serialized} onApply={(text) => onApply(eventId, text)} /> : <EvpathSourceEditor serialized={serialized} eventId={eventId} onApply={onApply} onDirtyChange={setSourceDirty} />}
+    {mode === "visual" ? <EvpathVisualBuilder source={serialized} onApply={(text) => onApply(eventId, text)} /> : <EvpathSourceEditor serialized={serialized} projectId={project.projectId} eventId={eventId} onApply={onApply} onDirtyChange={setSourceDirty} />}
   </div>;
 }

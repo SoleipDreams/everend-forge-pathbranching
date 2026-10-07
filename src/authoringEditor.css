@@ -1,0 +1,42 @@
+.narrative-editor { min-width: 0; max-width: 100%; container-type: inline-size; color: var(--wn-text); font-size: 13px; line-height: 1.45; }
+.narrative-editor *, .authoring-text-field * { box-sizing: border-box; }
+.narrative-editor :is(input, select, textarea) { min-width: 0; max-width: 100%; width: 100%; font: inherit; }
+.narrative-editor :is(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--wn-accent); outline-offset: 2px; }
+.narrative-editor > label, .narrative-block-body > label, .narrative-continuation label, .narrative-response > label { display: grid; gap: 5px; margin: 10px 0; }
+.narrative-editor-header h3 { margin: 0 0 4px; font-size: 15px; }
+.narrative-editor-header p { margin: 0 0 12px; overflow-wrap: anywhere; color: var(--wn-muted); }
+.authoring-text-field { display: grid; gap: 5px; margin: 10px 0; min-width: 0; font-size: 13px; }
+.authoring-text-field :is(input, textarea) { min-width: 0; width: 100%; max-width: 100%; font: inherit; }
+.authoring-text-field textarea { resize: vertical; min-height: 76px; line-height: 1.55; }
+.authoring-text-field small, .narrative-muted { color: var(--wn-muted); font-size: 12px; }
+.authoring-field-error { color: var(--wn-danger, #ca4242); font-size: 12px; overflow-wrap: anywhere; }
+.narrative-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.narrative-editor button { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; white-space: normal; text-align: left; max-width: 100%; }
+.narrative-add-block { padding: 10px; margin: 12px 0; border: 1px solid var(--wn-border); border-radius: 7px; background: var(--wn-panel); }
+.narrative-add-block > span { font-size: 12px; color: var(--wn-muted); }
+.narrative-block-list { display: grid; gap: 9px; }
+.narrative-block { border: 1px solid var(--wn-border); border-radius: 7px; background: var(--wn-panel); min-width: 0; }
+.narrative-block.selected, .narrative-response.selected { border-color: var(--wn-accent); }
+.narrative-block > summary { padding: 11px; cursor: pointer; overflow-wrap: anywhere; font-size: 13px; }
+.narrative-block-body { padding: 0 11px 11px; min-width: 0; }
+.narrative-block-body > details { margin: 12px 0; }
+.narrative-block-body h4, .narrative-continuation h5 { font-size: 13px; margin: 12px 0 8px; }
+.narrative-connections { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 6px 0 10px; font-size: 12px; color: var(--wn-muted); }
+.narrative-connections > span { display: inline-flex; align-items: center; gap: 4px; }
+.narrative-connections > div { display: flex; width: 100%; flex-wrap: wrap; gap: 5px; }
+.narrative-connections button { overflow-wrap: anywhere; }
+.narrative-incoming-route { display: inline-flex; gap: 3px; align-items: flex-start; max-width: 100%; }
+.narrative-response { padding: 10px; margin: 10px 0; border: 1px solid var(--wn-border); border-left: 3px solid var(--pb-decision, var(--wn-accent)); border-radius: 6px; min-width: 0; }
+.narrative-response > header { display: flex; align-items: flex-start; gap: 6px; }
+.narrative-response > header > button:first-child { flex: 1; }
+.narrative-node-title { font-weight: 600; }
+.narrative-route { padding: 8px; margin: 8px 0; border: 1px solid var(--wn-border); border-radius: 5px; min-width: 0; }
+.narrative-route > summary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; cursor: pointer; overflow-wrap: anywhere; }
+.narrative-route > summary > span { font-size: 11px; color: var(--wn-muted); }
+.narrative-route label.narrative-check { display: flex; align-items: flex-start; }
+.narrative-check input[type=checkbox] { width: auto; margin-top: 3px; }
+.narrative-secondary { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--wn-border); }
+.narrative-secondary button { color: var(--wn-muted); }
+.narrative-context-logic { margin: 12px 0; }
+.narrative-context-logic > summary { cursor: pointer; }
+@container (max-width: 350px) { .narrative-response { padding: 8px; } .narrative-block-body { padding: 0 8px 8px; } .narrative-actions > button { flex: 1 1 130px; } }

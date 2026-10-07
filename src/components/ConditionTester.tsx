@@ -1,25 +1,28 @@
 import { useId, useState } from 'react';
 import { CircleAlert, Check, Minus, Pause, SkipForward } from 'lucide-react';
-import type { BranchingProject, ConditionInput, LogicPredicate } from '../domain.js';
+import type { BranchingProject, ConditionInput, EntityInstance, LogicPredicate } from '../domain.js';
 import { conditionValueMatchesType, effectiveConditions, evaluateConditionDetailed, externalConditionKey, resolveConditionValue, type ConditionEvaluationResult } from '../conditionEvaluation.js';
 import { isConditionSet, type NarrativeEvaluationState } from '../logic.js';
 import { grantableEntities } from '../explorerSchema.js';
-import { conditionDiagnosticMessage, conditionExpressionAtPath, conditionPredicateLabel, conditionRouteResolution, conditionTestControls, conditionUiCopy, narrativeTargetLabel, type ConditionTestControl, type ConditionUiLocale } from '../conditionPresentation.js';
+import { conditionDiagnosticMessage, conditionExpressionAtPath, conditionPredicateLabel, conditionRouteResolution, conditionTestControls, conditionTreeSummary, conditionUiCopy, narrativeTargetLabel, type ConditionTestControl, type ConditionUiLocale } from '../conditionPresentation.js';
+import { entityDefinition, initialAuthoringState, instanceOwnerIssue } from '../authoringEntities.js';
+import { EntityOwnerPicker } from './EntityOwnerPicker.js';
+import { InstancePropertyFields } from './NarrativeEffectEditor.js';
 import { useInterfaceLocale } from '../i18n.js';
 import '../conditionUx.css';
 
 function initialState(project: BranchingProject): NarrativeEvaluationState {
-  return {variables: {...project.variables, ...Object.fromEntries((project.logicVariables ?? []).map(v => [v.id, v.value]))}, inventory: [], visited: [], entityStates: {}, externalResults: {}};
+  return initialAuthoringState(project);
 }
 
 function ResultTree({result, project, input, locale}: {result: ConditionEvaluationResult; project: BranchingProject; input?: ConditionInput; locale: ConditionUiLocale}) {
   const c = conditionUiCopy(locale);
   const expression = conditionExpressionAtPath(project, input, result.path);
-  const predicate = expression && !isConditionSet(expression) ? expression as LogicPredicate : undefined;
+  const predicate = expression && !isConditionSet(expression) && expression.type !== 'instanceQuery' ? expression as LogicPredicate : undefined;
   const Icon = result.status === 'satisfied' ? Check : result.status === 'unsatisfied' ? Minus : result.status === 'unresolved' ? Pause : CircleAlert;
   return <li className={`condition-result ${result.status}`}>
     <strong><Icon size={13} aria-hidden="true"/> {c[result.status]}</strong>
-    <span className="condition-result-label">{predicate ? conditionPredicateLabel(project, predicate, locale) : ['ALL', 'ANY', 'NOT'].includes(result.message) ? result.message === 'ALL' ? 'AND' : result.message === 'ANY' ? 'OR' : 'NOT' : result.message === 'Always' ? c.always : conditionDiagnosticMessage(result.message, locale)}</span>
+    <span className="condition-result-label">{expression && 'type' in expression && expression.type === 'instanceQuery' ? conditionTreeSummary(project, expression, locale).text : predicate ? conditionPredicateLabel(project, predicate, locale) : ['ALL', 'ANY', 'NOT'].includes(result.message) ? result.message === 'ALL' ? 'AND' : result.message === 'ANY' ? 'OR' : 'NOT' : result.message === 'Always' ? c.always : conditionDiagnosticMessage(result.message, locale)}</span>
     {predicate && ['invalid', 'unresolved'].includes(result.status) ? <span className="condition-field-error">{conditionDiagnosticMessage(result.message, locale)}</span> : null}
     {predicate && result.actual !== undefined ? <span className="condition-result-value">{c.actual}: <code>{JSON.stringify(result.actual)}</code></span> : null}
     {result.children?.length ? <ul className="condition-result-list">{result.children.map(child => <ResultTree key={child.path} result={child} project={project} input={input} locale={locale}/>)}</ul> : null}
@@ -34,6 +37,11 @@ function updateControlState(state: NarrativeEvaluationState, control: ConditionT
     return {...state, externalResults: next};
   }
   if (s.kind === 'variable') return {...state, variables: {...state.variables, [s.variableId]: value}};
+  if (s.kind === 'context') {
+    const subject = state.context?.[s.role];
+    return subject ? updateControlState(state, { ...control, predicate: { ...predicate, subject } as LogicPredicate }, value, project) : state;
+  }
+  if (s.kind === 'instance') return { ...state, entityInstances: (state.entityInstances ?? project.entityInstances ?? []).map(instance => instance.id === s.instanceId ? { ...instance, ...(predicate.type === 'state' ? { states: { ...instance.states, [predicate.stateId]: Boolean(value) } } : predicate.type === 'property' ? { properties: { ...instance.properties, [predicate.propertyId]: value } } : {}) } : instance) };
   if (s.kind === 'progress') {
     const visited = new Set(state.visited ?? []);
     visited.delete(s.targetId); visited.delete(`${s.targetType}:${s.targetId}`);
@@ -115,6 +123,8 @@ export function ConditionTester({project, conditions, locale: localeOverride}: {
   const [advanced, setAdvanced] = useState('{}');
   const [advancedError, setAdvancedError] = useState('');
   const [source, setSource] = useState('');
+  const [scenarioId, setScenarioId] = useState('');
+  const [copyError, setCopyError] = useState('');
   const advancedId = useId();
   const groups = new Map<string, NonNullable<BranchingProject['events'][number]['transitions']>>();
   for (const event of project.events) for (const route of event.transitions ?? []) groups.set(route.from, [...(groups.get(route.from) ?? []), route]);
@@ -131,11 +141,28 @@ export function ConditionTester({project, conditions, locale: localeOverride}: {
   const selected = resolution.selected, blocked = resolution.blocked;
   const currentResult = evaluateConditionDetailed(conditions, project, state);
   const routeTitle = (route: typeof routes[number]) => `${route.mode === 'fallback' ? c.else : route.label?.trim() || c.route} → ${narrativeTargetLabel(project, route.to)}`;
+  const copies = state.entityInstances ?? [];
+  const entities = [...project.canonRefs.map(entity => entity.id), ...(project.localExplorerEntities ?? []).map(entity => entity.id)];
+  const hasCopyQuery = JSON.stringify(conditions ?? {}).includes('"instanceQuery"');
+  const updateCopy = (id: string, patch: Partial<EntityInstance>) => {
+    const next = copies.map(copy => copy.id === id ? { ...copy, ...patch } : copy);
+    const changed = next.find(copy => copy.id === id);
+    const issue = changed ? instanceOwnerIssue(project, next, changed) : undefined;
+    if (issue) { setCopyError(issue); return; }
+    setCopyError(''); setState(current => ({ ...current, entityInstances: next }));
+  };
   return <details className="condition-tester condition-ux"><summary>{c.tester}</summary>
     <p>{c.temporary}</p>
+    <label className="condition-field">{locale === 'es' ? 'Escenario inicial' : 'Initial scenario'}<select value={scenarioId} onChange={event => { const id = event.target.value; setScenarioId(id); setState(initialAuthoringState(project, project.authoringScenarios?.find(scenario => scenario.id === id))); setAdvancedError(''); }}><option value="">{locale === 'es' ? 'Valores del proyecto' : 'Project values'}</option>{project.authoringScenarios?.map(scenario => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></label>
+    <label className="condition-field">{locale === 'es' ? 'Actor temporal' : 'Temporary actor'}<select value={state.context?.actor?.kind === 'entity' ? state.context.actor.entityId : ''} onChange={event => setState(current => ({ ...current, context: { ...current.context, actor: event.target.value ? { kind: 'entity', entityId: event.target.value } : undefined } }))}><option value="">{locale === 'es' ? 'Inventario del protagonista' : 'Protagonist inventory'}</option>{entities.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
     <label className="condition-field"><span>{c.routeSource}</span><select value={source} onChange={event => setSource(event.target.value)}><option value="">{c.thisCondition}</option>{[...groups.keys()].map(id => <option key={id} value={id}>{narrativeTargetLabel(project, id)}</option>)}</select></label>
     <h4>{c.usedValues}</h4>
     {used.length ? <div className="condition-test-controls">{used.map(renderControl)}</div> : <p className="condition-empty">{c.noUsedValues}</p>}
+    <details open={hasCopyQuery || undefined} className="condition-test-copies"><summary>{locale === 'es' ? 'Copias e inventarios temporales' : 'Temporary copies and inventories'} · {copies.length}</summary>
+      {copies.map(copy => <fieldset key={copy.id}><legend>{copy.name ?? entityDefinition(project, copy.entityId)?.name ?? copy.entityId}</legend><EntityOwnerPicker project={project} instances={copies} value={copy.owner} onChange={owner => updateCopy(copy.id, { owner })} /><InstancePropertyFields temporary project={project} instance={copy} onChange={patch => updateCopy(copy.id, patch)} /><button type="button" onClick={() => { if (copies.some(child => child.owner?.kind === 'instance' && child.owner.instanceId === copy.id)) { setCopyError(locale === 'es' ? 'Traslada primero las copias que contiene.' : 'Move its contained copies first.'); return; } setState(current => ({ ...current, entityInstances: copies.filter(item => item.id !== copy.id) })); }}>{locale === 'es' ? 'Retirar copia temporal' : 'Remove temporary copy'}</button></fieldset>)}
+      <label className="condition-field">{locale === 'es' ? 'Añadir copia temporal' : 'Add temporary copy'}<select value="" onChange={event => { if (!event.target.value) return; const entityId = event.target.value; const next: EntityInstance = { id: `instance:test:${crypto.randomUUID()}`, entityId, properties: {}, owner: { kind: 'profile', profileId: state.context?.profileId ?? 'default' } }; setState(current => ({ ...current, entityInstances: [...(current.entityInstances ?? []), next] })); }}><option value="">{locale === 'es' ? 'Elegir entidad' : 'Choose entity'}</option>{entities.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
+      {copyError ? <p role="alert" className="condition-field-error">{copyError}</p> : null}
+    </details>
     <details className="condition-test-advanced"><summary>{c.advanced}</summary>
       <div className="condition-test-controls">{remaining.map(renderControl)}</div>
       <details onToggle={event => {if (event.currentTarget.open) setAdvanced(JSON.stringify({entityStates: state.entityStates ?? {}, canonStates: state.canonStates ?? {}, ...(state.dataObjects ? {dataObjects: state.dataObjects} : {}), unlockedCanonRefs: [...(state.unlockedCanonRefs ?? [])]}, null, 2));}}>
@@ -158,6 +185,6 @@ export function ConditionTester({project, conditions, locale: localeOverride}: {
         </li>)}</ol>
       </> : null}
     </> : <p className="condition-empty">{locale === 'es' ? 'Corrige el JSON para actualizar los resultados. Se conserva el último estado válido.' : 'Fix the JSON to update the results. The last valid state is preserved.'}</p>}
-    <button type="button" onClick={() => {setState(initialState(project)); setAdvanced('{}'); setAdvancedError('');}}>{c.reset}</button>
+    <button type="button" onClick={() => {setState(initialAuthoringState(project, project.authoringScenarios?.find(scenario => scenario.id === scenarioId))); setAdvanced('{}'); setAdvancedError(''); setCopyError('');}}>{c.reset}</button>
   </details>;
 }

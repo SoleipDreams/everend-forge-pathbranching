@@ -33,7 +33,10 @@ import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./co
 import { PlayerPanel } from "./components/PlayerPanel.js";
 import { ExportPanel } from "./components/ExportPanel.js";
 import { ExportPreviewDialog } from "./components/ExportPreviewDialog.js";
-import { EventScriptWorkspace } from "./components/EventScriptWorkspace.js";
+import { authoringNodeOptions } from "./authoringMutations.js";
+import { AuthoringWorkspace } from "./components/AuthoringWorkspace.js";
+import { useAuthoringDraftCount } from "./components/useAuthoringDraft.js";
+import { authoringDraftEntries, authoringDraftKey, getAuthoringDraft, setAuthoringDraft, clearAuthoringRecovery, readAuthoringRecovery, storeAuthoringRecovery, type AuthoringRecovery } from "./authoringDrafts.js";
 import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
 import { ConnectPanel } from "./components/ConnectPanel.js";
 import { EverendBridgePanel } from "./components/EverendBridgePanel.js";
@@ -41,7 +44,8 @@ import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
 import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
 import { Topbar } from "./components/Topbar.js";
-import { diagnosticSelection, findingPresentation } from "./diagnosticPresentation.js";
+import { authoringDiagnosticTarget, diagnosticSelection, findingPresentation } from "./diagnosticPresentation.js";
+import { entityUsages } from "./authoringEntities.js";
 import { useOverlayFocus } from "./components/useOverlayFocus.js";
 import { AdaptiveWorkspace, WorkspacePanelSlot } from "./components/AdaptiveWorkspace.js";
 import { StoriesPanel } from "./components/StoriesPanel.js";
@@ -3823,7 +3827,7 @@ function PathBranchingSettingsModal({
                   <label>
                     <span>{interfaceCopy.interfaceLanguage}</span>
                     <select
-                      value={settings.localePreference}
+                      value={suiteSettings?.localePreference ?? settings.localePreference}
                       onChange={(event) => onLocalePreferenceChange(event.target.value as "system" | "en" | "es")}
                     >
                       <option value="system">{interfaceCopy.system}</option>
@@ -5007,6 +5011,26 @@ type ManualInspectorDraft = {
   project: BranchingProject;
   dirty: boolean;
 };
+
+function recoverManualInspectorDrafts(projectId: string): Record<string, ManualInspectorDraft> {
+  const result: Record<string, ManualInspectorDraft> = {};
+  for (const [key, value] of authoringDraftEntries(projectId)) {
+    try {
+      const [, element, field] = JSON.parse(key);
+      const draft = JSON.parse(value) as ManualInspectorDraft;
+      if (field === "inspector" && draft.project?.projectId === projectId && draft.selection && draft.dirty) result[element] = draft;
+    } catch { /* An invalid recovery entry cannot replace document content. */ }
+  }
+  return result;
+}
+
+function recoverEventDraft(project: BranchingProject, eventId: string): EventDraft | undefined {
+  try {
+    const value = getAuthoringDraft(authoringDraftKey(project.projectId, eventId, "event-inspector"));
+    const draft = value ? JSON.parse(value) as EventDraft : undefined;
+    return draft?.eventId === eventId && draft.draftEvent?.id === eventId && draft.baseEvent && draft.dirty ? { ...draft, saving: false } : undefined;
+  } catch { return undefined; }
+}
 
 function manualInspectorDraftKey(selection?: Selection) {
   if (selection?.type === "explorerEntity") {
@@ -6780,7 +6804,7 @@ function Inspector({
             {objectInspectorTab === "path" ? (
               <section className="inspector-section">
                 <h2>Path</h2>
-                <EvpathEditor project={project} eventId={event.id} onApply={onApplyEvpath} />
+                <EvpathEditor sourceOnly project={project} eventId={event.id} onApply={onApplyEvpath} />
               </section>
             ) : null}
             {objectInspectorTab === "connections" ? <>
@@ -6887,7 +6911,7 @@ function Inspector({
             />
             ) : null}
             {objectInspectorTab === "consequences" ? (
-            <LogicMomentEditor project={project} hideWhen value={event.logic} onChange={logic=>onUpdateEvent(event.id,{logic})}/>
+            <LogicMomentEditor project={project} draftId={event.id} hideWhen value={event.logic} onChange={logic=>onUpdateEvent(event.id,{logic})}/>
 
             ) : null}
             {objectInspectorTab === "choices" ? <>
@@ -7112,7 +7136,7 @@ function Inspector({
               </div>
               </> : null}
             </section>
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDecisionContext.decision.logic} onChange={logic=>onUpdateDecision(selectedDecisionContext.eventId,selectedDecisionContext.decision!.id,{logic})}/> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDecisionContext.decision.id} value={selectedDecisionContext.decision.logic} onChange={logic=>onUpdateDecision(selectedDecisionContext.eventId,selectedDecisionContext.decision!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7299,7 +7323,7 @@ function Inspector({
               </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDialogueBeatContext.beat.logic} onChange={logic=>selectedDialogueBeatContext.dialogueId?onUpdateDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.dialogueId,selectedDialogueBeatContext.beat.id,{logic}):onUpdateEventDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.beat.id,{logic})}/> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDialogueBeatContext.beat.id} value={selectedDialogueBeatContext.beat.logic} onChange={logic=>selectedDialogueBeatContext.dialogueId?onUpdateDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.dialogueId,selectedDialogueBeatContext.beat.id,{logic}):onUpdateEventDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.beat.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7417,7 +7441,7 @@ function Inspector({
                         : selectedDialogueEvent.name}
                       {" · EVPATH"}
                     </p>
-                    <EvpathEditor
+                    <EvpathEditor sourceOnly
                       project={project}
                       eventId={selectedDialogueEvent.id}
                       onApply={onApplyEvpath}
@@ -7428,7 +7452,7 @@ function Inspector({
                 )}
               </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDialogueContext.dialogue.logic} onChange={logic=>onUpdateDialogue(selectedDialogueContext.eventId,selectedDialogueContext.dialogue!.id,{logic})}/> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDialogueContext.dialogue.id} value={selectedDialogueContext.dialogue.logic} onChange={logic=>onUpdateDialogue(selectedDialogueContext.eventId,selectedDialogueContext.dialogue!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7587,7 +7611,7 @@ function Inspector({
               </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedOutcomeContext.outcome.logic} onChange={logic=>onUpdateOutcome(selectedOutcomeContext.eventId,selectedOutcomeContext.decisionId,selectedOutcomeContext.outcome!.id,{logic})}/> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedOutcomeContext.outcome.id} value={selectedOutcomeContext.outcome.logic} onChange={logic=>onUpdateOutcome(selectedOutcomeContext.eventId,selectedOutcomeContext.decisionId,selectedOutcomeContext.outcome!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7738,7 +7762,7 @@ function Inspector({
                       compact
                       onChange={(conditions) => onUpdateTransition(route.id, { conditions })}
                     /> : <p className="route-gate-fallback-copy">Runs when no preceding IF route matches.</p>
-                  ) : <LogicMomentEditor project={project} hideWhen value={route.logic} onChange={logic=>onUpdateTransition(route.id,{logic,conditions:logic.when,consequences:logic.then})}/>}
+                  ) : <LogicMomentEditor project={project} draftId={route.id} hideWhen value={route.logic} onChange={logic=>onUpdateTransition(route.id,{logic,conditions:logic.when,consequences:logic.then})}/>}
                 </div>;
               })() : null}
             </> : null}
@@ -7882,7 +7906,7 @@ function Inspector({
               </>
             ) : null}
             {selectedTransition && transitionInspectorTab === "consequences" ? (
-              <LogicMomentEditor project={project} hideWhen value={selectedTransition.logic} onChange={logic=>onUpdateTransition(selectedTransition.id,{logic,conditions:logic.when,consequences:logic.then})}/>
+              <LogicMomentEditor project={project} draftId={selectedTransition.id} hideWhen value={selectedTransition.logic} onChange={logic=>onUpdateTransition(selectedTransition.id,{logic,conditions:logic.when,consequences:logic.then})}/>
             ) : null}
             {!selectedTransition ? (
               <LogicSection
@@ -8994,7 +9018,7 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
       <div className="canvas-findings-popup-header"><strong>{label}</strong></div>
       {findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
         const presentation = findingPresentation(finding, project, locale);
-        const locatable = Boolean(diagnosticSelection(project, finding.id) ?? diagnosticSelection(project, finding.ref)) || finding.code === "orphan_script_block";
+        const locatable = Boolean(authoringDiagnosticTarget(project, finding.id) ?? authoringDiagnosticTarget(project, finding.ref) ?? diagnosticSelection(project, finding.id) ?? diagnosticSelection(project, finding.ref)) || finding.code === "orphan_script_block";
         return <div className={`finding ${finding.severity}`} key={`${finding.code}:${finding.id}:${finding.ref}:${index}`}>
           <strong>{finding.severity === "error" ? "⚠" : "ⓘ"} {presentation.title}</strong>
           {locale === "en" ? <span>{presentation.message}</span> : <span>{locale === "es" ? "Localiza el elemento y revisa su configuración. Los detalles incluyen la causa concreta." : ""}</span>}
@@ -9062,6 +9086,8 @@ function BreadcrumbCrumb({
 
 function StoryCanvas({
   project,
+  authoringWorkspace,
+  onToggleAuthoring,
   propertiesConfig,
   files,
   nodes,
@@ -9202,6 +9228,8 @@ function StoryCanvas({
   onOpenRule,
 }: {
   project: BranchingProject;
+  authoringWorkspace?: ReactNode;
+  onToggleAuthoring?: () => void;
   propertiesConfig?: Record<string, unknown>;
   files: PathBranchingFileItem[];
   nodes: StoryCanvasNode[];
@@ -9418,7 +9446,8 @@ function StoryCanvas({
   onSaveManualInspector: () => void;
   onOpenRule: (id: string) => void;
 }) {
-  const ui = authoringUiCopy(useInterfaceLocale());
+  const canvasUiLocale = useInterfaceLocale();
+  const ui = authoringUiCopy(canvasUiLocale);
   const shellRef = useRef<HTMLElement | null>(null);
   const [logicFocus, setLogicFocus] = useState<{
     selectionKey: string;
@@ -10032,6 +10061,8 @@ function StoryCanvas({
   );
   const locateFinding = useCallback(
     (findingItem: ValidationFinding) => {
+      const authoring = authoringDiagnosticTarget(project, findingItem.id) ?? authoringDiagnosticTarget(project, findingItem.ref);
+      if (authoring) { window.dispatchEvent(new CustomEvent("pathbranching:locate-authoring", { detail: authoring })); return; }
       if (
         findingItem.code === "missing_event" &&
         findingItem.id &&
@@ -10635,8 +10666,10 @@ function StoryCanvas({
       <div className="canvas-selection-actions" role="group" aria-label={ui.inspector}>
         <strong title={String(contextLabel)}>{String(contextLabel)}</strong>
         <button type="button" disabled={!contextSelection} onClick={() => { if (contextSelection) onOpenCanvasInspector(contextSelection); }}><Eye size={13} />{ui.inspect}</button>
+        {onToggleAuthoring ? <button type="button" onClick={onToggleAuthoring}><Pencil size={13} />{canvasUiLocale === "es" ? "Escribir historia" : "Write story"}</button> : null}
         {canEnterSelection ? <button type="button" onClick={() => { if (actionNode) openNodeCanvas(actionNode); }}><FolderOpen size={13} />{ui.enter}</button> : null}
       </div>
+      {authoringWorkspace}
       <div className="canvas-modebar">
         <div className="canvas-breadcrumb" aria-label="Canvas path">
           <span className="canvas-breadcrumb-story" title={project.name}>{project.name}</span>
@@ -11467,6 +11500,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       "dismissed",
   );
   const [project, setProject] = useState<BranchingProject>();
+  const recoverableDraftCount = useAuthoringDraftCount(project?.projectId ?? "");
+  const [pendingRecovery, setPendingRecovery] = useState<AuthoringRecovery>();
   const [fileState, setFileState] = useState<ProjectFileState>({
     dirty: false,
   });
@@ -11490,7 +11525,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     scriptId: string;
     blockId: string;
   }>();
-  const [eventScriptWorkspace, setEventScriptWorkspace] = useState<{ eventId: string; textKey?: string }>();
+  const [eventScriptWorkspace, setEventScriptWorkspace] = useState<{ eventId: string; textKey?: string; tab?: string; entityId?: string; focusId?: string }>();
+  const [testPosition, setTestPosition] = useState<string>();
+  const [testVisited, setTestVisited] = useState<string[]>([]);
+  const [requestedAuthoringScenario, setRequestedAuthoringScenario] = useState<{ id: string; revision: number }>();
   const [selectedLogicRuleId, setSelectedLogicRuleId] = useState<string>();
   const [canonWidth, setCanonWidth] = useState(DEFAULT_EXPLORER_WIDTH);
   const [storiesWidth, setStoriesWidth] = useState(DEFAULT_PANEL_WIDTH);
@@ -11514,6 +11552,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [manualInspectorDrafts, setManualInspectorDrafts] = useState<
     Record<string, ManualInspectorDraft>
   >({});
+  useEffect(() => {
+    if (!project || !eventDraft) return;
+    setAuthoringDraft(authoringDraftKey(project.projectId, eventDraft.eventId, "event-inspector"), eventDraft.dirty ? JSON.stringify(eventDraft) : undefined);
+  }, [project?.projectId, eventDraft]);
+  useEffect(() => {
+    const configure = (event: Event) => {
+      const detail = (event as CustomEvent<{ entityId?: string }>).detail;
+      setEventScriptWorkspace({ eventId: projectRef.current?.events[0]?.id ?? "", tab: "entities", entityId: detail?.entityId });
+    };
+    window.addEventListener("pathbranching:configure-entity", configure);
+    const locate = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab: string; id: string; entityId?: string }>).detail;
+      if (detail) setEventScriptWorkspace({ eventId: projectRef.current?.events[0]?.id ?? "", tab: detail.tab, entityId: detail.entityId, focusId: detail.id });
+    };
+    window.addEventListener("pathbranching:locate-authoring", locate);
+    return () => { window.removeEventListener("pathbranching:configure-entity", configure); window.removeEventListener("pathbranching:locate-authoring", locate); };
+  }, []);
   const [storyOutlineTab, setStoryOutlineTab] =
     useState<StoryOutlineTab>("sequence");
   const [activeScope, setActiveScopeState] = useState<CanvasScope>();
@@ -11673,6 +11728,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         projectRevisionRef.current += 1;
       }
       projectRef.current = normalizedProject;
+      if ((options.dirty || options.revision) && fileStateRef.current.universePath && normalizedProject.storyId) {
+        storeAuthoringRecovery(fileStateRef.current.universePath, normalizedProject.storyId, { project: normalizedProject, modifiedMs: fileStateRef.current.modifiedMs, savedAt: Date.now() });
+      }
       workspaceRef.current = workspaceRef.current
         ? {
             ...workspaceRef.current,
@@ -11689,9 +11747,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           path: options.path ?? current.path,
           universePath: options.universePath ?? current.universePath,
           storyPath: options.storyPath ?? current.storyPath,
-          dirty: options.dirty ?? current.dirty,
+          dirty: options.revision ? true : options.dirty ?? current.dirty,
           lastSavedAt:
-            options.dirty === false ? Date.now() : current.lastSavedAt,
+            options.dirty === false && !options.revision ? Date.now() : current.lastSavedAt,
           modifiedMs: options.modifiedMs ?? current.modifiedMs,
           universeProfile: current.universeProfile,
         };
@@ -11724,6 +11782,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...nextWorkspace.activeProject,
         universeRootPath: universePath,
       });
+      setPendingRecovery(readAuthoringRecovery(universePath, activeProject.storyId ?? ""));
       const restoredScope =
         savedSession.activeScope ??
         activeProject.canvas?.activeScope ??
@@ -11773,7 +11832,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setRedoStack([]);
       setActionHistory([]);
       setEventDraft(undefined);
-      setManualInspectorDrafts({});
+      setManualInspectorDrafts(recoverManualInspectorDrafts(activeProjectWithScope.projectId));
+      setTestPosition(undefined);
+      setTestVisited([]);
       setMarkdownTabs(savedSession.markdownTabs ?? []);
       setActiveMarkdownTabId(savedSession.activeMarkdownTabId);
       setCanonOpen(
@@ -11911,10 +11972,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       nextSelection?: Selection,
     ) => {
       const currentProject = projectRef.current;
-      const currentWorkspace = workspaceRef.current;
-      const currentFileState = fileStateRef.current;
-      const previousUndoStack = undoStack;
-      const previousRedoStack = redoStack;
       const mutationResult = "project" in result ? result : { project: result };
 
       if (!currentProject) {
@@ -11932,21 +11989,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return true;
       }
 
-      const snapshot = {
-        project: currentProject,
-        workspace: currentWorkspace,
-        fileState: currentFileState,
-        selection: selectionRef.current,
-        undoStack: previousUndoStack,
-        redoStack: previousRedoStack,
-        revision: projectRevisionRef.current,
-        savedRevision: savedRevisionRef.current,
-      };
-
-      setUndoStack((current) => [...current.slice(-9), currentProject]);
+      setUndoStack((current) => [...current.slice(-199), currentProject]);
       setRedoStack([]);
       setActionHistory((current) => [mutationResult.message ?? label, ...current].slice(0, 10));
-      applyProject(mutationResult.project, { dirty: false, revision: true });
+      applyProject(mutationResult.project, { dirty: true, revision: true });
       if (mutationResult.selection) {
         setSelection(mutationResult.selection as Selection);
       } else if (nextSelection) {
@@ -11959,7 +12005,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         setMessage(mutationResult.message ?? `${label} saved.`);
         return true;
       } catch (commitError) {
-        restoreStructuralSnapshot(snapshot);
+        // A disk error must not erase edits already visible in the document.
+        // The save queue retains the latest revision for an explicit retry.
         setError(
           commitError instanceof Error
             ? commitError.message
@@ -11968,7 +12015,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return false;
       }
     },
-    [applyProject, redoStack, restoreStructuralSnapshot, undoStack],
+    [applyProject, redoStack, undoStack],
   );
 
   const updateLogicPropertyOverride = useCallback(
@@ -12110,13 +12157,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setManualInspectorDrafts((current) => {
         const base = current[key]?.project ?? projectRef.current;
         if (!base) return current;
+        const draft = {
+          selection,
+          project: update(base),
+          dirty: true,
+        };
+        setAuthoringDraft(authoringDraftKey(base.projectId, key, "inspector"), JSON.stringify(draft));
         return {
           ...current,
-          [key]: {
-            selection,
-            project: update(base),
-            dirty: true,
-          },
+          [key]: draft,
         };
       });
     },
@@ -12133,6 +12182,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         mergeManualInspectorDraft(currentProject, draft),
       );
       if (saved) {
+        setAuthoringDraft(authoringDraftKey(currentProject.projectId, key, "inspector"), undefined);
         setManualInspectorDrafts((current) => {
           const next = { ...current };
           delete next[key];
@@ -12444,6 +12494,12 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         (candidate) => candidate.id === id,
       );
       if (!currentProject || !entity) return;
+      const usages = entityUsages(currentProject, id);
+      if (usages.length) {
+        setError(`${uiLocaleRef.current === "es" ? "Resuelve los usos antes de eliminar esta entidad" : "Resolve references before deleting this entity"}: ${usages.map(usage => usage.path).join(", ")}`);
+        setEventScriptWorkspace({ eventId: currentProject.events[0]?.id ?? "", tab: "entities", entityId: id });
+        return;
+      }
       if (!window.confirm(`Delete local entity \"${entity.name}\"?`)) return;
       const draftKey = manualInspectorDraftKey({ type: "explorerEntity", id });
       if (draftKey) {
@@ -12577,6 +12633,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (id: string) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
+      const usages = entityUsages(currentProject, id);
+      if (usages.length) { setError(`${uiLocaleRef.current === "es" ? "Resuelve los usos antes de eliminar esta propiedad" : "Resolve references before deleting this property"}: ${usages.map(usage => usage.path).join(", ")}`); return; }
       void commitStructuralAction("Deleted local Explorer property", {
         project: {
           ...currentProject,
@@ -12795,7 +12853,16 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [commitStructuralAction, fileState.universePath, markdownTabs],
   );
 
-  const confirmDiscardChanges = useCallback(async () => true, []);
+  const confirmDiscardChanges = useCallback(async () => {
+    try {
+      if (fileStateRef.current.dirty) await persistProjectRef.current?.();
+      else await saveQueueRef.current.catch(() => undefined);
+      return true;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      return false;
+    }
+  }, []);
 
   const setActiveSequence = useCallback(
     async (sequenceId: string) => {
@@ -13324,21 +13391,21 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setSettings((current) =>
         rememberRecentProject(current, currentFileState.universePath as string),
       );
-      setWorkspace((current) => {
-        const nextWorkspace = current
+      const nextWorkspace = workspaceRef.current
           ? {
               ...snapshot.nextWorkspace,
               activeProject: isStillCurrentRevision
                 ? snapshot.savedProject
-                : (projectRef.current ?? current.activeProject),
+                : (projectRef.current ?? workspaceRef.current.activeProject),
               createdDefaultStory: false,
             }
-          : current;
-        workspaceRef.current = nextWorkspace;
-        return nextWorkspace;
-      });
+          : workspaceRef.current;
+      workspaceRef.current = nextWorkspace;
+      setWorkspace(nextWorkspace);
       if (isStillCurrentRevision) {
         savedRevisionRef.current = saveRevision;
+        if (currentProject.storyId) clearAuthoringRecovery(currentFileState.universePath, currentProject.storyId);
+        setPendingRecovery(undefined);
       }
       setError(undefined);
       if (options.manual) {
@@ -13371,6 +13438,34 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   useEffect(() => {
     persistProjectRef.current = persistProject;
   }, [persistProject]);
+
+  useEffect(() => {
+    if (!isTauriRuntime() || (suiteChrome && !suiteChrome.active)) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let closing = false;
+    void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+      if (disposed) return;
+      const nativeWindow = getCurrentWindow();
+      unlisten = await nativeWindow.onCloseRequested(event => {
+        if (closing) return;
+        event.preventDefault();
+        void (async () => {
+          try {
+            if (fileStateRef.current.dirty) await persistProjectRef.current?.();
+            else await saveQueueRef.current.catch(() => undefined);
+            closing = true;
+            await nativeWindow.close();
+          } catch (failure) {
+            closing = false;
+            setError(failure instanceof Error ? failure.message : String(failure));
+          }
+        })();
+      });
+      if (disposed) unlisten();
+    }).catch(() => undefined);
+    return () => { disposed = true; unlisten?.(); };
+  }, [suiteChrome?.active]);
 
   const flushProjectAutosave = useCallback(() => {
     void persistProjectRef.current?.().catch(() => undefined);
@@ -13699,7 +13794,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       return;
     }
     const draftSelection = { type: "node" as const, id: ownerEventId };
-    const nextDraft = createEventDraftFromSelection(
+    const nextDraft = recoverEventDraft(project, ownerEventId) ?? createEventDraftFromSelection(
       project,
       draftSelection,
       eventDraft?.mode ?? "components",
@@ -14004,62 +14099,40 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       return;
     }
     const previous = undoStack[undoStack.length - 1];
-    const snapshot = {
-      project,
-      workspace: workspaceRef.current,
-      fileState: fileStateRef.current,
-      selection: selectionRef.current,
-      undoStack,
-      redoStack,
-      revision: projectRevisionRef.current,
-      savedRevision: savedRevisionRef.current,
-    };
     setUndoStack((current) => current.slice(0, -1));
-    setRedoStack((current) => [...current.slice(-9), project]);
+    setRedoStack((current) => [...current.slice(-199), project]);
     setActionHistory((current) => ["Undo", ...current].slice(0, 10));
-    applyProject(previous, { dirty: false, revision: true });
+    applyProject(previous, { dirty: true, revision: true });
     setMessage("Undo...");
     void persistProjectRef
       .current?.()
       .then(() => setMessage("Undo saved."))
       .catch((undoError) => {
-        restoreStructuralSnapshot(snapshot);
         setError(
           undoError instanceof Error ? undoError.message : String(undoError),
         );
       });
-  }, [applyProject, project, redoStack, restoreStructuralSnapshot, undoStack]);
+  }, [applyProject, project, redoStack, undoStack]);
 
   const redoProject = useCallback(() => {
     if (!project || redoStack.length === 0) {
       return;
     }
     const next = redoStack[redoStack.length - 1];
-    const snapshot = {
-      project,
-      workspace: workspaceRef.current,
-      fileState: fileStateRef.current,
-      selection: selectionRef.current,
-      undoStack,
-      redoStack,
-      revision: projectRevisionRef.current,
-      savedRevision: savedRevisionRef.current,
-    };
     setRedoStack((current) => current.slice(0, -1));
-    setUndoStack((current) => [...current.slice(-9), project]);
+    setUndoStack((current) => [...current.slice(-199), project]);
     setActionHistory((current) => ["Redo", ...current].slice(0, 10));
-    applyProject(next, { dirty: false, revision: true });
+    applyProject(next, { dirty: true, revision: true });
     setMessage("Redo...");
     void persistProjectRef
       .current?.()
       .then(() => setMessage("Redo saved."))
       .catch((redoError) => {
-        restoreStructuralSnapshot(snapshot);
         setError(
           redoError instanceof Error ? redoError.message : String(redoError),
         );
       });
-  }, [applyProject, project, redoStack, restoreStructuralSnapshot, undoStack]);
+  }, [applyProject, project, redoStack, undoStack]);
 
   useEffect(() => {
     if (suiteChrome && !suiteChrome.active) return;
@@ -17462,6 +17535,31 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [],
   );
 
+  useEffect(() => {
+    // The nonmodal editor and test drawer share the canvas in narrow windows.
+    if (eventScriptWorkspace) setPanelCollapsedState("player", true);
+  }, [eventScriptWorkspace, setPanelCollapsedState]);
+
+  useEffect(() => {
+    const locate = (event: Event) => {
+      const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      if (!id || !projectRef.current?.authoringScenarios?.some(scenario => scenario.id === id)) return;
+      setEventScriptWorkspace(undefined);
+      setPanelVisibility(current => ({ ...current, player: true }));
+      setPanelCollapsedState("player", false);
+      setRequestedAuthoringScenario(current => ({ id, revision: (current?.revision ?? 0) + 1 }));
+    };
+    window.addEventListener("pathbranching:locate-scenario", locate);
+    const locateNarrative = (event: Event) => {
+      const id = (event as CustomEvent<{ id: string }>).detail?.id;
+      const current = projectRef.current;
+      const target = current && authoringNodeOptions(current).find(node => node.id === id);
+      if (target && id) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
+    };
+    window.addEventListener("pathbranching:locate-narrative", locateNarrative);
+    return () => { window.removeEventListener("pathbranching:locate-scenario", locate); window.removeEventListener("pathbranching:locate-narrative", locateNarrative); };
+  }, [setPanelCollapsedState, navigateCanvasScope]);
+
   const focusScriptBlock = useCallback(
     (target: { scriptId: string; blockId: string }) => {
       setPanelVisibility((current) => ({ ...current, assets: true }));
@@ -17731,15 +17829,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       onUpdateSpeechBeatCounter={updateSpeechBeatCounter}
       onCanvasBackgroundChange={changeCanvasBackground}
       onNodeColorChange={changeNodeColors}
-      onThemeChange={changeTheme}
-      onToggleTheme={toggleTheme}
+      onThemeChange={suiteChrome?.suiteSettings?.onStyleChange ?? changeTheme}
+      onToggleTheme={suiteChrome?.suiteSettings?.onToggleStyleMode ?? toggleTheme}
       onInspectorTabCloseSelectsNextChange={changeInspectorTabCloseSelectsNext}
       onCollapseInspectorTabOnCanvasClickChange={
         changeCollapseInspectorTabOnCanvasClick
       }
       onInspectorDebugEnabledChange={changeInspectorDebugEnabled}
       onShowStatusMessagesChange={changeShowStatusMessages}
-      onLocalePreferenceChange={(localePreference) => setSettings((current) => ({ ...current, localePreference }))}
+      onLocalePreferenceChange={suiteChrome?.suiteSettings?.onLocalePreferenceChange ?? ((localePreference) => setSettings((current) => ({ ...current, localePreference })))}
       onOpenUniverse={openProject}
       onOpenRecentUniverse={openRecentProject}
       onRemoveRecentUniverse={removeRecentProject}
@@ -17948,7 +18046,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           locale={uiLocale}
           saveState={saveError ? "error" : saveInProgress ? "saving" : fileState.dirty ? "pending" : fileState.lastSavedAt ? "saved" : undefined}
           saveError={saveError}
-          hasUnappliedDraft={Boolean(eventDraft?.dirty || Object.values(manualInspectorDrafts).some((draft) => draft.dirty) || markdownTabs.some((tab) => tab.dirty))}
+          loadWarnings={workspace?.loadWarnings}
+          hasUnappliedDraft={Boolean(recoverableDraftCount || eventDraft?.dirty || Object.values(manualInspectorDrafts).some((draft) => draft.dirty) || markdownTabs.some((tab) => tab.dirty))}
           onRetrySave={() => { void persistProject({ manual: true }).catch(() => undefined); }}
           onOpenExportPanel={() => { setPanelVisibility((current) => ({ ...current, export: true })); setPanelCollapsedState("export", false); }}
           onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setStoriesWidth(DEFAULT_PANEL_WIDTH); setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 })); }}
@@ -17957,7 +18056,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         />
         {webPreviewBanner}
 
+        {workspace?.saveBlocked ? <div className="workspace-error-banner" role="alert"><span>{uiLocale === "es" ? "La carga está incompleta. El guardado se ha bloqueado para conservar los archivos." : "Loading is incomplete. Saving is blocked to preserve the files."}<details><summary>{uiLocale === "es" ? "Ver causas" : "View reasons"}</summary><ul>{workspace.saveBlockReasons?.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></span></div> : null}
         {error && error !== saveError ? <div className="workspace-error-banner" role="alert"><span>{error}</span><button type="button" onClick={() => setError(undefined)}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
+        {pendingRecovery ? <div className="workspace-error-banner" role="status"><span>{uiLocale === "es" ? "Hay una edición recuperable que no llegó a guardarse en disco." : "An unsaved editing session can be recovered."}</span><button type="button" onClick={() => { void commitStructuralAction("Recovered editing session", pendingRecovery.project); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Recuperar edición" : "Recover edits"}</button><button type="button" onClick={() => { if (fileState.universePath && project.storyId) clearAuthoringRecovery(fileState.universePath, project.storyId); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Descartar recuperación" : "Discard recovery"}</button></div> : null}
         <AdaptiveWorkspace resizing={panelResizing} requestedPanel={requestedPanel}
           onCollapsedChange={setPanelCollapsedState}
           panels={WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
@@ -18026,29 +18127,37 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onContextMenu={openPanelContextMenu}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
           /></WorkspacePanelSlot> : null}
-          {eventScriptWorkspace ? (
-            <EventScriptWorkspace
-              project={project}
-              eventId={eventScriptWorkspace.eventId}
-              breadcrumb={canvasBreadcrumb(project, { kind: "event", id: eventScriptWorkspace.eventId }).map((crumb) => ({
-                label: crumb.label,
-                onClick: () => {
-                  setEventScriptWorkspace(undefined);
-                  navigateCanvasScope(crumb.scope, { type: "node", id: crumb.scope.id });
-                },
-              }))}
-              onApplyEvpath={applyEvpath}
-            />
-          ) : !workspace?.activeStory?.id ? (
+          {!workspace?.activeStory?.id ? (
             <StoryCreationEmptyState kind="story" onOpenStories={openStoriesForOnboarding} />
           ) : !activeSequenceId(project) ? (
             <StoryCreationEmptyState kind="sequence" />
           ) : <StoryCanvas
             project={project}
+            onToggleAuthoring={() => {
+              if (!eventScriptWorkspace) setPanelCollapsedState("player", true);
+              setEventScriptWorkspace(current => current ? undefined : { eventId: authoringNodeOptions(project).find(n => n.id === selection?.id)?.eventId ?? (activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : project.events[0]?.id ?? "") });
+            }}
+            authoringWorkspace={eventScriptWorkspace ? <AuthoringWorkspace
+              project={project}
+              initialTab={eventScriptWorkspace.tab}
+              initialEntityId={eventScriptWorkspace.entityId}
+              initialFocusId={eventScriptWorkspace.focusId}
+              eventId={authoringNodeOptions(project).find(n => n.id === selection?.id)?.eventId ?? (activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : eventScriptWorkspace.eventId)}
+              dialogueId={authoringNodeOptions(project).find(n => n.id === selection?.id)?.dialogueId ?? (activeScope?.kind === "dialogue" ? activeScope.id : undefined)}
+              selectedNodeId={selection?.id}
+              onMutation={async mutate => { if (projectRef.current) await commitStructuralAction("Updated story", mutate(projectRef.current)); }}
+              onSelect={id => {
+                const target = authoringNodeOptions(projectRef.current ?? project).find(n => n.id === id);
+                if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
+                else setSelection({ type: "node", id });
+              }}
+              onClose={() => setEventScriptWorkspace(undefined)}
+              onTest={() => { setEventScriptWorkspace(undefined); setPanelVisibility(current => ({ ...current, player: true })); setPanelCollapsedState("player", false); }}
+            /> : undefined}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             files={files}
-            nodes={nodes}
-            edges={edges}
+            nodes={nodes.map(node => ({ ...node, className: [node.className, node.id === testPosition ? "authoring-position-active" : testVisited.includes(node.id) ? "authoring-route-active" : ""].filter(Boolean).join(" ") }))}
+            edges={edges.map(edge => ({ ...edge, className: [edge.className, testVisited.some((id, index) => id === edge.source && testVisited[index + 1] === edge.target) ? "authoring-route-active" : ""].filter(Boolean).join(" ") }))}
             selection={selection}
             findings={findings}
             message={message}
@@ -18194,6 +18303,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onCollapsedChange={(collapsed) => setPanelCollapsedState("player", collapsed)}
             onContextMenu={openPanelContextMenu}
             onUpdate={(nextProject) => updateProject(nextProject)}
+            selectedNodeId={selection?.id}
+            requestedScenario={requestedAuthoringScenario}
+            onPosition={(id, visited) => { setTestPosition(id); setTestVisited(visited); }}
+            onLocate={id => {
+              const target = authoringNodeOptions(projectRef.current ?? project).find(node => node.id === id);
+              if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
+              else setSelection({ type: "node", id });
+            }}
           /></WorkspacePanelSlot> : null}
           {panelVisibility.export ? <WorkspacePanelSlot id="export" side="right" title={uiCopy.exportImport}><ExportPanel
             project={project}
