@@ -312,6 +312,9 @@ type ModularStoryFile = {
   externalFunctions?: BranchingProject["externalFunctions"];
   variables?: BranchingProject["variables"];
   engineTargets?: BranchingProject["engineTargets"];
+  logicVariables?: BranchingProject["logicVariables"];
+  logicVariableGroups?: BranchingProject["logicVariableGroups"];
+  logicTypeOverrides?: BranchingProject["logicTypeOverrides"];
   logicPropertyOverrides?: BranchingProject["logicPropertyOverrides"];
   localExplorerEntities?: BranchingProject["localExplorerEntities"];
   localExplorerTypes?: BranchingProject["localExplorerTypes"];
@@ -493,6 +496,9 @@ function parseModularStoryProject(
     externalFunctions: parsedStory.externalFunctions ?? [],
     variables: parsedStory.variables ?? {},
     engineTargets: parsedStory.engineTargets,
+    logicVariables: parsedStory.logicVariables,
+    logicVariableGroups: parsedStory.logicVariableGroups,
+    logicTypeOverrides: parsedStory.logicTypeOverrides,
     logicPropertyOverrides: parsedStory.logicPropertyOverrides ?? [],
     localExplorerEntities: parsedStory.localExplorerEntities ?? [],
     localExplorerTypes: parsedStory.localExplorerTypes ?? [],
@@ -535,6 +541,8 @@ function reconcileEventEvpathFiles(
       );
       continue;
     }
+    for (const warning of applied.warnings) loadWarnings?.push(`${event.name}: ${warning}`);
+    if (evpathFile.content.includes('{ #')) loadWarnings?.push(`${event.name}: lógica opaca; se conserva el JSON original.`);
     if (!applied.changed) continue;
     // The `.evpath` diverged from the JSON (an external edit). Adopt it only if
     // re-serializing the applied event reaches a fixed point.
@@ -720,6 +728,9 @@ export function serializeModularStoryFiles(
     externalFunctions: project.externalFunctions,
     variables: project.variables,
     engineTargets: project.engineTargets,
+    logicVariables: project.logicVariables,
+    logicVariableGroups: project.logicVariableGroups,
+    logicTypeOverrides: project.logicTypeOverrides,
     logicPropertyOverrides: project.logicPropertyOverrides,
     localExplorerEntities: project.localExplorerEntities,
     localExplorerTypes: project.localExplorerTypes,

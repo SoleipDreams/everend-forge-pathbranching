@@ -10,7 +10,8 @@
     "stage:bridge-runtime": "node scripts/stage-bridge-runtime.mjs",
     "typecheck": "node scripts/run-tsc.mjs --noEmit",
     "build:core": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && node scripts/run-tsc.mjs -p tsconfig.build.json",
-    "verify:core": "npm run build:core && node scripts/verify-browser-universe.mjs && node scripts/verify-node-placement.mjs && node scripts/verify-unified-logic.mjs && node scripts/verify-core.mjs && node scripts/verify-narrative-integration.mjs && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs && node scripts/verify-dialogue-nodes.mjs && node scripts/verify-event-script-sections.mjs && node scripts/verify-worldnotion-yaml-import.mjs && node scripts/verify-story-outline.mjs && node scripts/verify-canon-change-workflow.mjs && node scripts/verify-inspector-tabs.mjs && node scripts/verify-subcanvas-routing.mjs && node scripts/verify-twine-import-export.mjs && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs",
+    "verify:core": "npm run build:core && node scripts/verify-browser-universe.mjs && node scripts/verify-node-placement.mjs && node scripts/verify-unified-logic.mjs && node scripts/verify-core.mjs && node scripts/verify-narrative-integration.mjs && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs && node scripts/verify-dialogue-nodes.mjs && node scripts/verify-event-script-sections.mjs && node scripts/verify-worldnotion-yaml-import.mjs && node scripts/verify-story-outline.mjs && node scripts/verify-canon-change-workflow.mjs && node scripts/verify-inspector-tabs.mjs && node scripts/verify-subcanvas-routing.mjs && node scripts/verify-twine-import-export.mjs && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs && node scripts/verify-conditions.mjs",
+    "verify:conditions": "npm run build:core && node scripts/verify-conditions.mjs",
     "verify:twine": "npm run build:core && node scripts/verify-twine-import-export.mjs",
     "verify:evpath": "npm run build:core && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs",
     "verify:persistence": "npm run build:core && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs",
@@ -23,6 +24,7 @@
     "@tauri-apps/cli": "^2.11.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "inkjs": "2.4.0",
     "typescript": "~5.8.3",
     "vite": "^8.0.16"
   },

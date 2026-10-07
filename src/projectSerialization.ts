@@ -633,7 +633,10 @@ function normalizeLogicVariables(project: BranchingProject, groups: LogicVariabl
     while (seen.has(name)) name = `${baseName}_${suffix++}`;
     seen.add(name);
     const type = ["text", "number", "boolean", "list", "canonRef"].includes(variable.type) ? variable.type : "text";
-    const value = type === "list" ? (Array.isArray(variable.value) ? variable.value.map(String) : []) : type === "number" ? (typeof variable.value === "number" && Number.isFinite(variable.value) ? variable.value : Number(variable.value) || 0) : type === "boolean" ? (typeof variable.value === "boolean" ? variable.value : variable.value === "true") : String(variable.value ?? "");
+    // Migrate only unambiguous legacy scalars; preserve malformed values for diagnostics.
+    let value = variable.value;
+    if (type === 'number' && typeof value === 'string' && /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim()) && Number.isFinite(Number(value))) value = Number(value);
+    if (type === 'boolean' && (value === 'true' || value === 'false')) value = value === 'true';
     return { ...variable, id: variable.id || `variable:${name}`, name, type, value, groupId: groups.some((group) => group.id === variable.groupId) ? variable.groupId : "ungrouped" } as LogicVariable;
   });
 }

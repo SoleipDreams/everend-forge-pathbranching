@@ -10616,3 +10616,13 @@ button:disabled {
   .canvas-modebar { max-width: calc(100% - 24px); }
   .canvas-layer-switch { top: calc(var(--canvas-floating-gap) + 43px); }
 }
+
+.condition-tree-group { border: 1px solid var(--border-color, #64748b); margin: 8px 0; padding: 8px; min-width: 0; }
+.condition-tree-leaf { margin: 6px 0; padding-left: 4px; }
+.condition-tester { margin-top: 10px; border-top: 1px solid var(--border-color, #64748b); padding-top: 8px; }
+.condition-tester label { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; align-items: center; }
+.condition-tester textarea { width: 100%; min-height: 100px; font-family: monospace; }
+.condition-result { margin: 5px 0; overflow-wrap: anywhere; }
+.condition-result.satisfied > strong { color: #32a672; }
+.condition-result.unsatisfied > strong { color: #dc9365; }
+.condition-result.invalid > strong, .condition-result.unresolved > strong { color: #df6b78; }

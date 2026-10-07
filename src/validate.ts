@@ -1,5 +1,6 @@
+import { conditionStructureIssues, conditionValueMatchesType } from "./conditionEvaluation.js";
 import type { BranchingProject, ConditionInput, Consequence, EventNode, LogicEffect, LogicPredicate, ScriptBlock, ValidationFinding } from "./domain.js";
-import { conditionInputsFromConsequences, walkConditions } from "./logic.js";
+import { effectiveConditions, orderedTransitions, conditionInputsFromConsequences, walkConditions } from "./logic.js";
 import { mappingsForCanonRef } from "./integrationConfig.js";
 import { entitySupportsDialogueTrigger } from "./explorerSchema.js";
 import { logicEffectOperations, logicOperatorsFor, resolveLogicField } from "./logicCapabilities.js";
@@ -73,6 +74,9 @@ function validateTypedPredicate(
 ) {
   const { project } = projectRefs;
   const subject = predicate.subject;
+  if (!subject || typeof subject !== 'object') {
+    findings.push(finding('invalid_condition','error',`${context} has no subject.`,{id:ownerId})); return;
+  }
   if (subject.kind === "external" && !project.externalFunctions.some((externalFunction) => externalFunction.name === subject.functionId)) {
     findings.push(finding("invalid_condition", "error", `${context} references missing external function "${subject.functionId}".`, { id: ownerId, ref: subject.functionId }));
     return;
@@ -97,6 +101,9 @@ function validateTypedPredicate(
   const field = resolveLogicField(project, predicate.subject, "condition", fieldKind, fieldId);
   if (field.status !== "enabled") {
     findings.push(finding("invalid_condition", "error", `${context} uses unavailable ${field.kind} "${fieldId}" (${field.status}).`, { id: ownerId, ref: fieldId }));
+  }
+  if (!['has','missing','exists'].includes(predicate.operator) && 'value' in predicate && !conditionValueMatchesType(predicate.value, ['contains','notContains'].includes(predicate.operator)?'text':field.valueType)) {
+    findings.push(finding('invalid_condition','error',`${context} has a value incompatible with ${field.valueType ?? 'scalar/list type'}.`,{id:ownerId,ref:fieldId}));
   }
   if (!logicOperatorsFor(field).includes(predicate.operator)) {
     findings.push(finding("invalid_condition", "error", `${context} uses incompatible operator "${predicate.operator}" for "${fieldId}".`, { id: ownerId, ref: fieldId }));
@@ -128,6 +135,9 @@ function validateConditionRefs(
   context: string,
   conditions: ConditionInput | undefined,
 ) {
+  const structureIssues = conditionStructureIssues(conditions);
+  structureIssues.forEach(issue => findings.push(finding('invalid_condition', 'error', `${context} ${issue.path}: ${issue.message}`, {id:ownerId})));
+  if (structureIssues.length) return;
   walkConditions(conditions, (condition, path) => {
     if ("subject" in condition) {
       validateTypedPredicate(findings, projectRefs, ownerId, `${context} ${path}`, condition as LogicPredicate);
@@ -576,7 +586,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
         canonIds,
         decision.id,
         `Decision "${decision.id}" in event "${event.id}" availability`,
-        decision.availability,
+        effectiveConditions(decision),
       );
       decision.outcomes.forEach((outcome) => {
         outcome.requiredCanonRefs?.forEach((canonRef) => {
@@ -594,7 +604,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
           canonIds,
           outcome.id,
           `Outcome "${outcome.id}" in decision "${decision.id}" condition`,
-          outcome.availability ?? outcome.conditions,
+          effectiveConditions(outcome),
         );
         validateConsequenceCanonRefs(
           findings,
@@ -669,7 +679,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
           );
         }
       });
-      validateConditionRefs(findings, projectRefs, canonIds, beat.id, `Dialogue beat "${beat.id}" display condition`, beat.displayCondition);
+      validateConditionRefs(findings, projectRefs, canonIds, beat.id, `Dialogue beat "${beat.id}" display condition`, effectiveConditions(beat));
       validateConsequenceCanonRefs(findings, projectRefs, canonIds, beat.id, `Dialogue beat "${beat.id}" consequence`, beat.consequences);
     };
 
@@ -685,7 +695,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
         canonIds,
         dialogue.id,
         `Dialogue "${dialogue.id}" in event "${event.id}" availability`,
-        dialogue.availability,
+        effectiveConditions(dialogue),
       );
       validateConsequenceCanonRefs(findings, projectRefs, canonIds, dialogue.id, `Dialogue "${dialogue.id}" consequence`, dialogue.consequences);
       (dialogue.beats ?? []).forEach(validateDialogueBeat);
@@ -753,7 +763,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
           }),
         );
       }
-      const transitionWhen = transition.logic?.when ?? transition.conditions;
+      const transitionWhen = effectiveConditions(transition);
       const transitionThen = transition.logic?.then ?? transition.consequences;
       if (
         transition.role === "flow" &&
@@ -782,7 +792,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       );
     });
     transitionGroups.forEach((transitions, sourceId) => {
-      const ordered = [...transitions].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const ordered = orderedTransitions(transitions);
       const fallbacks = transitions.filter((transition) => transition.mode === "fallback");
       if (fallbacks.length > 1) {
         findings.push(finding("duplicate_fallback", "error", `${validationNodeLabel(project, sourceId)} has more than one fallback transition.`, { id: sourceId }));
@@ -792,7 +802,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
         findings.push(finding("invalid_transition_order", "error", `${validationNodeLabel(project, sourceId)} has duplicate or invalid transition order values.`, { id: sourceId }));
       }
       const unconditionalIndex = ordered.findIndex(
-        (transition) => transition.mode !== "fallback" && !(transition.logic?.when ?? transition.conditions),
+        (transition) => transition.mode !== "fallback" && !effectiveConditions(transition),
       );
       if (unconditionalIndex >= 0 && unconditionalIndex < ordered.length - 1) {
         findings.push(finding("invalid_transition_order", "warning", `${validationNodeLabel(project, sourceId)} has an unconditional route before later transitions; those routes are unreachable.`, { id: sourceId }));
@@ -933,5 +943,13 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     }
   });
 
+  for (const variable of project.logicVariables ?? []) {
+    if (!conditionValueMatchesType(variable.value, variable.type)) findings.push(finding('invalid_condition','error',`Variable "${variable.name}" has an ambiguous or incompatible ${variable.type} value; original value preserved.`,{id:variable.id}));
+  }
+  const owners = [...project.sequences,...project.branches,...project.events.flatMap(e=>[e,...(e.transitions ?? []),...(e.dialogueBeats ?? []),...(e.dialogueStarts ?? []),...(e.dialogues ?? []).flatMap(d=>[d,...(d.beats ?? [])]),...(e.decisions ?? []).flatMap(d=>[d,...d.outcomes])]),...(project.projectDataObjects ?? [])];
+  for (const owner of owners) for (const rule of owner.logic?.rules ?? []) {
+    validateConditionRefs(findings,projectRefs,canonIds,owner.id,`Rule ${rule.id} in ${owner.id}`,rule.when);
+    validateConsequenceCanonRefs(findings,projectRefs,canonIds,owner.id,`Rule ${rule.id} in ${owner.id}`,rule.then);
+  }
   return findings;
 }

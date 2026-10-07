@@ -178,7 +178,7 @@ function inferredEntityValueType(project: BranchingProject, subject: LogicSubjec
   if (subject.kind !== "entity") return undefined;
   const canon = project.canonRefs.find((item) => item.id === subject.entityId);
   const local = project.localExplorerEntities?.find((item) => item.id === subject.entityId);
-  const value = canon?.properties?.[propertyId] ?? canon?.frontmatter?.[propertyId] ?? local?.properties?.[propertyId];
+  const value = canon?.properties?.[propertyId] ?? canon?.frontmatter?.[propertyId] ?? local?.properties?.[propertyId] ?? (local as unknown as { fields?: Record<string, unknown> } | undefined)?.fields?.[propertyId];
   if (Array.isArray(value)) return "list";
   if (typeof value === "number") return "number";
   if (typeof value === "boolean") return "boolean";
@@ -204,7 +204,8 @@ export function resolveLogicField(
     return { key: "value", label: "Value", kind: "value", valueType: variable?.type, status: variable ? "enabled" : "missing" };
   }
   if (subject.kind === "progress") {
-    const exists = subject.targetType === "event" ? project.events.some((item) => item.id === subject.targetId) : true;
+    const targets = subject.targetType === 'event' ? project.events : subject.targetType === 'sequence' ? project.sequences : subject.targetType === 'branch' ? project.branches : subject.targetType === 'decision' ? project.events.flatMap(e => e.decisions ?? []) : project.events.flatMap(e => (e.decisions ?? []).flatMap(d => d.outcomes));
+    const exists = targets.some(item => item.id === subject.targetId);
     return { key: "visited", label: "Visited", kind: "visited", valueType: "boolean", status: purpose === "effect" ? "incompatible" : exists ? "enabled" : "missing" };
   }
   if (subject.kind === "dataObject") {
@@ -278,9 +279,10 @@ export function logicFieldOptions(
 }
 
 export function logicOperatorsFor(field: LogicFieldOption): LogicComparisonOperator[] {
-  if (field.kind === "state" || field.kind === "visited" || field.kind === "external") return ["has", "missing"];
+  if (field.kind === "state") return ["has", "missing", "==", "!="];
+  if (field.kind === "visited" || field.kind === "external") return ["has", "missing"];
   if (field.valueType === "number" || field.valueType === "date") return ["==", "!=", ">", ">=", "<", "<=", "exists", "missing"];
-  if (field.valueType === "list" || field.valueType === "multiselect" || field.valueType === "entity-ref-list") return ["contains", "notContains", "exists", "missing"];
+  if (field.valueType === "list" || field.valueType === "multiselect" || field.valueType === "entity-ref-list") return ["contains", "notContains", "==", "!=", "exists", "missing"];
   if (field.valueType === "boolean") return ["==", "!=", "exists", "missing"];
   return ["==", "!=", "contains", "notContains", "exists", "missing"];
 }
@@ -305,8 +307,8 @@ export function logicPredicateFor(subject: LogicSubject, field: LogicFieldOption
   if (field.kind === "external" && subject.kind === "external") return { type: "external", subject, operator: "has" };
   if (field.kind === "state") return { type: "state", subject, stateId: field.key, operator: "has" };
   if (field.kind === "visited" && subject.kind === "progress") return { type: "visited", subject, operator: "has" };
-  if (field.kind === "value") return { type: "value", subject, operator: "==", value: true };
-  return { type: "property", subject, propertyId: field.key, operator: logicOperatorsFor(field)[0] ?? "==", value: "" };
+  if (field.kind === "value") return { type: "value", subject, operator: "==", value: undefined };
+  return { type: "property", subject, propertyId: field.key, operator: logicOperatorsFor(field)[0] ?? "==", value: undefined };
 }
 
 export function logicEffectFor(subject: LogicSubject, field: LogicFieldOption): LogicEffect {

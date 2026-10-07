@@ -1,5 +1,6 @@
 import { Download, FileCode2, FileUp, Package } from "lucide-react";
 import { useRef, useState, type ChangeEvent, useMemo, type MouseEvent as ReactMouseEvent } from "react";
+import { exportRuntimePackage } from "../exportRuntime.js";
 import { buildExportPreview, type ExportPreviewMode } from "../exportPreview.js";
 import type { BranchingProject } from "../domain.js";
 import { inspectTwineHtml, TWINE_FORMAT, TWINE_FORMAT_VERSION } from "../twineFormat.js";
@@ -11,6 +12,8 @@ export function ExportPanel({ project, collapsed, onCollapsedChange, onContextMe
   onImportTwine: (source: string, fileName: string) => void;
 }) {
   const preview = useMemo(() => buildExportPreview(project, "runtime"), [project]);
+  let legacyError = '';
+  try { exportRuntimePackage(project,{profile:'legacy'}); } catch(error) { legacyError=String(error); }
   const inputRef = useRef<HTMLInputElement>(null);
   const [twineFile, setTwineFile] = useState<{ name: string; source: string; summary: ReturnType<typeof inspectTwineHtml> }>();
   const [twineError, setTwineError] = useState<string>();
@@ -50,8 +53,12 @@ export function ExportPanel({ project, collapsed, onCollapsedChange, onContextMe
     ) : (
       <div id="export-view" className="export-panel-list" role="tabpanel" aria-labelledby="export-tab">
         <button type="button" className="export-target" onClick={() => onExport("twine")}><FileCode2 size={16} /><span><strong>Twine 2 / SugarCube</strong><small>HTML · {preview.runtimePackage.nodes.length} passages</small></span><Download size={14} /></button>
-        <button type="button" className="export-target" onClick={() => onExport("runtime")}><Package size={16} /><span><strong>Runtime Package</strong><small>{preview.runtimePackage.nodes.length} nodes · JSON</small></span><Download size={14} /></button>
-        <button type="button" className="export-target" onClick={() => onExport("ink")}><FileCode2 size={16} /><span><strong>Ink</strong><small>{preview.inkExport.files.length} files · preview ready</small></span><Download size={14} /></button>
+        <button type="button" className="export-target" onClick={() => onExport("runtime")}><Package size={16} /><span><strong>Runtime Package · Enhanced</strong><small>{preview.runtimePackage.nodes.length} nodes · JSON</small></span><Download size={14} /></button>
+        <button type="button" className="export-target" disabled={Boolean(legacyError)} title={legacyError} onClick={()=>onExport('runtimeLegacy')}>Runtime Package · Legacy</button>
+        {legacyError?<p className="format-note">{legacyError}</p>:null}
+        <p className="format-note">Twine y GameData conservan los datos disponibles; la equivalencia completa de condiciones y consecuencias no está garantizada.</p>
+        {preview.inkExport.diagnostics?.map((d,i)=><p role="status" className="format-status error" key={i}>{d.location}: {d.message}</p>)}
+        <button type="button" className="export-target" disabled={Boolean(preview.inkExport.diagnostics?.length)} onClick={() => onExport("ink")}><FileCode2 size={16} /><span><strong>Ink</strong><small>{preview.inkExport.files.length} files · executable conditions</small></span><Download size={14} /></button>
         <button type="button" className="export-target" onClick={() => onExport("gameData")}><FileCode2 size={16} /><span><strong>SINPO / Game Data</strong><small>JSON · preview ready</small></span><Download size={14} /></button>
         <section className="coming-soon-card"><strong>More formats</strong><span>Coming soon · configurable adapters</span></section>
       </div>

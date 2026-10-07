@@ -3,7 +3,7 @@ import { exportInkProject, exportSinpoGameData, type InkProjectExport, type Sinp
 import { exportRuntimePackage } from "./exportRuntime.js";
 import { exportTwineHtml } from "./twineFormat.js";
 
-export type ExportPreviewMode = "runtime" | "ink" | "gameData" | "twine";
+export type ExportPreviewMode = "runtime" | "runtimeLegacy" | "ink" | "gameData" | "twine";
 
 export type ExportPreviewBundle = {
   mode: ExportPreviewMode;
@@ -15,12 +15,13 @@ export type ExportPreviewBundle = {
 };
 
 export function buildExportPreview(project: BranchingProject, mode: ExportPreviewMode): ExportPreviewBundle {
-  const runtimePackage = exportRuntimePackage(project);
+  const runtimePackage = exportRuntimePackage(project, {profile:mode==="runtimeLegacy"?"legacy":"enhanced"});
   const inkExport = exportInkProject(project);
   const gameDataExport = exportSinpoGameData(project);
   const inkContent = inkExport.files.map((file) => `// ${file.path}\n${file.content}`).join("\n\n");
 
   if (mode === "ink") {
+    if (inkExport.diagnostics?.length) throw Error(inkExport.diagnostics.map(d=>`${d.location}: ${d.message}`).join("\n"));
     return {
       mode,
       runtimePackage,

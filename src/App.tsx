@@ -29,7 +29,7 @@ import { DataDrawer } from "./components/DataDrawer.js";
 import { ReferencePicker } from "./components/ReferencePicker.js";
 import { AssetsPanel } from "./components/AssetsPanel.js";
 import { LogicPanel } from "./components/LogicPanel.js";
-import { LogicConditionEditor, LogicEffectEditor } from "./components/LogicComposer.js";
+import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
 import { PlayerPanel } from "./components/PlayerPanel.js";
 import { ExportPanel } from "./components/ExportPanel.js";
 import { EventScriptWorkspace } from "./components/EventScriptWorkspace.js";
@@ -6984,13 +6984,8 @@ function Inspector({
             />
             ) : null}
             {objectInspectorTab === "consequences" ? (
-            <ConsequenceEditor
-              project={project}
-              value={event.consequences}
-              contextEntityIds={event.presentEntityRefs ?? event.canonRefs}
-              grantableOptions={grantableOptionsList}
-              onChange={(consequences) => onUpdateEvent(event.id, { consequences })}
-            />
+            <LogicMomentEditor project={project} hideWhen value={event.logic} onChange={logic=>onUpdateEvent(event.id,{logic})}/>
+
             ) : null}
             {objectInspectorTab === "choices" ? <>
             <section className="inspector-section">
@@ -7214,7 +7209,7 @@ function Inspector({
               </div>
               </> : null}
             </section>
-            {objectInspectorTab === "logic" ? <InDevelopmentPlaceholder title="Decision logic" /> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDecisionContext.decision.logic} onChange={logic=>onUpdateDecision(selectedDecisionContext.eventId,selectedDecisionContext.decision!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7401,7 +7396,7 @@ function Inspector({
               </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <InDevelopmentPlaceholder title="Speech beat logic" /> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDialogueBeatContext.beat.logic} onChange={logic=>selectedDialogueBeatContext.dialogueId?onUpdateDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.dialogueId,selectedDialogueBeatContext.beat.id,{logic}):onUpdateEventDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.beat.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7530,7 +7525,7 @@ function Inspector({
                 )}
               </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <InDevelopmentPlaceholder title="Dialogue logic" /> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedDialogueContext.dialogue.logic} onChange={logic=>onUpdateDialogue(selectedDialogueContext.eventId,selectedDialogueContext.dialogue!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7689,7 +7684,7 @@ function Inspector({
               </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <InDevelopmentPlaceholder title="Outcome logic" /> : null}
+            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} value={selectedOutcomeContext.outcome.logic} onChange={logic=>onUpdateOutcome(selectedOutcomeContext.eventId,selectedOutcomeContext.decisionId,selectedOutcomeContext.outcome!.id,{logic})}/> : null}
           </>
         ) : null}
 
@@ -7840,14 +7835,7 @@ function Inspector({
                       compact
                       onChange={(conditions) => onUpdateTransition(route.id, { conditions })}
                     /> : <p className="route-gate-fallback-copy">Runs when no preceding IF route matches.</p>
-                  ) : <ConsequenceEditor
-                    project={project}
-                    title="THEN"
-                    value={route.consequences}
-                    grantableOptions={grantableOptionsList}
-                    compact
-                    onChange={(consequences) => onUpdateTransition(route.id, { consequences })}
-                  />}
+                  ) : <LogicMomentEditor project={project} hideWhen value={route.logic} onChange={logic=>onUpdateTransition(route.id,{logic,conditions:logic.when,consequences:logic.then})}/>}
                 </div>;
               })() : null}
             </> : null}
@@ -7991,14 +7979,7 @@ function Inspector({
               </>
             ) : null}
             {selectedTransition && transitionInspectorTab === "consequences" ? (
-              <ConsequenceEditor
-                project={project}
-                value={selectedTransition.consequences}
-                grantableOptions={grantableOptionsList}
-                onChange={(consequences) =>
-                  onUpdateTransition(selectedTransition.id, { consequences })
-                }
-              />
+              <LogicMomentEditor project={project} hideWhen value={selectedTransition.logic} onChange={logic=>onUpdateTransition(selectedTransition.id,{logic,conditions:logic.when,consequences:logic.then})}/>
             ) : null}
             {!selectedTransition ? (
               <LogicSection
@@ -14043,7 +14024,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const result =
           mode === "ink"
             ? await exportTextDialog(preview.content, preview.defaultName)
-            : mode === "gameData"
+            : mode === "gameData" || mode === "twine"
               ? await exportTextDialog(preview.content, preview.defaultName)
               : await exportRuntimeDialog(preview.runtimePackage);
         if (!result) {

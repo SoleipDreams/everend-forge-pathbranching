@@ -23,3 +23,6 @@ export * from "./worldnotionBridge.js";
 export * from "./utils/appEnvironment.js";
 // The React app entry (App.tsx and its asset imports) lives in ./react.js so
 // this barrel stays loadable under plain Node (verify scripts, build:core).
+
+export * from "./conditionEvaluation.js";
+export * from "./conditionEditing.js";

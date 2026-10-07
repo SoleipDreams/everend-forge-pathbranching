@@ -6,22 +6,24 @@ import type {
   RuntimePackage,
   SceneImageAttachment,
 } from "./domain.js";
-import { orderedTransitions } from "./logic.js";
+import { combineConditions, effectiveConditions, orderedTransitions } from "./logic.js";
 import { UNKNOWN_SPEAKER_REF } from "./speakerRoles.js";
 
-function eventChoices(event: EventNode): RuntimeChoice[] | undefined {
+function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[] | undefined {
   const outcomeChoices: RuntimeChoice[] = (event.decisions ?? []).flatMap((decision) =>
     decision.outcomes.map((outcome) => {
       const outcomeNodeId = `outcome:${event.id}:${decision.id}:${outcome.id}`;
-      const transition = orderedTransitions(
-        (event.transitions ?? []).filter((candidate) => candidate.from === outcomeNodeId),
-      )[0];
+      const routes = orderedTransitions((event.transitions ?? []).filter(candidate => candidate.from === outcomeNodeId));
+      const direct = routes.length === 1 && !effectiveConditions(routes[0]) && !routes[0].consequences?.length && !routes[0].logic;
+      const routerId = `route:${outcomeNodeId}`;
+      if (!direct) routers.push({id:routerId,type:'route',canonRefDetails:[],automaticTransitions:routes.map(route=>({...route,conditions:effectiveConditions(route),consequences:route.logic?.then ?? route.consequences}))});
       return {
         id: outcome.id,
         textKey: `outcome.${outcome.id}.text`,
-        targetNodeId: transition?.to ?? event.id,
-        conditions: outcome.logic?.when ?? outcome.availability ?? outcome.conditions,
-        consequences: outcome.logic?.then ?? outcome.consequences,
+        targetNodeId: direct ? routes[0].to : routerId,
+        conditions: combineConditions(effectiveConditions(decision), effectiveConditions(outcome)),
+        consequences: [...(decision.logic?.then ?? []), ...(outcome.logic?.then ?? outcome.consequences ?? [])],
+        containerLogic: decision.logic,
         logic: outcome.logic,
         unavailableBehavior: outcome.unavailableBehavior ?? "locked",
         lockTextKey: outcome.lockText?.content ? `outcome.${outcome.id}.lock` : undefined,
@@ -32,7 +34,10 @@ function eventChoices(event: EventNode): RuntimeChoice[] | undefined {
   return outcomeChoices.length ? outcomeChoices : undefined;
 }
 
-export function exportRuntimePackage(project: BranchingProject): RuntimePackage {
+export type RuntimeExportProfile = 'enhanced' | 'legacy';
+export function exportRuntimePackage(project: BranchingProject, options: {profile?: RuntimeExportProfile} = {}): RuntimePackage {
+  const routers: RuntimeNode[] = [];
+
   const entrySequence = project.entrySequenceId
     ? project.sequences.find((sequence) => sequence.id === project.entrySequenceId)
     : project.sequences[0];
@@ -71,8 +76,10 @@ export function exportRuntimePackage(project: BranchingProject): RuntimePackage 
     id: event.id,
     type: "event",
     textKey: `event.${event.id}.name`,
-    choices: eventChoices(event),
-    conditions: event.logic?.when ?? event.availability,
+    choices: eventChoices(event, routers),
+    conditions: combineConditions(
+      ...project.sequences.filter(s=>s.eventIds.includes(event.id)).map(effectiveConditions),
+      ...project.branches.filter(b=>b.eventIds.includes(event.id)).map(effectiveConditions), effectiveConditions(event)),
     canonRefs: event.canonRefs,
     canonRefDetails: canonRefDetails(event.canonRefs),
     storyText: event.text,
@@ -159,7 +166,10 @@ export function exportRuntimePackage(project: BranchingProject): RuntimePackage 
       (event.transitions ?? []).filter((transition) => transition.from === `dialogue-start:${event.id}:${start.id}`),
     ),
   })));
-  const nodes = [...eventNodes, ...dialogueNodes, ...directBeatNodes, ...dialogueStartNodes];
+  const nodes = [...eventNodes, ...dialogueNodes, ...directBeatNodes, ...dialogueStartNodes, ...routers];
+  if (new Set(nodes.map(n=>n.id)).size !== nodes.length) throw Error("Runtime: duplicate node or generated route ID");
+  const requiredFeatures = ["typed-condition-tree-v1", "ordered-routes-v1", "logic-rules-v1", ...(routers.length ? ["dynamic-choice-routing-v1"] : [])];
+  if (options.profile === "legacy" && (routers.length || JSON.stringify(project).includes('"logic"') || project.events.some(e=>e.transitions?.some(t=>effectiveConditions(t))))) throw Error("Legacy runtime cannot preserve conditional logic; use the enhanced profile.");
 
   const legacyPrimary = {
     ...Object.fromEntries(project.events.flatMap((event) => [
@@ -194,6 +204,13 @@ export function exportRuntimePackage(project: BranchingProject): RuntimePackage 
     localizations,
     nodes,
     pathBranching: {
+      profile: options.profile ?? "enhanced",
+      requiredFeatures,
+      logicVariables: project.logicVariables,
+      localExplorerEntities: project.localExplorerEntities,
+      localExplorerProperties: project.localExplorerProperties,
+      resolutionPolicy: "first-satisfied-then-else; stop-on-unresolved-or-invalid",
+      formatLimitations: ["Twine and GameData do not guarantee condition/consequence equivalence"],
       projectId: project.projectId,
       sourceVault: project.sourceVault,
       dataClasses: project.dataClasses,

@@ -16,7 +16,12 @@ import type {
   Transition,
 } from "./domain.js";
 
+import { evaluateConditionDetailed, effectiveConditions, type ConditionProject } from './conditionEvaluation.js';
+export { evaluateConditionDetailed, effectiveConditions, combineConditions } from './conditionEvaluation.js';
+export type { ConditionEvaluationResult, ConditionStatus } from './conditionEvaluation.js';
+
 export type NarrativeEvaluationState = {
+  externalResults?: Record<string, boolean>;
   variables?: Record<string, unknown>;
   canonStates?: Record<string, Record<string, unknown>>;
   visited?: Set<string> | string[];
@@ -27,172 +32,12 @@ export type NarrativeEvaluationState = {
   entityStates?: PlayerSimulationState["entityStates"];
 };
 
-function compareValues(left: unknown, operator: string, right: unknown): boolean {
-  if (operator === "exists") return left !== undefined && left !== null;
-  if (operator === "contains") return Array.isArray(left) ? left.includes(right) : String(left ?? "").includes(String(right ?? ""));
-  if (operator === "notContains") return Array.isArray(left) ? !left.includes(right) : !String(left ?? "").includes(String(right ?? ""));
-  if (operator === "missing") return left === undefined || left === null || left === false;
-  if (operator === "has") return left !== undefined && left !== null && left !== false;
-  if (operator === "==") return left === right || String(left) === String(right);
-  if (operator === "!=") return !(left === right || String(left) === String(right));
-  if (operator === ">") return Number(left) > Number(right);
-  if (operator === ">=") return Number(left) >= Number(right);
-  if (operator === "<") return Number(left) < Number(right);
-  if (operator === "<=") return Number(left) <= Number(right);
-  return false;
+type LogicProject = ConditionProject;
+export function evaluateCondition(condition: Condition, project: LogicProject, state: NarrativeEvaluationState): boolean {
+  return evaluateConditionDetailed(condition, project, state).status === 'satisfied';
 }
-
-type LogicProject = Pick<BranchingProject, "canonRefs" | "localExplorerEntities">;
-
-function subjectEntityId(subject: LogicSubject): string | undefined {
-  return subject.kind === "entity" ? subject.entityId : undefined;
-}
-
-function stateValue(
-  subject: LogicSubject,
-  stateId: string,
-  state: NarrativeEvaluationState,
-): unknown {
-  if (subject.kind === "dataObject") {
-    return stateId === "exists"
-      ? Boolean(state.dataObjects?.some((item) => item.id === subject.objectId))
-      : undefined;
-  }
-  if (subject.kind === "progress") {
-    const visited = state.visited instanceof Set ? state.visited : new Set(state.visited ?? []);
-    return visited.has(`${subject.targetType}:${subject.targetId}`) || visited.has(subject.targetId);
-  }
-  const entityId = subjectEntityId(subject);
-  if (!entityId) return undefined;
-  const overlay = state.entityStates?.[entityId]?.states?.[stateId];
-  if (overlay !== undefined) return overlay;
-  if (stateId === "owned") {
-    const inventory = state.inventory instanceof Set ? state.inventory : new Set(state.inventory ?? []);
-    return inventory.has(entityId);
-  }
-  if (stateId === "unlocked") {
-    const unlocked = state.unlockedCanonRefs instanceof Set
-      ? state.unlockedCanonRefs
-      : new Set(state.unlockedCanonRefs ?? []);
-    return unlocked.has(entityId) || state.canonStates?.[entityId]?.unlocked === true;
-  }
-  return state.canonStates?.[entityId]?.[stateId];
-}
-
-function subjectPropertyValue(
-  subject: LogicSubject,
-  propertyId: string,
-  project: LogicProject,
-  state: NarrativeEvaluationState,
-): unknown {
-  if (subject.kind === "variable") return state.variables?.[subject.variableId];
-  if (subject.kind === "dataObject") {
-    return state.dataObjects?.find((item) => item.id === subject.objectId)?.fields[propertyId];
-  }
-  if (subject.kind !== "entity") return undefined;
-  const overlay = state.entityStates?.[subject.entityId]?.properties?.[propertyId];
-  if (overlay !== undefined) return overlay;
-  const canon = project.canonRefs.find((item) => item.id === subject.entityId);
-  if (canon?.properties && propertyId in canon.properties) return canon.properties[propertyId];
-  if (canon?.frontmatter && propertyId in canon.frontmatter) return canon.frontmatter[propertyId];
-  return project.localExplorerEntities
-    ?.find((item) => item.id === subject.entityId)
-    ?.properties?.[propertyId];
-}
-
-function evaluateLogicPredicate(
-  condition: LogicPredicate,
-  project: LogicProject,
-  state: NarrativeEvaluationState,
-): boolean {
-  if (condition.type === "state") {
-    return compareValues(stateValue(condition.subject, condition.stateId, state), condition.operator, condition.value ?? true);
-  }
-  if (condition.type === "property") {
-    return compareValues(
-      subjectPropertyValue(condition.subject, condition.propertyId, project, state),
-      condition.operator,
-      condition.value,
-    );
-  }
-  if (condition.type === "value") {
-    return compareValues(subjectPropertyValue(condition.subject, "value", project, state), condition.operator, condition.value);
-  }
-  if (condition.type === "visited") {
-    return compareValues(stateValue(condition.subject, "visited", state), condition.operator, true);
-  }
-  return false;
-}
-
-export function evaluateCondition(
-  condition: Condition,
-  project: LogicProject,
-  state: NarrativeEvaluationState,
-): boolean {
-  const raw = condition as Record<string, unknown>;
-  if (raw.subject && typeof raw.subject === "object") {
-    return evaluateLogicPredicate(condition as LogicPredicate, project, state);
-  }
-  if (condition.type === "canonEntryUnlocked") {
-    const ref = String(raw.ref ?? "");
-    const unlocked = state.canonStates?.[ref]?.unlocked === true;
-    return condition.negate ? !unlocked : unlocked;
-  }
-  if (condition.type === "canonProperty") {
-    const ref = String(raw.ref ?? "");
-    const property = String(raw.property ?? "");
-    const canonRef = project.canonRefs.find((item) => item.id === ref);
-    return compareValues(canonRef?.properties?.[property], String(raw.operator ?? "=="), raw.value);
-  }
-  if (condition.type === "canonState") {
-    const ref = String(raw.ref ?? "");
-    const stateName = String(raw.state ?? "");
-    return compareValues(state.canonStates?.[ref]?.[stateName], String(raw.operator ?? "=="), raw.value);
-  }
-  if (condition.type === "variable") {
-    return compareValues(state.variables?.[String(raw.name ?? "")], String(raw.operator ?? "=="), raw.value);
-  }
-  if (condition.type === "dataObjectExists") {
-    return Boolean(state.dataObjects?.some((item) => item.id === String(raw.objectId ?? "")));
-  }
-  if (condition.type === "dataObjectField") {
-    const dataObject = state.dataObjects?.find((item) => item.id === String(raw.objectId ?? ""));
-    return compareValues(dataObject?.fields[String(raw.field ?? "")], String(raw.operator ?? "=="), raw.value);
-  }
-  if (condition.type === "runtimeItem") {
-    const itemId = String(raw.itemId ?? "");
-    const inventory = state.inventory instanceof Set ? state.inventory : new Set(state.inventory ?? []);
-    const owned = inventory.has(itemId);
-    return condition.operator === "missing" ? !owned : owned;
-  }
-  if (condition.type === "visited") {
-    const visited = state.visited instanceof Set ? state.visited : new Set(state.visited ?? []);
-    const targetType = String(raw.targetType ?? "event");
-    const targetId = String(raw.targetId ?? "");
-    const hasVisited = visited.has(`${targetType}:${targetId}`) || visited.has(targetId);
-    return raw.negate ? !hasVisited : hasVisited;
-  }
-  return false;
-}
-
-function evaluateExpression(
-  expression: ConditionExpression,
-  project: LogicProject,
-  state: NarrativeEvaluationState,
-): boolean {
-  if (!isConditionSet(expression)) return evaluateCondition(expression, project, state);
-  if ("all" in expression) return expression.all.every((item) => evaluateExpression(item, project, state));
-  if ("any" in expression) return expression.any.some((item) => evaluateExpression(item, project, state));
-  return !evaluateExpression(expression.not, project, state);
-}
-
-export function evaluateConditionInput(
-  input: ConditionInput | undefined,
-  project: LogicProject,
-  state: NarrativeEvaluationState,
-): boolean {
-  if (!input) return true;
-  return (Array.isArray(input) ? input : [input]).every((expression) => evaluateExpression(expression, project, state));
+export function evaluateConditionInput(input: ConditionInput | undefined, project: LogicProject, state: NarrativeEvaluationState): boolean {
+  return evaluateConditionDetailed(input, project, state).status === 'satisfied';
 }
 
 export function orderedTransitions(transitions: Transition[]): Transition[] {
@@ -208,12 +53,13 @@ export function resolveFirstValidTransition(
   project: LogicProject,
   state: NarrativeEvaluationState,
 ): Transition | undefined {
-  return orderedTransitions(transitions).find(
-    (transition) =>
-      transition.mode === "fallback" ||
-      transition.logic?.when === undefined && transition.role === "flow" ||
-      evaluateConditionInput(transition.logic?.when ?? transition.conditions, project, state),
-  );
+  if (transitions.filter(t => t.mode === 'fallback').length > 1) return undefined;
+  for (const transition of orderedTransitions(transitions)) {
+    const result = evaluateConditionDetailed(effectiveConditions(transition), project, state);
+    if (result.status === 'invalid' || result.status === 'unresolved') return undefined;
+    if (result.status === 'satisfied') return transition;
+  }
+  return undefined;
 }
 
 /** Filters a list of consequences down to the ones whose own (optional) `conditions` gate currently passes. */
@@ -336,7 +182,7 @@ export function applyConsequence(consequence: Consequence, state: PlayerSimulati
 }
 
 export function isConditionSet(expression: ConditionExpression): expression is ConditionSet {
-  return "all" in expression || "any" in expression || "not" in expression;
+  return Boolean(expression && typeof expression === "object" && ("all" in expression || "any" in expression || "not" in expression));
 }
 
 export function asConditionExpressions(input: ConditionInput | undefined): ConditionExpression[] {
@@ -361,18 +207,19 @@ function walkConditionExpression(
   visit: (condition: Condition, path: string) => void,
   path: string,
 ) {
+  if (!expression || typeof expression !== "object") return;
   if (!isConditionSet(expression)) {
     visit(expression, path);
     return;
   }
 
   if ("all" in expression) {
-    expression.all.forEach((child, index) => walkConditionExpression(child, visit, `${path}.all[${index}]`));
+    (Array.isArray(expression.all) ? expression.all : []).forEach((child, index) => walkConditionExpression(child, visit, `${path}.all[${index}]`));
     return;
   }
 
   if ("any" in expression) {
-    expression.any.forEach((child, index) => walkConditionExpression(child, visit, `${path}.any[${index}]`));
+    (Array.isArray(expression.any) ? expression.any : []).forEach((child, index) => walkConditionExpression(child, visit, `${path}.any[${index}]`));
     return;
   }
 
@@ -392,6 +239,7 @@ function variableIdForName(name: string, variables: LogicVariable[]): string {
 }
 
 function migrateCondition(condition: Condition, variables: LogicVariable[]): Condition {
+  if (!condition || typeof condition !== "object") return condition;
   if ("subject" in condition) return condition;
   const raw = condition as Record<string, unknown>;
   if (condition.type === "canonEntryUnlocked") {
@@ -404,19 +252,23 @@ function migrateCondition(condition: Condition, variables: LogicVariable[]): Con
   }
   if (condition.type === "canonProperty" || condition.type === "canonState") {
     return {
-      type: "property",
+      type: condition.type === "canonState" ? "state" : "property",
       subject: { kind: "entity", entityId: String(raw.ref ?? ""), source: "canon" },
-      propertyId: String(condition.type === "canonProperty" ? raw.property ?? "" : raw.state ?? ""),
+      ...(condition.type === "canonState" ? {stateId: String(raw.state ?? "")} : {propertyId: String(raw.property ?? "")}),
       operator: String(raw.operator ?? "==") as LogicComparisonOperator,
-      value: raw.value,
+      value: condition.type === 'canonState' && (raw.value === 'true' || raw.value === 'false') ? raw.value === 'true' : raw.value,
     } as Condition;
   }
   if (condition.type === "variable") {
+    const variable = variables.find(v => v.id === raw.name || v.name === raw.name);
+    let value = raw.value;
+    if (variable?.type === 'number' && typeof value === 'string' && /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim()) && Number.isFinite(Number(value))) value = Number(value);
+    if (variable?.type === 'boolean' && (value === 'true' || value === 'false')) value = value === 'true';
     return {
       type: "value",
       subject: { kind: "variable", variableId: variableIdForName(String(raw.name ?? ""), variables) },
       operator: String(raw.operator ?? "==") as "==",
-      value: raw.value,
+      value,
     };
   }
   if (condition.type === "dataObjectExists") {
@@ -468,8 +320,8 @@ function migrateCondition(condition: Condition, variables: LogicVariable[]): Con
 
 function migrateExpression(expression: ConditionExpression, variables: LogicVariable[]): ConditionExpression {
   if (!isConditionSet(expression)) return migrateCondition(expression, variables);
-  if ("all" in expression) return { ...expression, all: expression.all.map((child) => migrateExpression(child, variables)) };
-  if ("any" in expression) return { ...expression, any: expression.any.map((child) => migrateExpression(child, variables)) };
+  if ("all" in expression) return { ...expression, all: Array.isArray(expression.all) ? expression.all.map((child) => migrateExpression(child, variables)) : expression.all };
+  if ("any" in expression) return { ...expression, any: Array.isArray(expression.any) ? expression.any.map((child) => migrateExpression(child, variables)) : expression.any };
   return { ...expression, not: migrateExpression(expression.not, variables) };
 }
 

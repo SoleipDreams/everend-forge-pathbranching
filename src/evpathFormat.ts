@@ -195,8 +195,8 @@ function subjectText(project: BranchingProject | undefined, subject: LogicSubjec
 function predicateText(project: BranchingProject | undefined, predicate: LogicPredicate): string | undefined {
   const subject = subjectText(project, predicate.subject);
   if (predicate.type === "state") {
-    if (predicate.stateId === "owned") return `${predicate.operator === "missing" ? "missing" : "has"} ${subject}`;
-    return `${subject}.${JSON.stringify(predicate.stateId)}<${predicate.stateId}> ${predicate.operator}`;
+    if (predicate.stateId === "owned" && ["has", "missing"].includes(predicate.operator)) return `${predicate.operator === "missing" ? "missing" : "has"} ${subject}`;
+    return undefined; // Other states remain opaque: the property grammar cannot preserve their meaning.
   }
   if (predicate.type === "property") {
     return `${subject}.${JSON.stringify(propertyLabel(project, predicate.propertyId))}<${predicate.propertyId}> ${predicate.operator}${predicate.operator === "exists" || predicate.operator === "missing" ? "" : ` ${jsonScalar(predicate.value)}`}`;
@@ -210,17 +210,17 @@ function predicateText(project: BranchingProject | undefined, predicate: LogicPr
 
 function expressionText(project: BranchingProject | undefined, expression: Condition | ConditionInput): string | undefined {
   if (Array.isArray(expression)) {
-    const children = expression.map((child) => expressionText(project, child)).filter(Boolean);
-    return children.length ? children.join(" and ") : undefined;
+    const children = expression.map((child) => expressionText(project, child));
+    return children.length && children.every(Boolean) ? children.join(" and ") : undefined;
   }
   if (!isConditionSet(expression)) return predicateText(project, expression as LogicPredicate);
   if ("all" in expression) {
-    const children = expression.all.map((child) => expressionText(project, child)).filter(Boolean);
-    return children.length ? children.map((child) => `(${child})`).join(" and ") : undefined;
+    const children = expression.all.map((child) => expressionText(project, child));
+    return children.length && children.every(Boolean) ? children.map((child) => `(${child})`).join(" and ") : undefined;
   }
   if ("any" in expression) {
-    const children = expression.any.map((child) => expressionText(project, child)).filter(Boolean);
-    return children.length ? children.map((child) => `(${child})`).join(" or ") : undefined;
+    const children = expression.any.map((child) => expressionText(project, child));
+    return children.length && children.every(Boolean) ? children.map((child) => `(${child})`).join(" or ") : undefined;
   }
   const child = expressionText(project, expression.not);
   return child ? `not (${child})` : undefined;
@@ -259,7 +259,7 @@ function parseScalar(raw: string): { ok: boolean; value?: unknown } {
   if (text === "true") return { ok: true, value: true };
   if (text === "false") return { ok: true, value: false };
   if (/^-?\d+(\.\d+)?$/.test(text)) return { ok: true, value: Number(text) };
-  if (/^".*"$/.test(text)) {
+  if (/^".*"$/.test(text) || /^\[.*\]$/.test(text)) {
     try {
       return { ok: true, value: JSON.parse(text) as unknown };
     } catch {
