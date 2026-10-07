@@ -11,6 +11,7 @@ import type {
   LogicPredicate,
   LogicSubject,
   LogicVariable,
+  NarrativeEffect,
   PlayerSimulationState,
   ProjectDataObject,
   Transition,
@@ -21,6 +22,26 @@ import { entityDefinition, ownerKey, resolveContextSubject } from './authoringEn
 import { resolveLogicField } from './logicCapabilities.js';
 export { evaluateConditionDetailed, effectiveConditions, combineConditions } from './conditionEvaluation.js';
 export type { ConditionEvaluationResult, ConditionStatus } from './conditionEvaluation.js';
+
+export function splitNarrativeEffects(effects: NarrativeEffect[]) {
+  return {
+    then: effects.filter(effect => effect.type !== "instanceEffect") as Consequence[],
+    narrativeEffects: effects.filter(effect => effect.type === "instanceEffect"),
+    effectOrder: effects.map(effect => effect.type === "instanceEffect" ? "narrative" as const : "then" as const),
+  };
+}
+
+export function orderedMomentEffects(moment?: LogicMoment, fallback?: Consequence[]): NarrativeEffect[] {
+  const ordinary = moment?.then ?? fallback ?? [];
+  const narrative = moment?.narrativeEffects ?? [];
+  let thenIndex = 0, narrativeIndex = 0;
+  const result: NarrativeEffect[] = [];
+  for (const kind of moment?.effectOrder ?? []) {
+    const effect = kind === "then" ? ordinary[thenIndex++] : narrative[narrativeIndex++];
+    if (effect) result.push(effect);
+  }
+  return [...result, ...ordinary.slice(thenIndex), ...narrative.slice(narrativeIndex)];
+}
 
 export type NarrativeEvaluationState = {
   externalResults?: Record<string, boolean>;
@@ -472,6 +493,7 @@ export function migrateLogicMoment(
   return {
     ...(existing?.repeat ? { repeat: existing.repeat } : {}),
     ...(existing?.narrativeEffects ? { narrativeEffects: existing.narrativeEffects } : {}),
+    ...(existing?.effectOrder ? { effectOrder: existing.effectOrder } : {}),
     ...(migratedWhen ? { when: migratedWhen } : {}),
     ...(then.length ? { then } : {}),
     ...(migratedRules.length ? { rules: migratedRules } : {}),

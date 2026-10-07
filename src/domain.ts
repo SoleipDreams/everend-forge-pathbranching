@@ -276,6 +276,8 @@ export type LogicMoment = {
   /** Entry effects fire once per traversal unless explicitly repeated. */
   repeat?: "once" | "each-entry";
   narrativeEffects?: NarrativeEffect[];
+  /** Preserve the author-selected order across legacy and copy effect arrays. */
+  effectOrder?: ("then" | "narrative")[];
 };
 
 export type CanonEditSuggestionStatus =

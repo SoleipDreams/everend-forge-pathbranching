@@ -189,10 +189,11 @@ function subjectText(project: BranchingProject | undefined, subject: LogicSubjec
       project?.branches.find((item) => item.id === subject.targetId)?.title ?? subject.targetId;
     return quotedReference(label, subject.targetId, "^");
   }
-  return quotedReference(subject.functionId, subject.functionId, "!");
+  return subject.kind === "external" ? quotedReference(subject.functionId, subject.functionId, "!") : quotedReference(subject.kind === "instance" ? subject.instanceId : subject.role, subject.kind === "instance" ? subject.instanceId : subject.role, "@");
 }
 
 function predicateText(project: BranchingProject | undefined, predicate: LogicPredicate): string | undefined {
+  if (!("subject" in predicate) || predicate.subject.kind === "instance" || predicate.subject.kind === "context") return undefined;
   const subject = subjectText(project, predicate.subject);
   if (predicate.type === "state") {
     if (predicate.stateId === "owned" && ["has", "missing"].includes(predicate.operator)) return `${predicate.operator === "missing" ? "missing" : "has"} ${subject}`;
@@ -237,6 +238,7 @@ export function conditionInputText(input: ConditionInput | undefined, project?: 
 function simpleConsequenceText(consequence: Consequence, project?: BranchingProject): string | undefined {
   if ("conditions" in consequence && consequence.conditions) return undefined;
   const effect = migrateConsequence(consequence, project?.logicVariables ?? []);
+  if (effect.subject.kind === "instance" || effect.subject.kind === "context") return undefined;
   const subject = subjectText(project, effect.subject);
   if (effect.type === "state") return `~ ${effect.operation} ${subject}`;
   if (effect.type === "external") return undefined;

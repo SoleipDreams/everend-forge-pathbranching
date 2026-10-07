@@ -649,7 +649,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       }
       const characterRef = block?.characterRef ?? block?.speakerRef;
       if (characterRef && !isGenericSpeakerRef(characterRef)) {
-        validateCanonRef(findings, canonIds, beat.id, characterRef, `Dialogue beat "${beat.id}" character`);
+        if (!project.localExplorerEntities?.some(entity => entity.id === characterRef)) validateCanonRef(findings, canonIds, beat.id, characterRef, `Dialogue beat "${beat.id}" character`);
         const selectedVariantId = block?.characterVariantId;
         const canonRef = project.canonRefs.find((ref) => ref.id === characterRef);
         if (selectedVariantId && canonRef && !canonVariantsForRef(canonRef).some((variant) => variant.id === selectedVariantId)) {

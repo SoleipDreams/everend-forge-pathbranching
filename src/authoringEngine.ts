@@ -1,6 +1,6 @@
 import type { AuthoringScenario, BranchingProject, ConditionInput, DialogueNode, EntityInstance, EventNode, InstanceEffect, LogicMoment, LogicSubject, NarrativeAction, NarrativeEffect, NarrativeRule, PlayerSimulationState, Transition } from './domain.js';
 import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEvaluationResult } from './conditionEvaluation.js';
-import { applyConsequenceDetailed, combineConditions, effectiveConditions, orderedTransitions } from './logic.js';
+import { applyConsequenceDetailed, combineConditions, effectiveConditions, orderedTransitions, orderedMomentEffects } from './logic.js';
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
 import { resolveLogicField } from './logicCapabilities.js';
 
@@ -168,7 +168,7 @@ function effects(project: BranchingProject, session: AuthoringSession, effects: 
 }
 function moment(project: BranchingProject, session: AuthoringSession, node: ContentNode) {
   const logic = node.logic;
-  if (!effects(project, session, [...(logic?.then ?? []), ...(logic?.narrativeEffects ?? [])], `enter:${node.id}`, logic?.repeat)) return false;
+  if (!effects(project, session, orderedMomentEffects(logic), `enter:${node.id}`, logic?.repeat)) return false;
   for (const rule of logic?.rules ?? []) {
     const result = evaluate(project, session.state, rule.when);
     session.trace.push({ kind: 'condition', id: rule.id, nodeId: node.id, message: result.message, evaluation: result });
@@ -228,7 +228,7 @@ function route(project: BranchingProject, session: AuthoringSession, from: strin
     if (result.status === 'invalid' || result.status === 'unresolved') { stop(session, result.message, t.id); return undefined; }
     if (result.status !== 'satisfied') continue;
     if (t.function) { stop(session, `External route ${t.function} needs a result`, t.id); return undefined; }
-    if (!effects(project, session, [...(t.logic?.then ?? t.consequences ?? []), ...(t.logic?.narrativeEffects ?? [])], `route:${t.id}`, t.logic?.repeat)) return undefined;
+    if (!effects(project, session, orderedMomentEffects(t.logic, t.consequences), `route:${t.id}`, t.logic?.repeat)) return undefined;
     session.entryTransitionId = t.id;
     session.trace.push({ kind: 'route', nodeId: from, id: t.id, message: `${from} → ${t.to}` });
     return immediate(project, session, nodeIndex(project).get(from), budget) ?? t.to;

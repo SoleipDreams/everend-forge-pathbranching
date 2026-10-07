@@ -16,7 +16,7 @@ import {
   parseIntegrationConfigYaml,
   serializeIntegrationConfigYaml,
 } from "./integrationConfig.js";
-import { applyEvpathToEvent, serializeEventEvpath } from "./evpathFormat.js";
+import { applyEvpathToEvent, parseEvpath, serializeEventEvpath } from "./evpathFormat.js";
 
 /**
  * 0.5 preserves the complete project metadata and modular authoring state.
@@ -490,6 +490,14 @@ function reconcileEventEvpathFiles(
       (file) => file.relativePath === eventEvpathPath(storyId, sequenceId, event.id),
     );
     if (!evpathFile) continue;
+    // A generated projection must never rewrite its richer JSON sidecar.
+    // Scoped IDs and modular rules can exceed the text grammar's vocabulary.
+    if (evpathFile.content.trim() === serializeEventEvpath(current, event.id).trim()) {
+      const syntax = parseEvpath(evpathFile.content);
+      if (syntax.errors.length) loadWarnings?.push(`${event.name}: representación textual limitada; se conserva el documento JSON completo (${syntax.errors[0].message}).`);
+      if (evpathFile.content.includes('{ #')) loadWarnings?.push(`${event.name}: lógica opaca; se conserva el JSON original.`);
+      continue;
+    }
     const applied = applyEvpathToEvent(current, event.id, evpathFile.content);
     if (applied.errors.length) {
       loadWarnings?.push(

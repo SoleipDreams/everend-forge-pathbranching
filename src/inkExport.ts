@@ -7,7 +7,7 @@ import { migrateConditionInput, migrateConsequence, orderedTransitions } from '.
 export const inkSymbol = (id: string) => `pb_${Array.from(id).map(c=>c.codePointAt(0)!.toString(16)).join('_')}`;
 export const inkConditionKey = (p: LogicPredicate) => {
   const s=p.subject;
-  const id=s.kind==='entity'?s.entityId:s.kind==='variable'?s.variableId:s.kind==='dataObject'?s.objectId:s.kind==='progress'?`${s.targetType}:${s.targetId}`:s.functionId;
+  const id=s.kind==='entity'?s.entityId:s.kind==='variable'?s.variableId:s.kind==='dataObject'?s.objectId:s.kind==='progress'?`${s.targetType}:${s.targetId}`:s.kind==='instance'?s.instanceId:s.kind==='context'?s.role:s.functionId;
   return JSON.stringify([s.kind,id,p.type,p.type==='property'?p.propertyId:p.type==='state'?p.stateId:'']);
 };
 const literal = (v: unknown, type?: string): string => type==='date' ? String(Number(String(v).replaceAll('-',''))) : JSON.stringify(v);

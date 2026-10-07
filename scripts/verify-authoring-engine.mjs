@@ -209,3 +209,21 @@ test('complete acceptance fixture round-trips modular .evpath storage without lo
   assert.equal(owner.beats.find(b=>b.id==='shared').logic.repeat,'each-entry');
   assert.deepEqual(loaded.activeProject.events[0].decisions[0].outcomes[0].logic.when,p.events[0].decisions[0].outcomes[0].logic.when);
 });
+
+test('self-generated text never rewrites richer JSON with colliding scoped identifiers',()=>{
+  const p=authoringAcceptanceFixture();
+  const dialogue=p.events[0].dialogues.find(d=>d.id==='talk');
+  const beat=dialogue.beats[0];const previous=beat.id;beat.id=dialogue.id;
+  dialogue.entryBeatId=beat.id;dialogue.members=dialogue.members.map(id=>id===previous?beat.id:id);
+  for(const route of p.events[0].transitions){
+    if(route.from===`beat:room:${previous}`)route.from=`beat:room:${beat.id}`;
+    if(route.to===`beat:room:${previous}`)route.to=`beat:room:${beat.id}`;
+  }
+  const story={id:'scoped-ids',name:p.name,path:storyPath('scoped-ids')};
+  const files=serializeModularStoryFiles(p,story);
+  files.push({relativePath:'.everend/.pathbranching/manifest.json',content:JSON.stringify({version:'0.2',activeStoryId:story.id,stories:[story]})});
+  const loaded=loadPathBranchingWorkspace(files);
+  assert.equal(loaded.saveBlocked,false,JSON.stringify(loaded.loadWarnings));
+  assert.deepEqual(loaded.activeProject.events,p.events,'A lossy text projection must leave all original owners, IDs, rules and logic intact.');
+  assert.deepEqual(loaded.activeProject.scripts,p.scripts);
+});
