@@ -1,3 +1,4 @@
+mod story_storage;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read, Write};
@@ -249,22 +250,12 @@ fn modified_ms(path: &Path) -> Option<u128> {
 }
 
 fn write_text_file(path: &Path, content: &str) -> WriteResult {
-    if let Some(parent) = path.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            return WriteResult {
-                ok: false,
-                path: path.to_string_lossy().to_string(),
-                modified_ms: modified_ms(path),
-                message: Some(error.to_string()),
-            };
-        }
-    }
-    let result = fs::File::create(path).and_then(|mut file| file.write_all(content.as_bytes()));
+    let result = story_storage::write_atomic(path, content);
     WriteResult {
         ok: result.is_ok(),
         path: path.to_string_lossy().to_string(),
         modified_ms: modified_ms(path),
-        message: result.err().map(|error| error.to_string()),
+        message: result.err(),
     }
 }
 
@@ -333,7 +324,7 @@ fn normalize_relative_path(path: &str) -> Result<PathBuf, String> {
 fn should_read_universe_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|value| value.to_str()),
-        Some("md" | "json" | "yaml" | "yml")
+        Some("md" | "json" | "yaml" | "yml" | "evpath")
     )
 }
 
@@ -345,6 +336,7 @@ fn should_walk_universe_dir(root: &Path, path: &Path) -> bool {
     if relative == ".everend" {
         return true;
     }
+    if relative.starts_with(".everend/.pathbranching/.transactions") { return false; }
     if relative.starts_with(".everend/.pathbranching") {
         return true;
     }
@@ -463,6 +455,9 @@ fn read_universe(root: PathBuf) -> Result<UniverseReadResult, String> {
         return Err(format!("Universe path is not a directory: {}", root.display()));
     }
 
+    let _storage_guard = story_storage::lock()?;
+    let _universe_guard = story_storage::lock_universe(&root)?;
+    story_storage::recover_locked(&root)?;
     let mut files = Vec::new();
     let mut directories = Vec::new();
     let mut errors = Vec::new();
@@ -743,6 +738,11 @@ async fn import_scene_images(
 }
 
 #[tauri::command]
+fn save_universe_story_batch(universe_path: String, files: Vec<story_storage::BatchFile>) -> Result<story_storage::BatchResult, String> {
+    story_storage::save_batch(Path::new(&universe_path), files)
+}
+
+#[tauri::command]
 fn save_universe_text_file(
     universe_path: String,
     relative_path: String,
@@ -756,14 +756,17 @@ fn save_universe_text_file(
     if !root.is_dir() {
         return Err(format!("Universe path is not a directory: {}", root.display()));
     }
+    let _storage_guard = story_storage::lock()?;
+    let _universe_guard = story_storage::lock_universe(&root)?;
+    story_storage::recover_locked(&root)?;
     let relative = normalize_relative_path(&relative_path)?;
     let path = root.join(relative);
-    if let (Some(expected), Some(current)) = (expected_modified_ms, modified_ms(&path)) {
-        if expected != current {
+    if let Some(expected) = expected_modified_ms {
+        if Some(expected) != modified_ms(&path) {
             return Ok(WriteResult {
                 ok: false,
                 path: path.to_string_lossy().to_string(),
-                modified_ms: Some(current),
+                modified_ms: modified_ms(&path),
                 message: Some("Universe file changed on disk. Reopen before overwriting.".to_string()),
             });
         }
@@ -799,12 +802,12 @@ fn save_project_file(
     expected_modified_ms: Option<u128>,
 ) -> Result<WriteResult, String> {
     let path_ref = Path::new(&path);
-    if let (Some(expected), Some(current)) = (expected_modified_ms, modified_ms(path_ref)) {
-        if expected != current {
+    if let Some(expected) = expected_modified_ms {
+        if Some(expected) != modified_ms(path_ref) {
             return Ok(WriteResult {
                 ok: false,
-                path,
-                modified_ms: Some(current),
+                path: path.clone(),
+                modified_ms: modified_ms(path_ref),
                 message: Some(
                     "Project file changed on disk. Save into a universe or reopen before overwriting."
                         .to_string(),
@@ -926,6 +929,7 @@ pub fn run() {
             import_universe_assets,
             import_scene_images,
             save_universe_text_file,
+            save_universe_story_batch,
             open_project_dialog,
             read_project_file,
             save_project_file,

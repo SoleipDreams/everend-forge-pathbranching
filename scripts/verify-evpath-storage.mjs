@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  STORAGE_VERSION,
   loadPathBranchingWorkspace,
   serializeModularStoryFiles,
   storyPath,
@@ -81,7 +82,7 @@ function universeFiles(project, { evpath = true, storageVersion } = {}) {
     .filter((file) => (evpath ? true : !file.relativePath.endsWith(".evpath")))
     .map((file) => {
       if (storageVersion && file.relativePath.endsWith(".json")) {
-        return { ...file, content: file.content.replace(/"storageVersion": "0\.4"/g, `"storageVersion": "${storageVersion}"`) };
+        return { ...file, content: file.content.replaceAll(`"storageVersion": "${STORAGE_VERSION}"`, `"storageVersion": "${storageVersion}"`) };
       }
       return { ...file };
     });
@@ -112,7 +113,7 @@ const expectedEvpath = serializeEventEvpath(project, "intro");
 // --- Serialization emits a .evpath sidecar and bumps storage to 0.4 --------
 const { storyFiles } = universeFiles(project);
 const storyJson = storyFiles.find((file) => file.relativePath === storyPath("main"));
-assert.match(storyJson.content, /"storageVersion": "0\.4"/);
+assert.ok(storyJson.content.includes(`"storageVersion": "${STORAGE_VERSION}"`));
 const introEvpath = storyFiles.find((file) => file.relativePath.endsWith("/events/intro.evpath"));
 assert.ok(introEvpath, "expected an intro.evpath file");
 assert.equal(introEvpath.content, expectedEvpath);
@@ -180,4 +181,4 @@ const brokenIntro = eventOf(loadedBroken.activeProject, "intro");
 assert.equal(brokenIntro.dialogueBeats.length, 2, "JSON sidecar must be preserved when evpath is malformed");
 assert.equal(blockContent(loadedBroken.activeProject, "block:b1"), "¿Dónde está la reliquia?");
 
-console.log("evpath storage (0.4) verification passed");
+console.log("evpath storage (0.5) verification passed");

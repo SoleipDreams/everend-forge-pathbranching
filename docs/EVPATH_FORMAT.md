@@ -11,7 +11,7 @@ traducciones, lógica ni assets asociados.
   mientras editas. Evpath es una *proyección editable*: el tab **Path** del
   inspector de eventos serializa el evento a texto, y el botón **Apply** parsea
   el texto y aplica las diferencias como mutaciones sobre el documento.
-- **Almacenamiento (storage 0.4):** al guardar, cada evento escribe un archivo
+- **Almacenamiento (storage 0.5):** al guardar, cada evento escribe un archivo
   `<evento>.evpath` **canónico** junto a su `<evento>.json` sidecar dentro de
   `.everend/.pathbranching/stories/<story>/sequences/<seq>/events/`. El `.evpath`
   es autoritativo para la narrativa que sabe expresar (texto, hablantes,
@@ -27,7 +27,7 @@ traducciones, lógica ni assets asociados.
   externa del `.evpath` gana, pero un caso límite del reconciliador nunca puede
   corromper una historia en silencio al abrir.
 - **Migración automática:** las historias 0.2 (solo JSON, sin `.evpath`) cargan
-  intactas y se actualizan a 0.4 en el siguiente guardado. Las historias 0.3
+  intactas y se actualizan a 0.5 en el siguiente guardado. Las historias 0.3
   también se admiten; 0.4 incorpora momentos de lógica unificada y ownership
   explícito. Verificar siempre las advertencias de carga y conservar respaldo
   antes de migrar contenido de producción.
@@ -128,7 +128,7 @@ original y se emite un warning.
 
 `src/pathBranchingWorkspace.ts` integra el almacenamiento: `eventEvpathPath()`
 resuelve la ruta del archivo, `serializeModularStoryFiles()` emite los `.evpath`
-al guardar (storage `STORAGE_VERSION = "0.4"`), y la carga los reconcilia sobre
+al guardar (storage `STORAGE_VERSION = "0.5"`), y la carga los reconcilia sobre
 el JSON con la guarda de punto fijo.
 
 Verificación (dentro de `npm run verify:core`, o solo con `npm run verify:evpath`):
@@ -137,6 +137,50 @@ Verificación (dentro de `npm run verify:core`, o solo con `npm run verify:evpat
   serializada, idempotencia, edición de texto/hablante/variante/condición,
   altas y bajas de beats y outcomes, multi-root, líneas en blanco, errores).
 - `scripts/verify-evpath-storage.mjs` — round-trip a través de disco vía
-  `loadPathBranchingWorkspace`: emisión de `.evpath` + storage 0.4, ausencia de
+  `loadPathBranchingWorkspace`: emisión de `.evpath` + storage 0.5, ausencia de
   drift en carga, edición externa honrada, migración 0.2, y `.evpath` malformado
   que conserva el JSON.
+
+## Autoría modular y recuperación (storage 0.5)
+
+`story.json` conserva todos los metadatos del documento, incluyendo las copias y
+propuestas de canon, galerías, catálogo de traducciones, perfiles/simulación,
+overrides de entidades, copias individuales, acciones, reglas y escenarios.
+Secuencias, eventos, ramas, canvas y YAML de integración siguen separados.
+Las sesiones de recorrido, trazas y borradores de interfaz no se serializan.
+Los lectores aceptan 0.2, 0.3 y 0.4; la siguiente escritura segura utiliza 0.5.
+
+Cada archivo declarado se comprueba al cargar. Un JSON corrupto, archivo ausente,
+lista inválida, error de lectura o `.evpath` externo que no puede reconciliarse
+mantiene el documento visible con advertencias, pero activa `loadingIncomplete`
+y `saveBlocked`. El guardado y las operaciones sobre el manifiesto no deben
+consolidar esa carga parcial: hay que reparar y reabrir. En 0.5 los sidecars de
+texto también son obligatorios; en versiones anteriores siguen siendo opcionales.
+Una referencia canon desaparecida se conserva para diagnosticarla.
+
+Standalone y Suite usan `save_universe_story_batch`. El comando recibe todos los
+archivos de la revisión, incluido el manifiesto y `.evpath`, junto con existencia,
+contenido y fecha esperados. Comprueba conflictos para cada archivo antes de
+escribir y otra vez antes de reemplazarlo; las diferencias no se sobrescriben.
+`documentController` actualiza los contenidos y fechas base después del éxito.
+
+El backend prepara temporales sincronizados y un journal con el contenido previo
+bajo `.everend/.pathbranching/.transactions/`, antes de reemplazar ningún archivo.
+Las sustituciones son atómicas por archivo y el lote se considera confirmado
+solo tras marcar durablemente el journal. Un fallo revierte el lote; al abrir un
+universo se recupera cualquier journal incompleto antes de leer la historia.
+Un lock de proceso y un lock del sistema operativo protegen escrituras/lecturas
+concurrentes de standalone y Suite. Los archivos internos de transacción no se
+indexan como contenido del universo.
+
+Si también hubo una edición externa después de una interrupción, esa edición se
+conserva y se retiene el journal con el respaldo. La apertura se detiene con su
+ubicación y causa; no se fuerza una recuperación que sobrescriba trabajo externo.
+El fallback del navegador comprueba todas las bases antes de escribir y compensa
+fallos detectados, pero la recuperación durable ante cierre abrupto se garantiza
+por el backend Tauri. Esta aceptación corresponde a las dos versiones de escritorio.
+
+Pruebas: `scripts/verify-authoring-storage.mjs` comprueba disco sintético, campos
+completos, migración idempotente y cargas parciales. Los tests Rust de
+`story_storage` reproducen interrupciones, rollback, conflictos en `.evpath`,
+creaciones/eliminaciones externas y preservación de cambios posteriores al fallo.

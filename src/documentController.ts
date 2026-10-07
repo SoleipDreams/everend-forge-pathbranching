@@ -6,7 +6,7 @@ import {
   type SaveUniverseStoryResult,
   type WriteResult,
 } from "./projectPersistence.js";
-import { storyPath, type PathBranchingStoryManifestEntry, type PathBranchingWorkspace } from "./pathBranchingWorkspace.js";
+import { pathBranchingMetadataPaths, storyPath, type PathBranchingStoryManifestEntry, type PathBranchingWorkspace } from "./pathBranchingWorkspace.js";
 import { createEmptyBranchingProjectFromWorldNotionIndex } from "./worldnotionBridge.js";
 import { normalizeProject } from "./projectSerialization.js";
 import { slugify, uniqueId } from "./projectMutations.js";
@@ -86,6 +86,10 @@ export async function saveBranchingDocument(input: DocumentSaveInput): Promise<D
     ...input.workspace,
     manifest: result.manifest ?? input.workspace.manifest,
     activeProject: savedProject,
+    files: result.savedFiles ? [
+      ...input.workspace.files.filter((file) => !result.savedFiles?.some((saved) => saved.relativePath === file.relativePath)),
+      ...result.savedFiles,
+    ] : input.workspace.files,
     createdDefaultStory: false,
     storyModifiedMs: result.storyModifiedMs ?? result.modifiedMs,
   };
@@ -213,6 +217,7 @@ export async function renameBranchingStory(input: RenameStoryInput): Promise<Doc
 }
 
 export async function deleteBranchingStory(input: DeleteStoryInput): Promise<DeleteStorySnapshot> {
+  if (input.workspace.saveBlocked) throw new Error("Repair the incomplete story and reopen before deleting stories.");
   if (!input.fileState.universePath) {
     throw new Error("Open a universe before deleting a PathBranching story.");
   }
@@ -238,7 +243,7 @@ export async function deleteBranchingStory(input: DeleteStoryInput): Promise<Del
     activeStoryId: nextStory.id,
     stories: remainingStories,
   };
-  const result = await saveUniverseManifest(input.fileState.universePath, manifest);
+  const result = await saveUniverseManifest(input.fileState.universePath, manifest, input.workspace.files.find((file) => file.relativePath === pathBranchingMetadataPaths.manifest));
   if (!result.ok) {
     throw new Error(result.message ?? "Could not update PathBranching manifest.");
   }
@@ -248,6 +253,7 @@ export async function deleteBranchingStory(input: DeleteStoryInput): Promise<Del
     nextWorkspace: {
       ...input.workspace,
       manifest,
+      files: input.workspace.files.map((file) => file.relativePath === pathBranchingMetadataPaths.manifest ? { ...file, content: `${JSON.stringify(manifest, null, 2)}\n`, modifiedMs: result.modifiedMs } : file),
       activeStory: nextStory,
       createdDefaultStory: false,
     },

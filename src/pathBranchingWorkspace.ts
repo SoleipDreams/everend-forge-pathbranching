@@ -19,11 +19,10 @@ import {
 import { applyEvpathToEvent, serializeEventEvpath } from "./evpathFormat.js";
 
 /**
- * Modular story storage version. 0.4 adds unified logic moments and explicit
- * flow/route transition roles. Older stories are normalized on load and are
- * upgraded to 0.4 on the next save.
+ * 0.5 preserves the complete project metadata and modular authoring state.
+ * Older stories are normalized on load and upgraded on the next safe save.
  */
-export const STORAGE_VERSION = "0.4";
+export const STORAGE_VERSION = "0.5";
 
 export const pathBranchingMetadataPaths = {
   root: ".everend/.pathbranching",
@@ -78,6 +77,9 @@ export type PathBranchingWorkspace = {
   storyModifiedMs?: number;
   createdDefaultStory: boolean;
   loadWarnings?: string[];
+  loadingIncomplete?: boolean;
+  saveBlocked?: boolean;
+  saveBlockReasons?: string[];
 };
 
 function slugify(value: string): string {
@@ -201,7 +203,12 @@ function parseManifest(
     );
     return undefined;
   }
+  if (!parsed || typeof parsed !== "object") {
+    loadWarnings.push("Incomplete story: manifest must be a JSON object.");
+    return undefined;
+  }
   const stories = Array.isArray(parsed.stories) ? parsed.stories : [];
+  if (!Array.isArray(parsed.stories)) loadWarnings.push("Incomplete story: manifest has an invalid story list.");
   const normalizedStories = stories
     .filter((story): story is PathBranchingStoryManifestEntry => {
       return (
@@ -289,36 +296,8 @@ function createDefaultProject(
   );
 }
 
-type ModularStoryFile = {
+type ModularStoryFile = Omit<Partial<BranchingProject>, "sequences" | "branches" | "events" | "canvas" | "panels"> & {
   storageVersion?: string;
-  specVersion?: "0.1";
-  projectId?: string;
-  storyId?: string;
-  universeRootPath?: string;
-  name?: string;
-  sourceVault?: BranchingProject["sourceVault"];
-  dataClasses?: BranchingProject["dataClasses"];
-  projectDataObjects?: BranchingProject["projectDataObjects"];
-  assets?: BranchingProject["assets"];
-  canonEditSuggestions?: BranchingProject["canonEditSuggestions"];
-  projectionRules?: BranchingProject["projectionRules"];
-  graphModules?: BranchingProject["graphModules"];
-  authoringPreferences?: BranchingProject["authoringPreferences"];
-  entrySequenceId?: string;
-  eventCategories?: BranchingProject["eventCategories"];
-  canonRefs?: BranchingProject["canonRefs"];
-  scripts?: BranchingProject["scripts"];
-  scriptDocuments?: BranchingProject["scriptDocuments"];
-  externalFunctions?: BranchingProject["externalFunctions"];
-  variables?: BranchingProject["variables"];
-  engineTargets?: BranchingProject["engineTargets"];
-  logicVariables?: BranchingProject["logicVariables"];
-  logicVariableGroups?: BranchingProject["logicVariableGroups"];
-  logicTypeOverrides?: BranchingProject["logicTypeOverrides"];
-  logicPropertyOverrides?: BranchingProject["logicPropertyOverrides"];
-  localExplorerEntities?: BranchingProject["localExplorerEntities"];
-  localExplorerTypes?: BranchingProject["localExplorerTypes"];
-  localExplorerProperties?: BranchingProject["localExplorerProperties"];
   sequenceIds?: string[];
 };
 
@@ -381,88 +360,65 @@ function parseModularStoryProject(
     : storyPath(storyId);
   const storyFile = files.find((file) => file.relativePath === modularPath);
   const parsedStory = parseJsonFile<ModularStoryFile>(storyFile);
-  if (!storyFile || !parsedStory) return undefined;
-  if (
-    parsedStory.storageVersion !== "0.2" &&
-    parsedStory.storageVersion !== "0.3" &&
-    parsedStory.storageVersion !== "0.4" &&
-    !Array.isArray(parsedStory.sequenceIds)
-  )
+  if (!storyFile || !parsedStory || typeof parsedStory !== "object") {
+    if (storyFile || story.path.endsWith("/story.json")) loadWarnings?.push(`Incomplete story: ${modularPath} is missing or invalid.`);
     return undefined;
+  }
+  if (!Array.isArray(parsedStory.sequenceIds) || parsedStory.sequenceIds.some((id) => typeof id !== "string")) {
+    loadWarnings?.push(`Incomplete story: ${modularPath} has an invalid sequence list.`);
+    return undefined;
+  }
+  if (parsedStory.storageVersion && !["0.2", "0.3", "0.4", STORAGE_VERSION].includes(parsedStory.storageVersion)) {
+    loadWarnings?.push(`Incomplete story: unsupported storage version ${parsedStory.storageVersion} in ${modularPath}.`);
+    return undefined;
+  }
 
-  const sequenceIds = Array.isArray(parsedStory.sequenceIds)
-    ? parsedStory.sequenceIds
-    : [];
-  const sequences = sequenceIds
-    .map((sequenceId) =>
-      parseJsonFile<unknown>(
-        files.find(
-          (file) => file.relativePath === sequencePath(storyId, sequenceId),
-        ),
-      ),
-    )
-    .map(unwrapSequence)
-    .filter((sequence): sequence is BranchingProject["sequences"][number] =>
-      Boolean(sequence),
-    );
-
-  const eventIds = new Set(
-    sequences.flatMap((sequence) => sequence.eventIds ?? []),
-  );
-  const branchIds = new Set(
-    sequences.flatMap((sequence) => sequence.branchIds ?? []),
-  );
-  const sequenceOwnerByEvent = new Map<string, string>();
-  const sequenceOwnerByBranch = new Map<string, string>();
-  sequences.forEach((sequence) => {
-    sequence.eventIds?.forEach((eventId) =>
-      sequenceOwnerByEvent.set(eventId, sequence.id),
-    );
-    sequence.branchIds?.forEach((branchId) =>
-      sequenceOwnerByBranch.set(branchId, sequence.id),
-    );
-  });
-
-  const events = Array.from(eventIds)
-    .map((eventId) => {
-      const sequenceId = sequenceOwnerByEvent.get(eventId);
-      return sequenceId
-        ? parseJsonFile<unknown>(
-            files.find(
-              (file) =>
-                file.relativePath === eventPath(storyId, sequenceId, eventId),
-            ),
-          )
-        : undefined;
-    })
-    .map(unwrapEvent)
-    .filter((event): event is BranchingProject["events"][number] =>
-      Boolean(event),
-    );
-
-  const branches = Array.from(branchIds)
-    .map((branchId) => {
-      const sequenceId = sequenceOwnerByBranch.get(branchId);
-      return sequenceId
-        ? parseJsonFile<unknown>(
-            files.find(
-              (file) =>
-                file.relativePath === branchPath(storyId, sequenceId, branchId),
-            ),
-          )
-        : undefined;
-    })
-    .map(unwrapBranch)
-    .filter((branch): branch is BranchingProject["branches"][number] =>
-      Boolean(branch),
-    );
-
-  const authoring = parseJsonFile<{
-    canvas?: BranchingProject["canvas"];
-    panels?: BranchingProject["panels"];
-  }>(files.find((file) => file.relativePath === authoringCanvasPath(storyId)));
-
+  const readRequired = <T>(relativePath: string, unwrap: (value: unknown) => T | undefined, expectedId?: string): T | undefined => {
+    const file = files.find((candidate) => candidate.relativePath === relativePath);
+    const value = unwrap(parseJsonFile<unknown>(file));
+    if (!value || (expectedId && (value as { id?: string }).id !== expectedId)) {
+      loadWarnings?.push(`Incomplete story: ${relativePath} is ${file ? "invalid or has a mismatched identifier" : "missing"}. Reopen after repairing the file before saving.`);
+      return undefined;
+    }
+    return value;
+  };
+  const sequenceIds = Array.isArray(parsedStory.sequenceIds) ? parsedStory.sequenceIds : [];
+  const sequences = sequenceIds.map((id) => readRequired(sequencePath(storyId, id), unwrapSequence, id))
+    .filter((value): value is BranchingProject["sequences"][number] => Boolean(value));
+  const events: BranchingProject["events"] = [];
+  const branches: BranchingProject["branches"] = [];
+  for (const sequence of sequences) {
+    if (!Array.isArray(sequence.eventIds) || (sequence.branchIds !== undefined && !Array.isArray(sequence.branchIds))) {
+      loadWarnings?.push(`Incomplete story: ${sequencePath(storyId, sequence.id)} has invalid member lists.`);
+      continue;
+    }
+    for (const id of sequence.eventIds) {
+      if (events.some((candidate) => candidate.id === id)) continue;
+      const event = readRequired(eventPath(storyId, sequence.id, id), unwrapEvent, id);
+      if (event && !events.some((candidate) => candidate.id === id)) events.push(event);
+      if (parsedStory.storageVersion === STORAGE_VERSION && !files.some((file) => file.relativePath === eventEvpathPath(storyId, sequence.id, id))) {
+        loadWarnings?.push(`Incomplete story: ${eventEvpathPath(storyId, sequence.id, id)} is missing.`);
+      }
+    }
+    for (const id of sequence.branchIds ?? []) {
+      if (branches.some((candidate) => candidate.id === id)) continue;
+      const branch = readRequired(branchPath(storyId, sequence.id, id), unwrapBranch, id);
+      if (branch && !branches.some((candidate) => candidate.id === id)) branches.push(branch);
+    }
+  }
+  const authoringFile = files.find((file) => file.relativePath === authoringCanvasPath(storyId));
+  const authoring = parseJsonFile<{ canvas?: BranchingProject["canvas"]; panels?: BranchingProject["panels"] }>(authoringFile);
+  if ((authoringFile || parsedStory.storageVersion === STORAGE_VERSION) && (!authoring || typeof authoring !== "object")) {
+    loadWarnings?.push(`Incomplete story: ${authoringCanvasPath(storyId)} is missing or invalid.`);
+  }
+  for (const path of [pathBranchingMetadataPaths.config, storyIntegrationConfigPath(storyId)]) {
+    if (files.some((file) => file.relativePath === path) && !parseIntegrationConfigFile(files, path)) {
+      loadWarnings?.push(`Incomplete story: ${path} cannot be parsed.`);
+    }
+  }
+  const { storageVersion: _storageVersion, sequenceIds: _sequenceIds, ...projectMetadata } = parsedStory;
   const baseProject = normalizeProject({
+    ...projectMetadata,
     specVersion: parsedStory.specVersion ?? "0.1",
     projectId: parsedStory.projectId ?? `pathbranching:${storyId}`,
     storyId,
@@ -583,13 +539,15 @@ function mergeCanonRefs(
   storyProject: BranchingProject,
 ) {
   const storyRefs = new Map(storyProject.canonRefs.map((ref) => [ref.id, ref]));
-  return canonIndex.canonRefs.map((ref) => {
+  const currentRefs = canonIndex.canonRefs.map((ref) => {
     const storyRef = storyRefs.get(ref.id);
     return {
       ...ref,
       workingCopyPath: storyRef?.workingCopyPath,
     };
   });
+  // Missing canon remains a diagnosable reference, never a silent deletion.
+  return [...currentRefs, ...storyProject.canonRefs.filter((ref) => !currentRefs.some((current) => current.id === ref.id))];
 }
 
 export function loadPathBranchingWorkspace(
@@ -599,6 +557,9 @@ export function loadPathBranchingWorkspace(
   const universeProfile = parseUniverseProfile(files);
   const loadWarnings: string[] = [];
   const parsedManifest = parseManifest(files, loadWarnings);
+  if (!files.some((file) => file.relativePath === pathBranchingMetadataPaths.manifest) && files.some((file) => file.relativePath.startsWith(`${pathBranchingMetadataPaths.stories}/`))) {
+    loadWarnings.push("Incomplete story: manifest is missing while story files exist.");
+  }
   const fallbackStoryId = defaultStoryId(files);
   const manifest = parsedManifest ?? {
     version: "0.1" as const,
@@ -609,15 +570,23 @@ export function loadPathBranchingWorkspace(
   const activeStory =
     manifest.stories.find((story) => story.id === manifest.activeStoryId) ??
     manifest.stories[0];
-  const loadedStory = activeStory
-    ? (parseModularStoryProject(files, activeStory, activeStory.id, loadWarnings) ??
-      parseLegacyStoryProject(files, activeStory, activeStory.id))
-    : undefined;
+  if (manifest.activeStoryId && !manifest.stories.some((story) => story.id === manifest.activeStoryId)) {
+    loadWarnings.push("Incomplete story: the active story is not present in the manifest.");
+  }
+  let loadedStory: ReturnType<typeof parseModularStoryProject>;
+  try {
+    loadedStory = activeStory
+      ? (parseModularStoryProject(files, activeStory, activeStory.id, loadWarnings) ?? parseLegacyStoryProject(files, activeStory, activeStory.id))
+      : undefined;
+  } catch (error) {
+    loadWarnings.push(`Incomplete story: ${activeStory?.path ?? "manifest"}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   if (parsedManifest && activeStory && !loadedStory) {
     loadWarnings.push(
       `Could not load PathBranching story "${activeStory.name}" from ${activeStory.path}.`,
     );
   }
+  const saveBlockReasons = loadWarnings.filter((warning) => warning.startsWith("Incomplete story:") || warning.startsWith("Could not parse ") || warning.startsWith("Ignored ") || warning.startsWith("Could not load ") || warning.startsWith("No se pudo leer el texto") || warning.startsWith("El texto editado"));
   const activeProject =
     loadedStory?.project ??
     createDefaultProject(
@@ -652,6 +621,9 @@ export function loadPathBranchingWorkspace(
     storyModifiedMs: loadedStory?.modifiedMs,
     createdDefaultStory: !activeStory,
     loadWarnings: loadWarnings.length ? loadWarnings : undefined,
+    loadingIncomplete: saveBlockReasons.length > 0,
+    saveBlocked: saveBlockReasons.length > 0,
+    saveBlockReasons: saveBlockReasons.length ? saveBlockReasons : undefined,
   };
 }
 
@@ -705,37 +677,15 @@ export function serializeModularStoryFiles(
     storyId: story.id,
     name: projectInput.name ?? story.name,
   });
+  // Keep all project metadata, including future modular authoring extensions.
+  // Only split graph/layout collections and integration YAML out of story.json.
+  const { sequences, branches, events, canvas, panels, integrationConfig, integrationConfigOverride, ...metadata } = project;
   const storyMetadata: ModularStoryFile = {
+    ...metadata,
     storageVersion: STORAGE_VERSION,
-    specVersion: project.specVersion,
-    projectId: project.projectId,
     storyId: story.id,
-    universeRootPath: project.universeRootPath,
     name: project.name ?? story.name,
-    sourceVault: project.sourceVault,
-    dataClasses: project.dataClasses,
-    projectDataObjects: project.projectDataObjects,
-    assets: project.assets ?? [],
-    canonEditSuggestions: project.canonEditSuggestions,
-    projectionRules: project.projectionRules,
-    graphModules: project.graphModules,
-    authoringPreferences: project.authoringPreferences,
-    entrySequenceId: project.entrySequenceId,
-    eventCategories: project.eventCategories,
-    canonRefs: project.canonRefs,
-    scripts: project.scripts,
-    scriptDocuments: project.scriptDocuments,
-    externalFunctions: project.externalFunctions,
-    variables: project.variables,
-    engineTargets: project.engineTargets,
-    logicVariables: project.logicVariables,
-    logicVariableGroups: project.logicVariableGroups,
-    logicTypeOverrides: project.logicTypeOverrides,
-    logicPropertyOverrides: project.logicPropertyOverrides,
-    localExplorerEntities: project.localExplorerEntities,
-    localExplorerTypes: project.localExplorerTypes,
-    localExplorerProperties: project.localExplorerProperties,
-    sequenceIds: project.sequences.map((sequence) => sequence.id),
+    sequenceIds: sequences.map((sequence) => sequence.id),
   };
 
   const files: Array<{ relativePath: string; content: string }> = [
@@ -749,7 +699,7 @@ export function serializeModularStoryFiles(
     },
   ];
 
-  if (project.integrationConfigOverride?.mappings.length) {
+  if (project.integrationConfigOverride) {
     files.push({
       relativePath: storyIntegrationConfigPath(story.id),
       content: serializeIntegrationConfigYaml(project.integrationConfigOverride),
