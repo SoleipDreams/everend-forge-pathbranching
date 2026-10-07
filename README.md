@@ -26,6 +26,10 @@ PathBranching is the narrative structure and branching layer of Everend Forge. I
 
 ## Current Status
 
+The active milestone is [authoring cycle closure](docs/AUTHORING_CLOSURE.md):
+verify editing, save/reopen, validation and offline exports as one workflow.
+Unity live synchronization is deferred while this cycle is completed.
+
 This repository currently contains design documentation, runtime examples, a TypeScript core, a React + React Flow story canvas, and a Tauri desktop shell. The UI opens the same universe folder used by WorldNotion, previews Markdown canon as references, stores branching metadata under `.everend/.pathbranching`, keeps the narrative canvas always open, validates modular conditions and rules, and previews runtime export.
 
 The near-term export target is the SINPO-style Unity ecosystem: Ink-centered narrative output plus GameData-compatible runtime structures. Longer term, PathBranching should support additional narrative exports such as Twine and other engine/story formats without making those formats the authoring source of truth.

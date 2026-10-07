@@ -2,6 +2,10 @@
 
 Read these documents in this order.
 
+Current milestone: [Authoring cycle closure](AUTHORING_CLOSURE.md). Unity live
+synchronization is deferred while the authoring, persistence and export loop is
+validated.
+
 1. [Design](DESIGN.md)
 2. [Integration Architecture](INTEGRATION_ARCHITECTURE.md)
 3. [Ontology and Projection Reanalysis](ONTOLOGY_PROJECTION_REANALYSIS.md)

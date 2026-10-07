@@ -3,4 +3,5 @@ dist/
 lib/
 src-tauri/target/
 src-tauri/bridge-runtime/
+.bridge-runtime-test-state/
 .DS_Store

@@ -11,7 +11,7 @@ traducciones, lógica ni assets asociados.
   mientras editas. Evpath es una *proyección editable*: el tab **Path** del
   inspector de eventos serializa el evento a texto, y el botón **Apply** parsea
   el texto y aplica las diferencias como mutaciones sobre el documento.
-- **Almacenamiento (storage 0.3):** al guardar, cada evento escribe un archivo
+- **Almacenamiento (storage 0.4):** al guardar, cada evento escribe un archivo
   `<evento>.evpath` **canónico** junto a su `<evento>.json` sidecar dentro de
   `.everend/.pathbranching/stories/<story>/sequences/<seq>/events/`. El `.evpath`
   es autoritativo para la narrativa que sabe expresar (texto, hablantes,
@@ -27,8 +27,10 @@ traducciones, lógica ni assets asociados.
   externa del `.evpath` gana, pero un caso límite del reconciliador nunca puede
   corromper una historia en silencio al abrir.
 - **Migración automática:** las historias 0.2 (solo JSON, sin `.evpath`) cargan
-  intactas y se actualizan a 0.3 en el siguiente guardado. No hay conversión ni
-  riesgo de pérdida.
+  intactas y se actualizan a 0.4 en el siguiente guardado. Las historias 0.3
+  también se admiten; 0.4 incorpora momentos de lógica unificada y ownership
+  explícito. Verificar siempre las advertencias de carga y conservar respaldo
+  antes de migrar contenido de producción.
 - **Exports:** Ink, Twine y GameData se generan desde el modelo, que en carga ya
   quedó reconciliado con el `.evpath`, así que parten de ese centro condensado.
 - **Límite de la fase 2:** el `.evpath` edita eventos existentes; crear eventos,
@@ -126,7 +128,7 @@ original y se emite un warning.
 
 `src/pathBranchingWorkspace.ts` integra el almacenamiento: `eventEvpathPath()`
 resuelve la ruta del archivo, `serializeModularStoryFiles()` emite los `.evpath`
-al guardar (storage `STORAGE_VERSION = "0.3"`), y la carga los reconcilia sobre
+al guardar (storage `STORAGE_VERSION = "0.4"`), y la carga los reconcilia sobre
 el JSON con la guarda de punto fijo.
 
 Verificación (dentro de `npm run verify:core`, o solo con `npm run verify:evpath`):
@@ -135,6 +137,6 @@ Verificación (dentro de `npm run verify:core`, o solo con `npm run verify:evpat
   serializada, idempotencia, edición de texto/hablante/variante/condición,
   altas y bajas de beats y outcomes, multi-root, líneas en blanco, errores).
 - `scripts/verify-evpath-storage.mjs` — round-trip a través de disco vía
-  `loadPathBranchingWorkspace`: emisión de `.evpath` + storage 0.3, ausencia de
+  `loadPathBranchingWorkspace`: emisión de `.evpath` + storage 0.4, ausencia de
   drift en carga, edición externa honrada, migración 0.2, y `.evpath` malformado
   que conserva el JSON.
