@@ -13,6 +13,7 @@ import type {
   Transition,
   ValidationFinding,
 } from "../domain.js";
+import { conditionUiCopy, conditionTreeSummary, conditionWarningCount, groupedConditionPresentation, type ConditionUiLocale } from "../conditionPresentation.js";
 import { conditionCount, conditionLabels, consequenceLabel, walkConditions } from "../logic.js";
 import { presentConditionInput, presentConsequences, type LogicPresentation } from "../logicCapabilities.js";
 import { blockValues, localizedValue } from "../localization.js";
@@ -152,6 +153,7 @@ export type StoryCanvasModelOptions = {
   gridSize?: number;
   authoringDisplay?: AuthoringDisplaySettings;
   canvasLayerMode?: CanvasLayerMode;
+  interfaceLocale?: ConditionUiLocale;
 };
 
 function hashString(value: string) {
@@ -271,6 +273,7 @@ function canvasLogicSummary(
   kind: StoryCanvasNodeKind,
   details: Record<string, unknown>,
   expanded: boolean,
+  locale: ConditionUiLocale = "en",
 ): StoryCanvasNodeData["logicSummary"] {
   if (!LOGIC_NODE_KINDS.has(kind)) return undefined;
   const owner = [
@@ -286,24 +289,22 @@ function canvasLogicSummary(
   const when = owner?.logic?.when ?? owner?.availability ?? owner?.conditions ?? owner?.displayCondition;
   const effects = owner?.logic?.then ?? owner?.consequences ?? [];
   const ruleEffects = owner?.logic?.rules?.reduce((count, rule) => count + (rule.then?.length ?? 0), 0) ?? 0;
-  const whenLabels = conditionLabels(when);
+  const whenSummary = conditionTreeSummary(project, when, locale, expanded ? 240 : 150);
   const effectLabels = effects.map(consequenceLabel);
-  const whenItems = presentConditionInput(project, when, expanded ? 3 : 2);
+  const whenItems = groupedConditionPresentation(project, when, locale, expanded ? 240 : 150);
   const thenItems = presentConsequences(project, effects, expanded ? 3 : 2);
   const effectCount = effects.length + ruleEffects;
   return {
-    when: whenLabels.length
-      ? whenItems.map((item) => item.text).join(" · ") || whenLabels.slice(0, expanded ? 3 : 1).join(" · ")
-      : "Always",
+    when: whenSummary.text,
     then: effectCount
       ? thenItems.length
         ? `${effectCount} · ${thenItems.map((item) => item.text).join(" · ") || effectLabels.slice(0, 2).join(" · ")}`
-        : `${effectCount} effect${effectCount === 1 ? "" : "s"}`
-      : "No effects",
+        : `${effectCount} ${locale === "es" ? "consecuencia" : "effect"}${effectCount === 1 ? "" : "s"}`
+      : conditionUiCopy(locale).noEffects,
     expanded,
     whenItems,
     thenItems,
-    warningCount: [...whenItems, ...thenItems].filter((item) => item.status !== "enabled").length,
+    warningCount: conditionWarningCount(project, when) + thenItems.filter(item => item.status !== "enabled").length,
   };
 }
 
@@ -321,7 +322,7 @@ function applyCanvasLogicMode(
         ...node.data,
         canvasLayerMode,
         logicSummary: canvasLayerMode === "logic"
-          ? canvasLogicSummary(project, node.data.kind, node.data.details ?? {}, false)
+          ? canvasLogicSummary(project, node.data.kind, node.data.details ?? {}, false, options.interfaceLocale)
           : undefined,
       },
     })),
@@ -355,7 +356,7 @@ function transitionCanvasLabel(transition: Transition) {
   return transition.label?.trim() ?? "";
 }
 
-function transitionEdgeData(project: BranchingProject, transition: Transition): Partial<StoryCanvasEdgeData> {
+function transitionEdgeData(project: BranchingProject, transition: Transition, locale: ConditionUiLocale = "en"): Partial<StoryCanvasEdgeData> {
   const role = transition.role ?? (
     transition.mode === "fallback" || transition.conditions || transition.logic?.when || transition.consequences?.length || transition.logic?.then?.length
       ? "route"
@@ -363,11 +364,11 @@ function transitionEdgeData(project: BranchingProject, transition: Transition): 
   );
   const conditions = transition.logic?.when ?? transition.conditions;
   const consequences = transition.logic?.then ?? transition.consequences;
-  const conditionSummary = conditionLabels(conditions).slice(0, 2);
+  const conditionSummary = [conditionTreeSummary(project, conditions, locale, 150).text];
   const consequenceSummary = (consequences ?? [])
     .map(consequenceLabel)
     .slice(0, 1);
-  const conditionItems = presentConditionInput(project, conditions, 2);
+  const conditionItems = groupedConditionPresentation(project, conditions, locale, 150);
   const consequenceItems = presentConsequences(project, consequences, 2);
   return {
     routeRole: role,
@@ -383,7 +384,7 @@ function transitionEdgeData(project: BranchingProject, transition: Transition): 
       consequences: consequenceItems.length ? consequenceItems.map((item) => item.text) : consequenceSummary,
       conditionItems,
       consequenceItems,
-      warningCount: [...conditionItems, ...consequenceItems].filter((item) => item.status !== "enabled").length,
+      warningCount: conditionWarningCount(project, conditions) + consequenceItems.filter(item => item.status !== "enabled").length,
     } : undefined,
   };
 }
@@ -421,6 +422,7 @@ function transitionEdge(
   project: BranchingProject,
   event: EventNode,
   transition: Transition,
+  locale: ConditionUiLocale = "en",
 ): StoryCanvasEdge {
   const source = visualTransitionSource(event, transition);
   return {
@@ -430,7 +432,7 @@ function transitionEdge(
       transition.to,
       "transition",
       transitionCanvasLabel(transition),
-      transitionEdgeData(project, transition),
+      transitionEdgeData(project, transition, locale),
     ),
     sourceHandle: source.handleId,
     animated: transition.role === "route",
@@ -583,7 +585,7 @@ function projectRouteGates(
             index,
             mode: route.data?.mode === "fallback" ? "fallback" : "conditional",
             label: typeof route.data?.customLabel === "string" ? route.data.customLabel : "",
-            condition: preview?.conditionItems?.[0]?.text ?? preview?.conditions?.[0] ?? "Always",
+            condition: preview?.conditionItems?.[0]?.text ?? preview?.conditions?.[0] ?? conditionUiCopy(options.interfaceLocale).always,
           };
         }),
         junctionPresentation: options.canvasLayerMode === "logic" ? "gate" : "split",
@@ -1562,7 +1564,7 @@ function buildEventScopeModel(
       ? restartOutputId
       : targetMemberContainerId ?? transition.to;
     if (!nodeIds.has(source.nodeId) || !nodeIds.has(targetId)) return;
-    edges.push(transitionEdge(project, eventNode, { ...transition, to: targetId }));
+    edges.push(transitionEdge(project, eventNode, { ...transition, to: targetId }, options.interfaceLocale));
   });
 
   projectRouteGates(project, nodes, edges, scope, options);
@@ -1716,11 +1718,11 @@ function buildDialogueScopeModel(
     const sourceInside = nodeIds.has(source.nodeId);
     const targetInside = nodeIds.has(transition.to);
     if (sourceInside && targetInside) {
-      edges.push(transitionEdge(project, eventNode, transition));
+      edges.push(transitionEdge(project, eventNode, transition, options.interfaceLocale));
     } else if (sourceInside && !targetInside) {
-      edges.push(transitionEdge(project, eventNode, { ...transition, to: outputId }));
+      edges.push(transitionEdge(project, eventNode, { ...transition, to: outputId }, options.interfaceLocale));
     } else if (!sourceInside && targetInside && transition.to !== entryBeat) {
-      edges.push(transitionEdge(project, eventNode, { ...transition, from: inputId }));
+      edges.push(transitionEdge(project, eventNode, { ...transition, from: inputId }, options.interfaceLocale));
     }
   });
 
@@ -1850,7 +1852,7 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
           transition.to,
           "transition",
           transitionCanvasLabel(transition),
-          transitionEdgeData(project, transition),
+          transitionEdgeData(project, transition, options.interfaceLocale),
         ),
       });
     });

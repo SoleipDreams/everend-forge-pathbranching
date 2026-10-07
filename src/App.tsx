@@ -32,6 +32,7 @@ import { LogicPanel } from "./components/LogicPanel.js";
 import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
 import { PlayerPanel } from "./components/PlayerPanel.js";
 import { ExportPanel } from "./components/ExportPanel.js";
+import { ExportPreviewDialog } from "./components/ExportPreviewDialog.js";
 import { EventScriptWorkspace } from "./components/EventScriptWorkspace.js";
 import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
 import { ConnectPanel } from "./components/ConnectPanel.js";
@@ -11664,6 +11665,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         gridSize: settingsRef.current.canvasBackground.gridSize,
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: canvasLayerModeRef.current,
+        interfaceLocale: uiLocaleRef.current,
       });
       if (options.dirty || options.revision) {
         projectRevisionRef.current += 1;
@@ -11742,6 +11744,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         gridSize: settingsRef.current.canvasBackground.gridSize,
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: restoredLayerMode,
+        interfaceLocale: uiLocaleRef.current,
       });
       workspaceRef.current = nextWorkspace;
       projectRef.current = activeProjectWithScope;
@@ -11880,6 +11883,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           gridSize: settingsRef.current.canvasBackground.gridSize,
           authoringDisplay: settingsRef.current.authoringDisplay,
           canvasLayerMode: canvasLayerModeRef.current,
+        interfaceLocale: uiLocaleRef.current,
         });
         setProject(snapshot.project);
         setActiveScopeState(snapshotScope);
@@ -12939,6 +12943,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       gridSize: settings.canvasBackground.gridSize,
       authoringDisplay: settings.authoringDisplay,
       canvasLayerMode,
+      interfaceLocale: uiLocale,
     });
     setActiveScopeState(scope);
     // Layer changes are a single graph replacement. Interpolating nodes while
@@ -14122,6 +14127,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         gridSize: settingsRef.current.canvasBackground.gridSize,
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: canvasLayerModeRef.current,
+        interfaceLocale: uiLocaleRef.current,
       });
       projectRef.current = nextProject;
       setProject(nextProject);
@@ -18191,6 +18197,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             collapsed={panelCollapsed.export}
             onCollapsedChange={(collapsed) => setPanelCollapsedState("export", collapsed)}
             onContextMenu={openPanelContextMenu}
+            locale={uiLocale}
+            onPreview={(mode) => { setExportPreviewMode(mode); setExportOpen(true); }}
+            onLocateDiagnostic={locateExportDiagnostic}
             onExport={(mode) => void exportRuntime(mode)}
             onImportTwine={importTwine}
           /></WorkspacePanelSlot> : null}
@@ -18224,6 +18233,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           </div>
         ) : null}
       </div>
+      {project ? <ExportPreviewDialog project={project} mode={exportPreviewMode} open={exportOpen} onClose={() => setExportOpen(false)} onExport={(mode) => void exportRuntime(mode)} /> : null}
       {!onboardingDismissed && !showInteractionTutorial && !showSettings && !exportOpen ? (
         <OnboardingGuide
           steps={pathBranchingOnboardingSteps}

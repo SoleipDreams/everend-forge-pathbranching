@@ -1,0 +1,104 @@
+.condition-ux {
+  container-type: inline-size;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.78rem;
+}
+
+.condition-ux *, .condition-test-controls * { box-sizing: border-box; }
+.condition-ux :is(input, select, textarea) { min-width: 0; max-width: 100%; }
+.condition-ux :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--wn-accent);
+  outline-offset: 2px;
+}
+.condition-ux > header { flex-wrap: wrap; align-items: flex-start; }
+.condition-ux > header .condition-tree-summary { font-size: 0.75rem; line-height: 1.45; overflow-wrap: anywhere; }
+.condition-ux .condition-tree-group {
+  margin: 8px 0;
+  padding: 8px;
+  min-width: 0;
+  border: 1px solid var(--wn-border);
+  border-left: 3px solid var(--pb-decision, var(--wn-accent));
+  border-radius: 6px;
+  background: var(--wn-panel);
+}
+.condition-ux .condition-tree-group .condition-tree-group { margin-left: 4px; }
+.condition-group-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.condition-group-toolbar select { flex: 1 1 120px; }
+.condition-ux .condition-tree-leaf { margin: 8px 0; padding: 0; }
+.condition-ux .condition-predicate-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  padding: 8px;
+  gap: 8px;
+  border: 1px solid var(--wn-border);
+  border-left: 3px solid var(--pb-decision, var(--wn-accent));
+  border-radius: 6px;
+  background: var(--wn-card);
+}
+.condition-ux .condition-field { display: grid; gap: 4px; min-width: 0; margin: 0; align-items: stretch; }
+.condition-field > span:first-child { color: var(--wn-muted); font-size: 0.75rem; }
+.condition-ux .condition-field :is(input, select) { width: 100%; min-height: 30px; }
+.condition-field [aria-invalid="true"] { border-color: var(--wn-danger); }
+.condition-field-error { color: var(--wn-danger); font-size: 0.75rem; line-height: 1.45; overflow-wrap: anywhere; }
+.condition-row-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.condition-ux .condition-row-actions button, .condition-ux .condition-group-toolbar button { min-height: 30px; }
+.condition-ux .logic-composer-actions { flex-wrap: wrap; justify-content: flex-start; }
+.condition-ux .logic-composer-actions button { min-height: 30px; }
+.condition-ux .logic-row-capability-warning { font-size: 0.75rem; line-height: 1.45; }
+.condition-ux .logic-composer-row.effect,
+.condition-ux .logic-composer-row.simple,
+.condition-ux .logic-composer-row.simple.variable { grid-template-columns: repeat(2, minmax(0, 1fr)); min-width: 0; }
+.condition-ux .logic-composer-row.effect :is(select, input) { min-height: 30px; }
+.condition-ux .logic-composer-row.effect .icon-only { justify-self: end; }
+.condition-drop-chooser { margin: 8px 0; padding: 8px; border: 1px solid var(--wn-accent); border-radius: 6px; }
+.condition-drop-chooser h4 { margin: 0 0 6px; font-size: 0.8rem; }
+.condition-drop-chooser > div { display: flex; gap: 6px; flex-wrap: wrap; }
+.condition-ux .condition-tester { border-top: 1px solid var(--wn-border); padding-top: 10px; margin-top: 10px; }
+.condition-ux summary { cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; }
+.condition-ux .condition-tester p { line-height: 1.45; }
+.condition-test-controls { display: grid; gap: 8px; min-width: 0; }
+.condition-test-control { padding: 8px; border: 1px solid var(--wn-border); border-radius: 6px; background: var(--wn-card); min-width: 0; }
+.condition-test-control > strong { display: block; margin-bottom: 6px; overflow-wrap: anywhere; }
+.condition-test-control .condition-test-input { display: grid; gap: 6px; }
+.condition-test-control input[type="checkbox"] { width: auto; }
+.condition-test-control .condition-defined-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.condition-test-control .condition-field-error { display: block; }
+.condition-list-input { display: grid; gap: 6px; min-width: 0; }
+.condition-list-input > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.condition-list-input > button { justify-self: start; }
+.condition-list-input input { min-width: 0; width: 100%; }
+.condition-test-advanced { margin: 10px 0; border: 1px solid var(--wn-border); padding: 8px; border-radius: 6px; }
+.condition-test-advanced fieldset { min-width: 0; border: 1px solid var(--wn-border); margin: 8px 0; }
+.condition-ux .condition-tester textarea { min-height: 120px; width: 100%; font-family: monospace; }
+.condition-result-list, .condition-route-results { padding-left: 20px; min-width: 0; }
+.condition-ux .condition-result { line-height: 1.45; overflow-wrap: anywhere; padding: 5px 0; }
+.condition-result-label { display: block; }
+.condition-result-value { display: block; color: var(--wn-muted); font-size: 0.75rem; }
+.condition-ux .condition-result.satisfied > strong { color: var(--wn-accent); }
+.condition-ux .condition-result.unsatisfied > strong { color: var(--wn-muted); }
+.condition-ux .condition-result.unresolved > strong { color: var(--wn-warning, var(--wn-text)); }
+.condition-ux .condition-result.invalid > strong { color: var(--wn-danger); }
+.condition-route-results { list-style: none; padding-left: 0; display: grid; gap: 8px; }
+.condition-route-results > li { padding: 8px; border: 1px solid var(--wn-border); border-radius: 6px; overflow-wrap: anywhere; }
+.condition-route-results > li.selected { border-color: var(--wn-accent); }
+.condition-route-results > li.blocked { border-color: var(--wn-danger); }
+.condition-route-results > li.skipped { color: var(--wn-muted); }
+.condition-route-id { display: block; color: var(--wn-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+.condition-route-summary { padding: 8px; border-left: 3px solid var(--wn-accent); background: var(--wn-card); overflow-wrap: anywhere; }
+.condition-route-summary.blocked { border-left-color: var(--wn-danger); }
+.condition-ux .condition-empty { margin: 6px 0; color: var(--wn-muted); line-height: 1.45; }
+
+@container (max-width: 340px) {
+  .condition-ux .condition-predicate-row,
+  .condition-ux .logic-composer-row.effect,
+  .condition-ux .logic-composer-row.simple,
+  .condition-ux .logic-composer-row.simple.variable { grid-template-columns: minmax(0, 1fr); }
+  .condition-ux .condition-tree-group { padding: 6px; }
+  .condition-ux .condition-tree-group .condition-tree-group { margin-left: 0; }
+}
+
+@container (min-width: 700px) {
+  .condition-ux .condition-predicate-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}

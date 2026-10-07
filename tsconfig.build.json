@@ -22,6 +22,8 @@
     "src/canvas/nodePlacement.ts",
     "src/explorerEntities.ts",
     "src/explorerSchema.ts",
-    "src/evpathFormat.ts"
+    "src/evpathFormat.ts",
+    "src/adaptiveWorkspace.ts",
+    "src/diagnosticPresentation.ts"
   ]
 }

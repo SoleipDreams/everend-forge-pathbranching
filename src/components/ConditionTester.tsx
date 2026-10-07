@@ -1,46 +1,163 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
+import { CircleAlert, Check, Minus, Pause, SkipForward } from 'lucide-react';
 import type { BranchingProject, ConditionInput, LogicPredicate } from '../domain.js';
-import { evaluateConditionDetailed, effectiveConditions, externalConditionKey, type ConditionEvaluationResult } from '../conditionEvaluation.js';
-import { orderedTransitions, resolveFirstValidTransition, walkConditions, type NarrativeEvaluationState } from '../logic.js';
+import { conditionValueMatchesType, effectiveConditions, evaluateConditionDetailed, externalConditionKey, resolveConditionValue, type ConditionEvaluationResult } from '../conditionEvaluation.js';
+import { isConditionSet, type NarrativeEvaluationState } from '../logic.js';
 import { grantableEntities } from '../explorerSchema.js';
+import { conditionDiagnosticMessage, conditionExpressionAtPath, conditionPredicateLabel, conditionRouteResolution, conditionTestControls, conditionUiCopy, narrativeTargetLabel, type ConditionTestControl, type ConditionUiLocale } from '../conditionPresentation.js';
+import { useInterfaceLocale } from '../i18n.js';
+import '../conditionUx.css';
 
 function initialState(project: BranchingProject): NarrativeEvaluationState {
-  return { variables: {...project.variables, ...Object.fromEntries((project.logicVariables ?? []).map(v => [v.id,v.value]))}, inventory:[], visited:[], entityStates:{}, externalResults:{} };
+  return {variables: {...project.variables, ...Object.fromEntries((project.logicVariables ?? []).map(v => [v.id, v.value]))}, inventory: [], visited: [], entityStates: {}, externalResults: {}};
 }
-const labels = {satisfied:'Cumple',unsatisfied:'No cumple',unresolved:'Sin resolver',invalid:'Inválido'};
-function ResultTree({result}:{result:ConditionEvaluationResult}) {
-  return <li className={`condition-result ${result.status}`}><strong>{labels[result.status]}</strong> · {result.message}
-    {result.actual !== undefined ? <code> {JSON.stringify(result.actual)}</code> : null}
-    {result.children?.length ? <ul>{result.children.map(child=><ResultTree key={child.path} result={child} />)}</ul> : null}
+
+function ResultTree({result, project, input, locale}: {result: ConditionEvaluationResult; project: BranchingProject; input?: ConditionInput; locale: ConditionUiLocale}) {
+  const c = conditionUiCopy(locale);
+  const expression = conditionExpressionAtPath(project, input, result.path);
+  const predicate = expression && !isConditionSet(expression) ? expression as LogicPredicate : undefined;
+  const Icon = result.status === 'satisfied' ? Check : result.status === 'unsatisfied' ? Minus : result.status === 'unresolved' ? Pause : CircleAlert;
+  return <li className={`condition-result ${result.status}`}>
+    <strong><Icon size={13} aria-hidden="true"/> {c[result.status]}</strong>
+    <span className="condition-result-label">{predicate ? conditionPredicateLabel(project, predicate, locale) : ['ALL', 'ANY', 'NOT'].includes(result.message) ? result.message === 'ALL' ? 'AND' : result.message === 'ANY' ? 'OR' : 'NOT' : result.message === 'Always' ? c.always : conditionDiagnosticMessage(result.message, locale)}</span>
+    {predicate && ['invalid', 'unresolved'].includes(result.status) ? <span className="condition-field-error">{conditionDiagnosticMessage(result.message, locale)}</span> : null}
+    {predicate && result.actual !== undefined ? <span className="condition-result-value">{c.actual}: <code>{JSON.stringify(result.actual)}</code></span> : null}
+    {result.children?.length ? <ul className="condition-result-list">{result.children.map(child => <ResultTree key={child.path} result={child} project={project} input={input} locale={locale}/>)}</ul> : null}
   </li>;
 }
-export function ConditionTester({project,conditions}:{project:BranchingProject;conditions?:ConditionInput}) {
-  const [state,setState] = useState<NarrativeEvaluationState>(()=>initialState(project));
-  const [advanced,setAdvanced] = useState('{}');
-  const [advancedError,setAdvancedError] = useState('');
-  const [source,setSource] = useState('');
+
+function updateControlState(state: NarrativeEvaluationState, control: ConditionTestControl, value: unknown, project: BranchingProject): NarrativeEvaluationState {
+  const predicate = control.predicate, s = predicate.subject;
+  if (predicate.type === 'external') {
+    const next = {...state.externalResults}, key = externalConditionKey(predicate);
+    if (value === undefined) delete next[key]; else next[key] = Boolean(value);
+    return {...state, externalResults: next};
+  }
+  if (s.kind === 'variable') return {...state, variables: {...state.variables, [s.variableId]: value}};
+  if (s.kind === 'progress') {
+    const visited = new Set(state.visited ?? []);
+    visited.delete(s.targetId); visited.delete(`${s.targetType}:${s.targetId}`);
+    if (value) visited.add(`${s.targetType}:${s.targetId}`);
+    return {...state, visited: [...visited]};
+  }
+  if (s.kind === 'entity') {
+    const old = state.entityStates?.[s.entityId];
+    const part = predicate.type === 'state' ? 'states' : 'properties';
+    const key = predicate.type === 'state' ? predicate.stateId : predicate.type === 'property' ? predicate.propertyId : '';
+    return {...state, entityStates: {...state.entityStates, [s.entityId]: {...old, [part]: {...old?.[part], [key]: value}}}};
+  }
+  if (s.kind === 'dataObject') {
+    const objects = [...(state.dataObjects ?? project.projectDataObjects ?? [])];
+    const base = project.projectDataObjects?.find(object => object.id === s.objectId);
+    if (predicate.type === 'state') return {...state, dataObjects: value ? objects.some(object => object.id === s.objectId) || !base ? objects : [...objects, {...base, fields: {...base.fields}}] : objects.filter(object => object.id !== s.objectId)};
+    if (!base || predicate.type !== 'property') return state;
+    const current = objects.find(object => object.id === s.objectId) ?? base;
+    const changed = {...current, fields: {...current.fields, [predicate.propertyId]: value}};
+    return {...state, dataObjects: [...objects.filter(object => object.id !== s.objectId), changed]};
+  }
+  return state;
+}
+
+function TestValueControl({control, project, state, onChange, locale}: {control: ConditionTestControl; project: BranchingProject; state: NarrativeEvaluationState; onChange: (value: unknown) => void; locale: ConditionUiLocale}) {
+  const id = useId();
+  const c = conditionUiCopy(locale);
+  const resolved = resolveConditionValue(control.predicate, project, state);
+  const value = resolved.value;
+  const external = control.predicate.type === 'external';
+  const boolean = ['state', 'visited', 'external'].includes(control.predicate.type) || ['boolean', 'bool'].includes(control.valueType ?? '');
+  const list = ['list', 'multiselect', 'entity-ref-list'].includes(control.valueType ?? '');
+  const number = ['number', 'integer', 'float'].includes(control.valueType ?? '');
+  const canBeUndefined = !['state', 'visited', 'external'].includes(control.predicate.type);
+  const defined = value !== undefined && value !== null;
+  const error = resolved.error ?? (value !== undefined && value !== null && !conditionValueMatchesType(value, control.valueType) ? `${c.needsValue} ${control.valueType ?? "text/number/boolean/list"}.` : undefined);
+  const descriptionId = error ? `${id}-error` : list ? `${id}-hint` : undefined;
+  const defaultValue = boolean ? false : list ? [] : number ? 0 : '';
+  return <div className="condition-test-control">
+    <strong id={`${id}-label`}>{control.label}</strong>
+    <div className="condition-test-input">
+      {boolean ? <select id={id} aria-labelledby={`${id}-label`} aria-describedby={descriptionId} disabled={Boolean(resolved.error)} aria-invalid={Boolean(error)} value={defined ? String(value) : ''} onChange={event => onChange(event.target.value === '' ? undefined : event.target.value === 'true')}>
+        {!defined || external ? <option value="">{external ? c.unresolved : c.isUndefined}</option> : null}{defined && typeof value !== 'boolean' ? <option value={String(value)}>{String(value)} · {c.invalid}</option> : null}<option value="true">{c.yes}</option><option value="false">{c.no}</option>
+      </select> : list ? <div className="condition-list-input" role="group" aria-labelledby={`${id}-label`}>
+        {(Array.isArray(value) ? value : []).map((item, index) => <div key={index}><input aria-label={`${control.label} · ${index + 1}`} disabled={Boolean(resolved.error)} value={String(item)} onChange={event => onChange((value as unknown[]).map((old, i) => i === index ? event.target.value : old))}/><button type="button" aria-label={`${c.removeItem} · ${index + 1}`} disabled={Boolean(resolved.error)} onClick={() => onChange((value as unknown[]).filter((_, i) => i !== index))}>×</button></div>)}
+        <button type="button" disabled={Boolean(resolved.error)} onClick={() => onChange([...(Array.isArray(value) ? value : []), ''])}>{c.addItem}</button>
+      </div> : <input id={id} aria-labelledby={`${id}-label`} aria-describedby={descriptionId} aria-invalid={Boolean(error)} disabled={Boolean(resolved.error)} type={number ? 'number' : control.valueType === 'date' ? 'date' : 'text'} value={String(value ?? '')} onChange={event => onChange(number ? event.target.value === '' ? undefined : Number(event.target.value) : event.target.value)}/>}
+    </div>
+    {canBeUndefined ? <label className="condition-defined-toggle"><input type="checkbox" disabled={Boolean(resolved.error)} checked={defined} onChange={event => onChange(event.target.checked ? defaultValue : undefined)}/>{c.defined}</label> : null}
+    {list ? <span className="condition-result-value" id={`${id}-hint`}>{c.itemHint}</span> : null}
+    {error ? <span className="condition-field-error" id={`${id}-error`}>{conditionDiagnosticMessage(error, locale)}</span> : null}
+  </div>;
+}
+
+function parseAdvancedState(text: string): Pick<NarrativeEvaluationState, 'entityStates' | 'canonStates' | 'dataObjects' | 'unlockedCanonRefs'> {
+  const parsed: unknown = JSON.parse(text);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('Expected a JSON object.');
+  const allowed = ['entityStates', 'canonStates', 'dataObjects', 'unlockedCanonRefs'];
+  if (Object.keys(parsed).some(key => !allowed.includes(key))) throw Error(`Allowed fields: ${allowed.join(', ')}.`);
+  const object = parsed as Record<string, unknown>;
+  if (object.unlockedCanonRefs !== undefined && (!Array.isArray(object.unlockedCanonRefs) || object.unlockedCanonRefs.some(value => typeof value !== 'string'))) throw Error('unlockedCanonRefs must be a list of IDs.');
+  for (const key of ['entityStates', 'canonStates']) {
+    const value = object[key];
+    if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value) || Object.values(value).some(item => !item || typeof item !== 'object' || Array.isArray(item)))) throw Error(`${key} must contain objects keyed by entity ID.`);
+  }
+  if (object.entityStates) for (const entity of Object.values(object.entityStates as Record<string, Record<string, unknown>>)) {
+    for (const part of ['states', 'properties']) if (entity[part] !== undefined && (!entity[part] || typeof entity[part] !== 'object' || Array.isArray(entity[part]))) throw Error(`entityStates.${part} must be an object.`);
+    if (entity.states && Object.values(entity.states as Record<string, unknown>).some(value => typeof value !== 'boolean')) throw Error('State values must be boolean.');
+  }
+  if (object.dataObjects !== undefined && (!Array.isArray(object.dataObjects) || object.dataObjects.some(item => !item || typeof item !== 'object' || typeof item.id !== 'string' || !item.fields || typeof item.fields !== 'object' || Array.isArray(item.fields)))) throw Error('dataObjects must contain objects with an ID and fields object.');
+  return parsed as ReturnType<typeof parseAdvancedState>;
+}
+
+export function ConditionTester({project, conditions, locale: localeOverride}: {project: BranchingProject; conditions?: ConditionInput; locale?: ConditionUiLocale}) {
+  const interfaceLocale = useInterfaceLocale();
+  const locale = localeOverride ?? interfaceLocale;
+  const c = conditionUiCopy(locale);
+  const [state, setState] = useState<NarrativeEvaluationState>(() => initialState(project));
+  const [advanced, setAdvanced] = useState('{}');
+  const [advancedError, setAdvancedError] = useState('');
+  const [source, setSource] = useState('');
+  const advancedId = useId();
   const groups = new Map<string, NonNullable<BranchingProject['events'][number]['transitions']>>();
-  for (const event of project.events) for (const route of event.transitions ?? []) groups.set(route.from,[...(groups.get(route.from) ?? []),route]);
+  for (const event of project.events) for (const route of event.transitions ?? []) groups.set(route.from, [...(groups.get(route.from) ?? []), route]);
   const routes = groups.get(source) ?? [];
-  const selected = resolveFirstValidTransition(routes,project,state);
-  const external = new Map<string,Extract<LogicPredicate,{type:'external'}>>();
-  for (const input of [conditions,...routes.map(effectiveConditions)]) walkConditions(input,p=>{if ('subject' in p && p.type==='external') external.set(externalConditionKey(p as Extract<LogicPredicate,{type:'external'}>),p as Extract<LogicPredicate,{type:'external'}>);});
-  const toggle = (field:'inventory'|'visited',id:string,checked:boolean) => setState(current=>({...current,[field]:checked?[...new Set([...(current[field] ?? []),id])]:[...(current[field] ?? [])].filter(x=>x!==id)}));
-  return <details className="condition-tester"><summary>Probar condiciones</summary>
-    <p>Estado temporal. No se guarda en la historia ni se exporta.</p>
-    {(project.logicVariables ?? []).map(variable=><label key={variable.id}>{variable.name}
-      {variable.type === 'boolean' ? <select aria-label={`Test ${variable.name}`} value={String(state.variables?.[variable.id])} onChange={e=>setState({...state,variables:{...state.variables,[variable.id]:e.target.value==='true'}})}><option>true</option><option>false</option></select> :
-      <input aria-label={`Test ${variable.name}`} type={variable.type==='number'?'number':'text'} value={Array.isArray(state.variables?.[variable.id])?(state.variables![variable.id] as string[]).join(', '):String(state.variables?.[variable.id] ?? '')} onChange={e=>setState({...state,variables:{...state.variables,[variable.id]:variable.type==='number'?(e.target.value===''?undefined:Number(e.target.value)):variable.type==='list'?e.target.value.split(',').map(v=>v.trim()).filter(Boolean):e.target.value}})} />}
-    </label>)}
-    <fieldset><legend>Inventario</legend>{grantableEntities(project).map(entity=><label key={entity.id}><input type="checkbox" checked={new Set(state.inventory ?? []).has(entity.id)} onChange={e=>toggle('inventory',entity.id,e.target.checked)} />{entity.label}</label>)}</fieldset>
-    <fieldset><legend>Eventos visitados</legend>{project.events.map(event=><label key={event.id}><input type="checkbox" checked={new Set(state.visited ?? []).has(event.id)} onChange={e=>toggle('visited',event.id,e.target.checked)} />{event.name}</label>)}</fieldset>
-    <label>Rutas desde<select aria-label="Test route source" value={source} onChange={e=>setSource(e.target.value)}><option value="">Solo esta condición</option>{[...groups.keys()].map(id=><option key={id} value={id}>{project.events.find(e=>e.id===id)?.name ?? id}</option>)}</select></label>
-    {[...external.keys()].map(key=><label key={key}>{key}<select aria-label={`External result ${key}`} value={state.externalResults?.[key]===undefined?'':String(state.externalResults[key])} onChange={e=>{const next={...state.externalResults}; if(e.target.value==='') delete next[key]; else next[key]=e.target.value==='true'; setState({...state,externalResults:next});}}><option value="">Sin resolver</option><option>true</option><option>false</option></select></label>)}
-    <details><summary>Estados y propiedades temporales (JSON)</summary><p>Objeto con entityStates, canonStates, dataObjects o unlockedCanonRefs. Las propiedades se toman del documento si no se sobrescriben.</p>
-      <textarea aria-label="Temporary condition state JSON" value={advanced} onChange={e=>{setAdvanced(e.target.value);try{const parsed:unknown=JSON.parse(e.target.value);if(!parsed || typeof parsed!=='object' || Array.isArray(parsed)) throw Error('Debe ser un objeto JSON');const allowed=['entityStates','canonStates','dataObjects','unlockedCanonRefs'];if(Object.keys(parsed).some(k=>!allowed.includes(k))) throw Error(`Campos permitidos: ${allowed.join(', ')}`);if ('dataObjects' in parsed && !Array.isArray(parsed.dataObjects)) throw Error('dataObjects debe ser una lista');if ('unlockedCanonRefs' in parsed && (!Array.isArray(parsed.unlockedCanonRefs) || parsed.unlockedCanonRefs.some((x:unknown)=>typeof x!=='string'))) throw Error('unlockedCanonRefs debe ser una lista de IDs');for (const key of ['entityStates','canonStates']) {const value=(parsed as Record<string,unknown>)[key];if(value!==undefined && (!value || typeof value!=='object' || Array.isArray(value))) throw Error(`${key} debe ser un objeto`);}setState(current=>{const {entityStates,canonStates,dataObjects,unlockedCanonRefs,...base}=current;return {...base,...parsed} as NarrativeEvaluationState;});setAdvancedError('');}catch(error){setAdvancedError(String(error));}}} />
+  const resolution = conditionRouteResolution(project, routes, state);
+  const used = conditionTestControls(project, [conditions, ...routes.map(effectiveConditions)], locale);
+  const allInputs: LogicPredicate[] = [
+    ...(project.logicVariables ?? []).map(variable => ({type: 'value' as const, subject: {kind: 'variable' as const, variableId: variable.id}, operator: 'exists' as const})),
+    ...grantableEntities(project).map(entity => ({type: 'state' as const, subject: {kind: 'entity' as const, entityId: entity.id}, stateId: 'owned', operator: 'has' as const})),
+    ...project.events.map(event => ({type: 'visited' as const, subject: {kind: 'progress' as const, targetType: 'event' as const, targetId: event.id}, operator: 'has' as const})),
+  ];
+  const remaining = conditionTestControls(project, allInputs, locale).filter(control => !used.some(item => item.key === control.key));
+  const renderControl = (control: ConditionTestControl) => <TestValueControl key={control.key} control={control} project={project} state={state} locale={locale} onChange={value => setState(current => updateControlState(current, control, value, project))}/>;
+  const selected = resolution.selected, blocked = resolution.blocked;
+  const currentResult = evaluateConditionDetailed(conditions, project, state);
+  const routeTitle = (route: typeof routes[number]) => `${route.mode === 'fallback' ? c.else : route.label?.trim() || c.route} → ${narrativeTargetLabel(project, route.to)}`;
+  return <details className="condition-tester condition-ux"><summary>{c.tester}</summary>
+    <p>{c.temporary}</p>
+    <label className="condition-field"><span>{c.routeSource}</span><select value={source} onChange={event => setSource(event.target.value)}><option value="">{c.thisCondition}</option>{[...groups.keys()].map(id => <option key={id} value={id}>{narrativeTargetLabel(project, id)}</option>)}</select></label>
+    <h4>{c.usedValues}</h4>
+    {used.length ? <div className="condition-test-controls">{used.map(renderControl)}</div> : <p className="condition-empty">{c.noUsedValues}</p>}
+    <details className="condition-test-advanced"><summary>{c.advanced}</summary>
+      <div className="condition-test-controls">{remaining.map(renderControl)}</div>
+      <details onToggle={event => {if (event.currentTarget.open) setAdvanced(JSON.stringify({entityStates: state.entityStates ?? {}, canonStates: state.canonStates ?? {}, ...(state.dataObjects ? {dataObjects: state.dataObjects} : {}), unlockedCanonRefs: [...(state.unlockedCanonRefs ?? [])]}, null, 2));}}>
+        <summary>{c.json}</summary><p id={`${advancedId}-hint`}>{c.jsonHint}</p>
+        <textarea aria-label={c.json} aria-describedby={`${advancedId}-hint${advancedError ? ` ${advancedId}-error` : ''}`} aria-invalid={Boolean(advancedError)} value={advanced} onChange={event => {setAdvanced(event.target.value); try {const parsed = parseAdvancedState(event.target.value); setState(current => {const {entityStates, canonStates, dataObjects, unlockedCanonRefs, ...base} = current; return {...base, ...parsed};}); setAdvancedError('');} catch (error) {setAdvancedError(error instanceof Error ? error.message : String(error));}}}/>
+        {advancedError ? <p role="alert" className="condition-field-error" id={`${advancedId}-error`}>{conditionDiagnosticMessage(advancedError, locale)}</p> : null}
+      </details>
     </details>
-    {advancedError ? <p role="alert">{advancedError}</p> : <><ul aria-live="polite"><ResultTree result={evaluateConditionDetailed(conditions,project,state)} /></ul>
-      {source ? <><p role="status">Ruta: {selected ? `${selected.id} → ${selected.to}` : 'Ninguna ruta resuelta'}</p><ul>{orderedTransitions(routes).map(route=><li key={route.id}>{route.mode==='fallback'?'Else':route.id}<ul><ResultTree result={evaluateConditionDetailed(effectiveConditions(route),project,state)} /></ul></li>)}</ul></> : null}</>}
-    <button type="button" onClick={()=>{setState(initialState(project));setAdvanced('{}');setAdvancedError('');}}>Restablecer prueba</button>
+    <h4>{c.results}</h4>
+    {!advancedError ? <>
+      <span className="visually-hidden" role="status">{c.results}: {c[currentResult.status]}</span>
+      <ul className="condition-result-list"><ResultTree result={currentResult} project={project} input={conditions} locale={locale}/></ul>
+      {source ? <>
+        <p className={`condition-route-summary ${blocked || resolution.status === 'duplicateElse' ? 'blocked' : ''}`} role="status">
+          {selected ? `${c.selected}: ${routeTitle(selected)}` : blocked ? `${c.blocked}: ${routeTitle(blocked)}` : resolution.status === 'duplicateElse' ? c.duplicateElse : c.noRoute}
+        </p>
+        <ol className="condition-route-results">{resolution.routes.map(({route, reached, result}, index) => <li key={route.id} className={route.id === selected?.id ? 'selected' : route.id === blocked?.id ? 'blocked' : !reached ? 'skipped' : ''}>
+          <strong>{index + 1}. {routeTitle(route)}</strong><small className="condition-route-id">{route.id}</small>
+          {reached && result ? <ul className="condition-result-list"><ResultTree result={result} project={project} input={effectiveConditions(route)} locale={locale}/></ul> : <p><SkipForward size={13} aria-hidden="true"/> {c.notEvaluated}</p>}
+        </li>)}</ol>
+      </> : null}
+    </> : <p className="condition-empty">{locale === 'es' ? 'Corrige el JSON para actualizar los resultados. Se conserva el último estado válido.' : 'Fix the JSON to update the results. The last valid state is preserved.'}</p>}
+    <button type="button" onClick={() => {setState(initialState(project)); setAdvanced('{}'); setAdvancedError('');}}>{c.reset}</button>
   </details>;
 }
