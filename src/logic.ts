@@ -16,7 +16,9 @@ import type {
   Transition,
 } from "./domain.js";
 
-import { evaluateConditionDetailed, effectiveConditions, type ConditionProject } from './conditionEvaluation.js';
+import { conditionValueMatchesType, conditionValueType, evaluateConditionDetailed, effectiveConditions, type ConditionProject } from './conditionEvaluation.js';
+import { entityDefinition, ownerKey, resolveContextSubject } from './authoringEntities.js';
+import { resolveLogicField } from './logicCapabilities.js';
 export { evaluateConditionDetailed, effectiveConditions, combineConditions } from './conditionEvaluation.js';
 export type { ConditionEvaluationResult, ConditionStatus } from './conditionEvaluation.js';
 
@@ -30,6 +32,8 @@ export type NarrativeEvaluationState = {
   inventory?: Set<string> | string[];
   unlockedCanonRefs?: Set<string> | string[];
   entityStates?: PlayerSimulationState["entityStates"];
+  entityInstances?: PlayerSimulationState["entityInstances"];
+  context?: PlayerSimulationState["context"];
 };
 
 type LogicProject = ConditionProject;
@@ -74,9 +78,9 @@ export function resolveConsequences(
 }
 
 function applyValueOperation(current: unknown, operation: string, value: unknown): unknown {
-  if (operation === "toggle") return !Boolean(current);
-  if (operation === "add") return Number(current ?? 0) + Number(value ?? 0);
-  if (operation === "subtract") return Number(current ?? 0) - Number(value ?? 0);
+  if (operation === "toggle") return typeof current === 'boolean' ? !current : current;
+  if (operation === "add") return typeof current === 'number' && typeof value === 'number' ? current + value : current;
+  if (operation === "subtract") return typeof current === 'number' && typeof value === 'number' ? current - value : current;
   if (operation === "append") {
     const values = Array.isArray(current) ? current : [];
     return values.includes(value) ? values : [...values, value];
@@ -95,6 +99,23 @@ function stateOperationValue(operation: string, value: unknown): boolean {
 
 export function applyLogicEffect(effect: LogicEffect, state: PlayerSimulationState): PlayerSimulationState {
   if (effect.type === "external") return state;
+  if (effect.subject.kind === 'context') {
+    const subject = resolveContextSubject(effect.subject, state);
+    return subject ? applyLogicEffect({ ...effect, subject } as LogicEffect, state) : state;
+  }
+  if (effect.subject.kind === 'instance') {
+    const id = effect.subject.instanceId;
+    return { ...state, entityInstances: (state.entityInstances ?? []).map(instance => {
+      if (instance.id !== id) return instance;
+      if (effect.type === 'property') return { ...instance, properties: { ...instance.properties, [effect.propertyId]: applyValueOperation(instance.properties?.[effect.propertyId], effect.operation, effect.value) } };
+      if (effect.type === 'state') return { ...instance, states: { ...instance.states, [effect.stateId]: effect.operation === 'toggle' ? !instance.states?.[effect.stateId] : stateOperationValue(effect.operation, effect.value) } };
+      return instance;
+    }) };
+  }
+  if (effect.subject.kind === 'dataObject' && effect.type === 'property') {
+    const id = effect.subject.objectId;
+    return { ...state, dataObjects: (state.dataObjects ?? []).map(object => object.id === id ? { ...object, fields: { ...object.fields, [effect.propertyId]: applyValueOperation(object.fields?.[effect.propertyId], effect.operation, effect.value) } } : object) };
+  }
   if (effect.type === "value" && effect.subject.kind === "variable") {
     const current = state.variables?.[effect.subject.variableId];
     return {
@@ -181,6 +202,60 @@ export function applyConsequence(consequence: Consequence, state: PlayerSimulati
   return { ...state, variables: { ...state.variables, [consequence.name]: consequence.value } };
 }
 
+export type EffectApplicationResult = { status: 'applied' | 'invalid' | 'unresolved'; state: PlayerSimulationState; message?: string };
+/** Strict authoring reducer. Legacy wrappers remain available for older consumers. */
+export function applyConsequenceDetailed(project: BranchingProject, state: PlayerSimulationState, consequence: Consequence): EffectApplicationResult {
+  const effect = migrateConsequence(consequence, project.logicVariables ?? []);
+  const invalid = (message: string): EffectApplicationResult => ({ status: 'invalid', state, message });
+  if (effect.type === 'external') return { status: 'unresolved', state, message: 'External actions require an explicit implementation' };
+  const subject = resolveContextSubject(effect.subject, state);
+  if (!subject) return { status: 'unresolved', state, message: 'Supply action context' };
+  if (subject.kind === 'variable' && !project.logicVariables?.some(v => v.id === subject.variableId)) return invalid(`Missing variable ${subject.variableId}`);
+  if (subject.kind === 'entity' && !entityDefinition(project, subject.entityId)) return invalid(`Missing entity ${subject.entityId}`);
+  if (subject.kind === 'instance' && !(state.entityInstances ?? []).some(i => i.id === subject.instanceId)) return invalid(`Missing copy ${subject.instanceId}`);
+  if (subject.kind === 'dataObject' && !project.projectDataObjects?.some(o => o.id === subject.objectId)) return invalid(`Missing data object ${subject.objectId}`);
+  if (subject.kind === 'progress' || subject.kind === 'external') return invalid('Incompatible effect subject');
+  if (effect.type === 'value' && subject.kind !== 'variable' || effect.type === 'property' && subject.kind === 'variable' || effect.type === 'state' && !['entity','instance'].includes(subject.kind)) return invalid('Incompatible effect and subject');
+  const predicate = { ...effect, subject, operator: '==' } as unknown as LogicPredicate;
+  let type = effect.type === 'state' ? 'boolean' : conditionValueType(predicate, project);
+  const current = effect.type === 'state' ? false : (() => {
+    if (subject.kind === 'variable') return state.variables?.[subject.variableId] ?? project.logicVariables?.find(v => v.id === subject.variableId)?.value;
+    if (subject.kind === 'dataObject' && effect.type === 'property') return (state.dataObjects ?? project.projectDataObjects)?.find(o => o.id === subject.objectId)?.fields?.[effect.propertyId];
+    if (subject.kind === 'instance' && effect.type === 'property') { const i = state.entityInstances?.find(i => i.id === subject.instanceId); return i?.properties?.[effect.propertyId] ?? (i ? entityDefinition(project, i.entityId)?.properties[effect.propertyId] : undefined); }
+    if (subject.kind === 'entity' && effect.type === 'property') return state.entityStates?.[subject.entityId]?.properties?.[effect.propertyId] ?? entityDefinition(project, subject.entityId)?.properties[effect.propertyId];
+    return undefined;
+  })();
+  type ??= Array.isArray(current) ? 'list' : typeof current === 'number' ? 'number' : typeof current === 'boolean' ? 'boolean' : typeof current === 'string' ? 'text' : undefined;
+  const capabilitySubject = subject.kind === 'instance' ? { kind: 'entity' as const, entityId: state.entityInstances!.find(i => i.id === subject.instanceId)!.entityId } : subject;
+  const fieldId = effect.type === 'state' ? effect.stateId : effect.type === 'property' ? effect.propertyId : 'value';
+  const field = resolveLogicField(project, capabilitySubject, 'effect', effect.type, fieldId);
+  if (field.status !== 'enabled') return invalid(`Effect field ${fieldId} is ${field.status}`);
+  if (!['set','toggle','add','subtract','append','remove','clear','grant','ungrant','unlock','lock','discover','hide','enter','leave'].includes(effect.operation)) return invalid('Unsupported effect operation');
+  if (['add','subtract'].includes(effect.operation) && (type !== 'number' || typeof current !== 'number' || !Number.isFinite(current) || typeof effect.value !== 'number' || !Number.isFinite(effect.value) || !Number.isFinite(effect.operation === 'add' ? current + effect.value : current - effect.value))) return invalid('Numeric effect requires finite numeric operands');
+  if (effect.operation === 'toggle' && type !== 'boolean') return invalid('Toggle requires a boolean');
+  if (['append','remove'].includes(effect.operation) && (!Array.isArray(current) || typeof effect.value !== 'string')) return invalid('List effect requires a list and one text item');
+  if (effect.operation === 'set' && !conditionValueMatchesType(effect.value, type)) return invalid(`Effect value does not match ${type ?? 'scalar/list type'}`);
+  if (effect.type !== 'state' && ['grant','ungrant','unlock','lock','discover','hide','enter','leave'].includes(effect.operation)) return invalid('State operation applied to a property');
+  const hydrated = { ...state, dataObjects: state.dataObjects ?? structuredClone(project.projectDataObjects ?? []) };
+  if (effect.type === 'property' && subject.kind === 'entity' && !Object.prototype.hasOwnProperty.call(state.entityStates?.[subject.entityId]?.properties ?? {}, effect.propertyId)) hydrated.entityStates = { ...state.entityStates, [subject.entityId]: { ...state.entityStates?.[subject.entityId], properties: { ...entityDefinition(project, subject.entityId)?.properties, ...state.entityStates?.[subject.entityId]?.properties } } };
+  if (effect.type === 'property' && subject.kind === 'instance') hydrated.entityInstances = state.entityInstances?.map(i => i.id === subject.instanceId ? { ...i, properties: { ...entityDefinition(project, i.entityId)?.properties, ...i.properties } } : i);
+  let next = applyLogicEffect({ ...effect, subject } as LogicEffect, hydrated);
+  if (effect.type === 'state' && effect.stateId === 'owned' && subject.kind === 'entity') {
+    const profileId = state.context?.profileId ?? 'default';
+    const legacyId = `instance:legacy:${encodeURIComponent(profileId)}:${encodeURIComponent(subject.entityId)}`;
+    const instances = (state.entityInstances ?? []).map(i => ({...i}));
+    const owned = next.entityStates?.[subject.entityId]?.states?.owned;
+    if (owned) {
+      const existing = instances.find(i => i.id === legacyId);
+      if (existing) existing.owner = { kind:'profile',profileId };
+      else instances.push({ id:legacyId,entityId:subject.entityId,owner:{kind:'profile',profileId} });
+    }
+    next = { ...next, inventory: [], entityInstances: owned ? instances : instances.map(i => i.entityId === subject.entityId && (ownerKey(i.owner) === `profile:${profileId}` || state.context?.actor?.kind === 'entity' && ownerKey(i.owner) === `entity:${state.context.actor.entityId}`) ? { ...i, owner:undefined } : i) };
+    if (next.entityStates?.[subject.entityId]?.states) { const { owned: _owned, ...states } = next.entityStates[subject.entityId]!.states!; next.entityStates = { ...next.entityStates,[subject.entityId]:{...next.entityStates[subject.entityId],states} }; }
+  }
+  return { status: 'applied', state: next };
+}
+
 export function isConditionSet(expression: ConditionExpression): expression is ConditionSet {
   return Boolean(expression && typeof expression === "object" && ("all" in expression || "any" in expression || "not" in expression));
 }
@@ -210,6 +285,7 @@ function walkConditionExpression(
   if (!expression || typeof expression !== "object") return;
   if (!isConditionSet(expression)) {
     visit(expression, path);
+    if (expression.type === 'instanceQuery') walkConditions(expression.filters as ConditionInput | undefined, visit, `${path}.filters`);
     return;
   }
 
@@ -319,6 +395,7 @@ function migrateCondition(condition: Condition, variables: LogicVariable[]): Con
 }
 
 function migrateExpression(expression: ConditionExpression, variables: LogicVariable[]): ConditionExpression {
+  if (expression && 'type' in expression && expression.type === 'instanceQuery') return { ...expression, filters: migrateConditionInput(expression.filters as ConditionInput | undefined, variables) };
   if (!isConditionSet(expression)) return migrateCondition(expression, variables);
   if ("all" in expression) return { ...expression, all: Array.isArray(expression.all) ? expression.all.map((child) => migrateExpression(child, variables)) : expression.all };
   if ("any" in expression) return { ...expression, any: Array.isArray(expression.any) ? expression.any.map((child) => migrateExpression(child, variables)) : expression.any };
@@ -391,8 +468,10 @@ export function migrateLogicMoment(
     when: migrateConditionInput(rule.when, variables)!,
     then: rule.then.map((effect) => migrateConsequence(effect, variables)),
   }));
-  if (!migratedWhen && !then.length && !migratedRules.length) return undefined;
+  if (!migratedWhen && !then.length && !migratedRules.length && !existing?.narrativeEffects?.length) return undefined;
   return {
+    ...(existing?.repeat ? { repeat: existing.repeat } : {}),
+    ...(existing?.narrativeEffects ? { narrativeEffects: existing.narrativeEffects } : {}),
     ...(migratedWhen ? { when: migratedWhen } : {}),
     ...(then.length ? { then } : {}),
     ...(migratedRules.length ? { rules: migratedRules } : {}),
@@ -405,6 +484,7 @@ export function inferredTransitionRole(transition: Transition, siblingCount = 1)
     transition.mode === "fallback" ||
     Boolean(transition.conditions ?? transition.logic?.when) ||
     Boolean((transition.consequences ?? transition.logic?.then)?.length) ||
+    Boolean(transition.logic?.narrativeEffects?.length || transition.logic?.rules?.length) ||
     Boolean(transition.function)
     ? "route"
     : "flow";
@@ -422,7 +502,7 @@ export function conditionLabel(condition: Condition): string {
           ? subject.variableId
           : subject.kind === "progress"
             ? subject.targetId
-            : subject.functionId;
+            : subject.kind === 'instance' ? subject.instanceId : subject.kind === 'context' ? subject.role : subject.functionId;
     if (predicate.type === "state") return `${subjectId} ${predicate.operator} ${predicate.stateId}`;
     if (predicate.type === "property") return `${subjectId}.${predicate.propertyId} ${predicate.operator}`;
     if (predicate.type === "value") return `${subjectId} ${predicate.operator}`;
@@ -475,7 +555,7 @@ export function consequenceLabel(consequence: Consequence): string {
           ? subject.variableId
           : subject.kind === "progress"
             ? subject.targetId
-            : subject.functionId;
+            : subject.kind === 'instance' ? subject.instanceId : subject.kind === 'context' ? subject.role : subject.functionId;
     if (consequence.type === "state") return `${consequence.operation} ${subjectId}`;
     if (consequence.type === "property") return `${consequence.operation} ${subjectId}.${consequence.propertyId}`;
     if (consequence.type === "value") return `${consequence.operation} ${subjectId}`;

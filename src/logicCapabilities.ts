@@ -10,6 +10,7 @@ import type {
 } from "./domain.js";
 import { conditionLabels, consequenceLabel, walkConditions } from "./logic.js";
 import { typeCapability } from "./explorerSchema.js";
+import { entityCapabilities } from './authoringEntities.js';
 
 export type LogicCapabilityPurpose = "condition" | "effect";
 export type LogicCapabilityStatus = "enabled" | "disabled" | "missing" | "incompatible";
@@ -78,6 +79,8 @@ export function logicSubjectKey(subject: LogicSubject): string {
   if (subject.kind === "dataObject") return `data:${subject.objectId}`;
   if (subject.kind === "variable") return `variable:${subject.variableId}`;
   if (subject.kind === "progress") return `progress:${subject.targetType}:${subject.targetId}`;
+  if (subject.kind === 'instance') return `instance:${subject.instanceId}`;
+  if (subject.kind === 'context') return `context:${subject.role}`;
   return `external:${subject.functionId}`;
 }
 
@@ -85,6 +88,11 @@ export function logicEntityDescriptor(
   project: BranchingProject,
   subject: LogicSubject,
 ): { source: "canon" | "local"; typeId?: string; label: string; color?: string; icon?: string } | undefined {
+  if (subject.kind === 'instance') {
+    const instance = project.entityInstances?.find(i => i.id === subject.instanceId) ?? project.authoringScenarios?.flatMap(s => s.state?.entityInstances ?? []).find(i => i.id === subject.instanceId);
+    const descriptor = instance ? logicEntityDescriptor(project, { kind: 'entity', entityId: instance.entityId }) : undefined;
+    return descriptor ? { ...descriptor, label: instance?.name ?? `${descriptor.label} · ${subject.instanceId}` } : undefined;
+  }
   if (subject.kind !== "entity") return undefined;
   const canon = project.canonRefs.find((item) => item.id === subject.entityId);
   const local = project.localExplorerEntities?.find((item) => item.id === subject.entityId);
@@ -143,6 +151,8 @@ export function logicSubjectOptions(
   entities.sort((left, right) => Number(right.contextual) - Number(left.contextual) || left.label.localeCompare(right.label));
   return [
     ...entities,
+    ...(project.entityInstances ?? []).map(instance => ({ key: `instance:${instance.id}`, label: instance.name ?? `${logicEntityDescriptor(project, {kind:'entity',entityId:instance.entityId})?.label ?? instance.entityId} · ${instance.id}`, detail: 'copy', subject: {kind:'instance' as const, instanceId:instance.id}, contextual: false })),
+    ...(['actor','self','target'] as const).map(role => ({ key:`context:${role}`,label:role === 'actor' ? 'Actor' : role === 'self' ? 'This entity / copy' : 'Recipient',detail:'action context',subject:{kind:'context' as const,role},contextual:true })),
     ...(project.logicVariables ?? []).map((variable) => ({
       key: `variable:${variable.id}`,
       label: variable.name,
@@ -192,6 +202,11 @@ export function resolveLogicField(
   fieldKind: LogicFieldOption["kind"],
   fieldId: string,
 ): LogicFieldOption {
+  if (subject.kind === 'context') {
+    const property = propertyDefinition(project, fieldId);
+    const configured = project.logicPropertyOverrides?.some(o => o.propertyId === fieldId && (purpose === 'condition' ? o.conditionReadable : o.actionWritable));
+    return { key: fieldId, label: fieldKind === 'state' ? LOGIC_ROLE_LABELS[fieldId as EntityRuntimeStateRole] ?? fieldId : property?.label ?? fieldId, kind: fieldKind, valueType: fieldKind === 'state' ? 'boolean' : property?.valueType, status: fieldKind === 'state' || configured ? 'enabled' : 'disabled' };
+  }
   if (subject.kind === "external") {
     const external = project.externalFunctions.find((item) => item.name === subject.functionId);
     const validKind = purpose === "condition"
@@ -223,8 +238,8 @@ export function resolveLogicField(
     return { key: fieldId, label: fieldId, kind: fieldKind, status: "missing" };
   }
   if (fieldKind === "state") {
-    const capability = typeCapability(project, entity.source, entity.typeId);
-    const enabled = capability?.runtimeRoles?.includes(fieldId as EntityRuntimeStateRole) === true;
+    const entityId = subject.kind === 'entity' ? subject.entityId : subject.kind === 'instance' ? project.entityInstances?.find(i => i.id === subject.instanceId)?.entityId : undefined;
+    const enabled = entityId ? entityCapabilities(project, entityId).runtimeRoles[fieldId] === true : false;
     return {
       key: fieldId,
       label: LOGIC_ROLE_LABELS[fieldId as EntityRuntimeStateRole] ?? fieldId,
@@ -237,7 +252,9 @@ export function resolveLogicField(
   const property = propertyDefinition(project, fieldId);
   const override = project.logicPropertyOverrides?.find((item) => item.source === entity.source && item.propertyId === fieldId);
   const applies = !property?.appliesToTypes?.length || property.appliesToTypes.some((typeId) => normalizedTypeId(typeId) === entity.typeId);
-  const enabled = purpose === "condition" ? override?.conditionReadable === true : override?.actionWritable === true;
+  const entityId = subject.kind === 'entity' ? subject.entityId : subject.kind === 'instance' ? project.entityInstances?.find(i => i.id === subject.instanceId)?.entityId : undefined;
+  const individual = project.entityOverrides?.find(o => o.entityId === entityId)?.properties?.[fieldId];
+  const enabled = purpose === "condition" ? (individual?.conditionReadable ?? override?.conditionReadable) === true : (individual?.actionWritable ?? override?.actionWritable) === true;
   return {
     key: fieldId,
     label: property?.label ?? fieldId,
@@ -253,6 +270,10 @@ export function logicFieldOptions(
   subject: LogicSubject,
   purpose: LogicCapabilityPurpose,
 ): LogicFieldOption[] {
+  if (subject.kind === 'context') {
+    const fields = (project.localExplorerProperties ?? []).filter(p => !['group','entity-type'].includes(p.valueType)).map(p => resolveLogicField(project,subject,purpose,'property',p.id)).filter(f => f.status === 'enabled');
+    return [...(['owned','unlocked','discovered','present'] as const).map(role => resolveLogicField(project,subject,purpose,'state',role)), ...fields];
+  }
   if (subject.kind === "external") return [resolveLogicField(project, subject, purpose, "external", "call")].filter((field) => field.status === "enabled");
   if (subject.kind === "variable") return [resolveLogicField(project, subject, purpose, "value", "value")].filter((field) => field.status === "enabled");
   if (subject.kind === "progress") return [resolveLogicField(project, subject, purpose, "visited", "visited")].filter((field) => field.status === "enabled");
@@ -268,11 +289,12 @@ export function logicFieldOptions(
   }
   const entity = logicEntityDescriptor(project, subject);
   if (!entity?.typeId) return [];
-  const roles = typeCapability(project, entity.source, entity.typeId)?.runtimeRoles ?? [];
+  const entityId = subject.kind === 'entity' ? subject.entityId : subject.kind === 'instance' ? project.entityInstances?.find(i => i.id === subject.instanceId)?.entityId : undefined;
+  const roles = entityId ? Object.entries(entityCapabilities(project, entityId).runtimeRoles).filter(([,enabled]) => enabled).map(([role]) => role) : [];
   const states = roles.map((role) => resolveLogicField(project, subject, purpose, "state", role));
-  const properties = (project.logicPropertyOverrides ?? [])
-    .filter((override) => override.source === entity.source && !override.propertyId.startsWith("type:"))
-    .map((override) => resolveLogicField(project, subject, purpose, "property", override.propertyId))
+  const propertyIds = new Set([...(project.logicPropertyOverrides ?? []).filter(o => o.source === entity.source && !o.propertyId.startsWith('type:')).map(o => o.propertyId), ...Object.keys(project.entityOverrides?.find(o => o.entityId === entityId)?.properties ?? {})]);
+  const properties = [...propertyIds]
+    .map((propertyId) => resolveLogicField(project, subject, purpose, "property", propertyId))
     .filter((field) => field.status === "enabled" && field.valueType !== "group")
     .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index);
   return [...states, ...properties];
@@ -297,7 +319,8 @@ export function logicEffectOperations(field: LogicFieldOption): LogicEffectOpera
     };
     return operations[field.key] ?? ["set", "toggle"];
   }
-  if (field.valueType === "number" || field.valueType === "date") return ["set", "add", "subtract", "clear"];
+  if (field.valueType === "number") return ["set", "add", "subtract", "clear"];
+  if (field.valueType === "date") return ['set','clear'];
   if (field.valueType === "list" || field.valueType === "multiselect" || field.valueType === "entity-ref-list") return ["set", "append", "remove", "clear"];
   if (field.valueType === "boolean") return ["set", "toggle", "clear"];
   return ["set", "clear"];
@@ -335,6 +358,8 @@ function subjectPresentation(project: BranchingProject, subject: LogicSubject) {
     return { label: event?.name ?? subject.targetId };
   }
   if (subject.kind === "external") return { label: subject.functionId };
+  if (subject.kind === 'context') return { label: subject.role === 'actor' ? 'Actor' : subject.role === 'self' ? 'This entity / copy' : 'Recipient' };
+  if (subject.kind === 'instance') return { label: subject.instanceId };
   return { label: subject.entityId };
 }
 

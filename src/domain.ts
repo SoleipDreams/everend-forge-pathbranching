@@ -160,6 +160,8 @@ export type EntityRuntimeStateRole = "owned" | "unlocked" | "discovered" | "pres
 
 export type LogicSubject =
   | { kind: "entity"; entityId: string; source?: "canon" | "local" }
+  | { kind: "instance"; instanceId: string }
+  | { kind: "context"; role: "actor" | "self" | "target" }
   | { kind: "dataObject"; objectId: string }
   | { kind: "variable"; variableId: string }
   | {
@@ -271,6 +273,9 @@ export type LogicMoment = {
   when?: ConditionInput;
   then?: Consequence[];
   rules?: LogicRule[];
+  /** Entry effects fire once per traversal unless explicitly repeated. */
+  repeat?: "once" | "each-entry";
+  narrativeEffects?: NarrativeEffect[];
 };
 
 export type CanonEditSuggestionStatus =
@@ -318,6 +323,7 @@ export type LogicPropertyOverride = {
   grantable?: boolean;
   /** For entity-type properties: entities of this type can be selected as an Event/DialogueBeat location. */
   location?: boolean;
+  container?: boolean;
   /** @deprecated Type capabilities formerly stored on synthetic `type:*` property overrides. */
   runtimeRoles?: EntityRuntimeStateRole[];
 };
@@ -330,6 +336,7 @@ export type LogicTypeOverride = {
   grantable?: boolean;
   /** Entities of this type can be selected as an Event/DialogueBeat location. */
   location?: boolean;
+  container?: boolean;
   /** Runtime state roles explicitly enabled for entities of this type. */
   runtimeRoles?: EntityRuntimeStateRole[];
 };
@@ -351,6 +358,91 @@ export type PlayerSimulationState = {
   visited?: string[];
   activeNodeId?: string;
   activeDecisionId?: string;
+  entityInstances?: EntityInstance[];
+  dataObjects?: ProjectDataObject[];
+  externalResults?: Record<string, boolean>;
+  context?: { actor?: LogicSubject; self?: LogicSubject; target?: LogicSubject; profileId?: string };
+};
+
+export type EntityOwner =
+  | { kind: "entity"; entityId: string }
+  | { kind: "instance"; instanceId: string }
+  | { kind: "profile"; profileId: string }
+  | { kind: "context"; role: "actor" | "self" | "target" };
+export type EntityInstance = {
+  id: string;
+  entityId: string;
+  name?: string;
+  properties?: Record<string, unknown>;
+  states?: Record<string, boolean>;
+  owner?: EntityOwner;
+};
+export type EntityCapabilityOverride = {
+  entityId: string;
+  grantable?: boolean;
+  location?: boolean;
+  container?: boolean;
+  runtimeRoles?: Partial<Record<EntityRuntimeStateRole | string, boolean>>;
+  properties?: Record<string, { conditionReadable?: boolean; actionWritable?: boolean }>;
+};
+export type InstanceQuery = {
+  type: "instanceQuery";
+  entityId?: string;
+  owner?: EntityOwner;
+  quantifier: "some" | "all" | "count";
+  filters?: ConditionInput;
+  operator?: LogicComparisonOperator;
+  value?: number;
+};
+export type InstanceEffect = {
+  type: "instanceEffect";
+  operation: "create" | "move" | "modify" | "remove";
+  entityId?: string;
+  instanceId?: string;
+  instanceIds?: string[];
+  selection?: "all" | "selected";
+  query?: Omit<InstanceQuery, "type" | "quantifier" | "operator" | "value">;
+  owner?: EntityOwner | null;
+  name?: string;
+  properties?: Record<string, unknown>;
+  states?: Record<string, boolean>;
+};
+export type NarrativeEffect = Consequence | InstanceEffect;
+export type NarrativeAction = {
+  id: string;
+  name: string;
+  description?: string;
+  entityId?: string;
+  typeId?: string;
+  source?: "canon" | "local";
+  /** Individual action replaces this inherited type action, including disabling it. */
+  overridesActionId?: string;
+  enabled?: boolean;
+  requiresTarget?: boolean;
+  when?: ConditionInput;
+  effects?: NarrativeEffect[];
+  targetNodeId?: string;
+  navigation?: "call" | "jump";
+  repeat?: "once" | "each-entry";
+};
+export type NarrativeRule = {
+  id: string;
+  name: string;
+  trigger: "enter" | "continue" | "stateChanged";
+  scope: { kind: "global" } | { kind: "event" | "dialogue" | "node"; id: string };
+  when?: ConditionInput;
+  effects?: NarrativeEffect[];
+  targetNodeId?: string;
+  priority?: number;
+  repeat?: "once" | "each-entry";
+};
+export type AuthoringScenario = {
+  id: string;
+  name: string;
+  actor?: LogicSubject;
+  profileId?: string;
+  startNodeId?: string;
+  state?: PlayerSimulationState;
 };
 
 export type PlayerProfile = {
@@ -950,6 +1042,11 @@ export type BranchingProject = {
   playerSimulation?: PlayerSimulationState;
   playerProfiles?: PlayerProfile[];
   activePlayerProfileId?: string;
+  entityInstances?: EntityInstance[];
+  entityOverrides?: EntityCapabilityOverride[];
+  narrativeActions?: NarrativeAction[];
+  narrativeRules?: NarrativeRule[];
+  authoringScenarios?: AuthoringScenario[];
   projectionRules?: ProjectionRule[];
   graphModules?: GraphModuleDefinition[];
   canvas?: CanvasAuthoringState;

@@ -26,3 +26,7 @@ export * from "./utils/appEnvironment.js";
 
 export * from "./conditionEvaluation.js";
 export * from "./conditionEditing.js";
+
+export * from "./authoringEngine.js";
+export * from "./authoringEntities.js";
+export * from "./authoringDrafts.js";

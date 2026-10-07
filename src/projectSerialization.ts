@@ -19,6 +19,7 @@ import { normalizeBranchMembership } from "./storyOutlineModel.js";
 import { DEFAULT_INTEGRATION_CONFIG, normalizeIntegrationConfig } from "./integrationConfig.js";
 import { migrateProjectTypesToProperties } from "./explorerSchema.js";
 import { inferredTransitionRole, migrateLogicMoment, walkConditions } from "./logic.js";
+import { normalizeAuthoringEntities } from './authoringEntities.js';
 
 function normalizeLogicCapabilities(project: BranchingProject): {
   logicPropertyOverrides: LogicPropertyOverride[];
@@ -272,7 +273,7 @@ function normalizeTransitionGroups(
           order,
           mode,
           role,
-          logic: role === "route" ? logic : undefined,
+          logic: role === "route" || logic?.narrativeEffects?.length || logic?.rules?.length ? logic : undefined,
           conditions: role === "route" && mode !== "fallback" ? logic?.when : undefined,
           consequences: role === "route" ? logic?.then : undefined,
         });
@@ -383,7 +384,7 @@ function addCompatibilityLogicCapabilities(project: BranchingProject): Branching
     if (!source) return;
     const key = `${source}:${predicateOrEffect.propertyId}`;
     const current = overrides.get(key) ?? { propertyId: predicateOrEffect.propertyId, source };
-    overrides.set(key, { ...current, [capability]: true });
+    if (current[capability] === undefined) overrides.set(key, { ...current, [capability]: true });
   };
   const visited = new Set<object>();
   const visit = (value: unknown) => {
@@ -550,7 +551,7 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
     };
   });
 
-  return addCompatibilityLogicCapabilities(normalizeBranchMembership({
+  return normalizeAuthoringEntities(addCompatibilityLogicCapabilities(normalizeBranchMembership({
     ...project,
     specVersion: project.specVersion ?? "0.1",
     dataClasses: normalizeDataClasses(project),
@@ -608,7 +609,7 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
     scripts: project.scripts ?? [],
     externalFunctions: project.externalFunctions ?? [],
     variables: Object.fromEntries(logicVariables.map((variable) => [variable.name, variable.value])),
-  }));
+  })));
 }
 
 function normalizeLogicGroups(groups: LogicVariableGroup[] | undefined): LogicVariableGroup[] {

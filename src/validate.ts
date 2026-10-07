@@ -1,11 +1,13 @@
 import { conditionStructureIssues, conditionValueMatchesType } from "./conditionEvaluation.js";
-import type { BranchingProject, ConditionInput, Consequence, EventNode, LogicEffect, LogicPredicate, ScriptBlock, ValidationFinding } from "./domain.js";
+import type { BranchingProject, ConditionInput, Consequence, EntityInstance, EntityOwner, EventNode, InstanceEffect, InstanceQuery, LogicEffect, LogicPredicate, NarrativeEffect, ScriptBlock, ValidationFinding } from "./domain.js";
 import { effectiveConditions, orderedTransitions, conditionInputsFromConsequences, walkConditions } from "./logic.js";
 import { mappingsForCanonRef } from "./integrationConfig.js";
 import { entitySupportsDialogueTrigger } from "./explorerSchema.js";
 import { logicEffectOperations, logicOperatorsFor, resolveLogicField } from "./logicCapabilities.js";
 import { isGenericSpeakerRef } from "./speakerRoles.js";
 import { canonVariantsForRef } from "./worldnotionVariants.js";
+import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue } from './authoringEntities.js';
+import { authoringNodeExists } from './authoringEngine.js';
 
 function finding(
   code: ValidationFinding["code"],
@@ -55,7 +57,7 @@ function grantableEntityIds(project: BranchingProject): Set<string> {
   (project.localExplorerEntities ?? []).forEach((entity) => {
     if (grantableLocalTypes.has(entity.type)) ids.add(entity.id);
   });
-  return ids;
+  return new Set([...project.canonRefs.map(e => e.id), ...(project.localExplorerEntities ?? []).map(e => e.id)].filter(id => entityCapabilities(project, id).grantable));
 }
 
 function entityDescriptor(project: BranchingProject, entityId: string) {
@@ -95,6 +97,12 @@ function validateTypedPredicate(
       findings.push(finding("missing_canon_ref", "error", `${context} references missing entity "${subject.entityId}".`, { id: ownerId, ref: subject.entityId }));
       return;
     }
+  }
+  if (subject.kind === 'instance' && !authoredCopies(project).some(i => i.id === subject.instanceId)) {
+    findings.push(finding('invalid_condition','error',`${context} references missing copy "${subject.instanceId}".`,{id:ownerId,ref:subject.instanceId})); return;
+  }
+  if (subject.kind === 'context' && !['actor','self','target'].includes(subject.role)) {
+    findings.push(finding('invalid_condition','error',`${context} uses invalid action context.`,{id:ownerId})); return;
   }
   const fieldKind = predicate.type === "state" ? "state" : predicate.type === "property" ? "property" : predicate.type === "visited" ? "visited" : predicate.type === "external" ? "external" : "value";
   const fieldId = predicate.type === "state" ? predicate.stateId : predicate.type === "property" ? predicate.propertyId : predicate.type;
@@ -139,6 +147,13 @@ function validateConditionRefs(
   structureIssues.forEach(issue => findings.push(finding('invalid_condition', 'error', `${context} ${issue.path}: ${issue.message}`, {id:ownerId})));
   if (structureIssues.length) return;
   walkConditions(conditions, (condition, path) => {
+    if (condition.type === 'instanceQuery') {
+      const query = condition as InstanceQuery;
+      if (query.entityId && !entityDefinition(projectRefs.project, query.entityId)) findings.push(finding('invalid_condition','error',`${context} references missing copy entity "${query.entityId}".`,{id:ownerId,ref:query.entityId}));
+      if (!['some','all','count'].includes(query.quantifier) || query.quantifier === 'count' && (typeof query.value !== 'number' || !Number.isFinite(query.value) || query.value < 0 || !['==','!=','>','>=','<','<='].includes(query.operator ?? ''))) findings.push(finding('invalid_condition','error',`${context} has an invalid copy query.`,{id:ownerId}));
+      validateOwner(findings,projectRefs.project,ownerId,query.owner,`${context} copy owner`);
+      return;
+    }
     if ("subject" in condition) {
       validateTypedPredicate(findings, projectRefs, ownerId, `${context} ${path}`, condition as LogicPredicate);
       return;
@@ -277,6 +292,8 @@ function validateConsequenceCanonRefs(
       } else if (!logicEffectOperations(field).includes(effect.operation)) {
         findings.push(finding("invalid_consequence", "error", `${context} uses incompatible operation "${effect.operation}" for "${fieldId}".`, { id: ownerId, ref: fieldId }));
       }
+      if ('value' in effect && ['set','add','subtract','append','remove'].includes(effect.operation) && !conditionValueMatchesType(effect.value, ['append','remove'].includes(effect.operation) ? 'text' : field.valueType)) findings.push(finding('invalid_consequence','error',`${context} has an effect value incompatible with ${field.valueType ?? 'scalar/list type'}.`,{id:ownerId,ref:fieldId}));
+      if (subject.kind === 'instance' && !authoredCopies(projectRefs.project).some(i => i.id === subject.instanceId)) findings.push(finding('invalid_consequence','error',`${context} references a missing copy.`,{id:ownerId,ref:subject.instanceId}));
       return;
     }
     if (
@@ -951,5 +968,81 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     validateConditionRefs(findings,projectRefs,canonIds,owner.id,`Rule ${rule.id} in ${owner.id}`,rule.when);
     validateConsequenceCanonRefs(findings,projectRefs,canonIds,owner.id,`Rule ${rule.id} in ${owner.id}`,rule.then);
   }
+  for (const owner of owners) {
+    if (owner.logic?.when) validateConditionRefs(findings,projectRefs,canonIds,owner.id,`Logic in ${owner.id}`,owner.logic.when);
+    if (owner.logic?.then) validateConsequenceCanonRefs(findings,projectRefs,canonIds,owner.id,`Logic in ${owner.id}`,owner.logic.then);
+    validateNarrativeEffects(findings,projectRefs,canonIds,owner.id,owner.logic?.narrativeEffects);
+    if (owner.logic?.repeat && !['once','each-entry'].includes(owner.logic.repeat)) findings.push(finding('invalid_consequence','error','Invalid effect repeat policy.',{id:owner.id}));
+  }
+  validateAuthoringDefinitions(findings,projectRefs,canonIds);
   return findings;
+}
+
+function authoredCopies(project: BranchingProject): EntityInstance[] {
+  return [...(project.entityInstances ?? []),...(project.playerSimulation?.entityInstances ?? []),...(project.playerProfiles ?? []).flatMap(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).flatMap(s=>s.state?.entityInstances ?? [])];
+}
+function validateOwner(findings: ValidationFinding[], project: BranchingProject, id: string, owner: EntityOwner | undefined | null, context: string) {
+  if (!owner) return;
+  if (owner.kind === 'context') { if (!['actor','self','target'].includes(owner.role)) findings.push(finding('invalid_consequence','error',`${context} has invalid owner context.`,{id})); return; }
+  if (owner.kind === 'profile') { if (owner.profileId !== 'default' && !project.playerProfiles?.some(p=>p.id===owner.profileId) && !project.authoringScenarios?.some(s=>s.profileId===owner.profileId)) findings.push(finding('invalid_consequence','error',`${context} references missing profile.`,{id,ref:owner.profileId})); return; }
+  const templateId = owner.kind === 'entity' ? owner.entityId : authoredCopies(project).find(i=>i.id===owner.instanceId)?.entityId;
+  const ref = owner.kind === 'entity' ? owner.entityId : owner.instanceId;
+  if (!templateId || !entityDefinition(project,templateId)) findings.push(finding('invalid_consequence','error',`${context} references a missing owner.`,{id,ref}));
+  else if (!entityCapabilities(project,templateId).container) findings.push(finding('invalid_consequence','error',`${context} owner is not configured to contain copies.`,{id,ref:templateId}));
+}
+function validateNarrativeEffects(findings: ValidationFinding[], refs: ProjectReferenceSets, canonIds: Set<string>, id: string, effects: NarrativeEffect[] | undefined) {
+  const project=refs.project;
+  for (const effect of effects ?? []) {
+    if (effect.type !== 'instanceEffect') { validateConsequenceCanonRefs(findings,refs,canonIds,id,`Effect in ${id}`,[effect as Consequence]); continue; }
+    const e=effect as InstanceEffect;
+    const fail=(message:string,ref?:string)=>findings.push(finding('invalid_consequence','error',message,{id,ref}));
+    if (!['create','move','modify','remove'].includes(e.operation)) fail('Unknown copy operation.');
+    if (e.operation === 'create') { if (!e.entityId || !entityDefinition(project,e.entityId)) fail('Choose an existing entity for the new copy.',e.entityId); }
+    else if (!e.instanceId && !e.instanceIds && e.selection !== 'all') fail('Select concrete copies or explicitly select all matches.');
+    if (e.instanceId && e.operation !== 'create' && !['@self','@target'].includes(e.instanceId) && !authoredCopies(project).some(i=>i.id===e.instanceId)) fail('Effect references a missing copy.',e.instanceId);
+    for (const instanceId of e.instanceIds ?? []) if (!authoredCopies(project).some(i=>i.id===instanceId)) fail('Effect references a missing selected copy.',instanceId);
+    validateOwner(findings,project,id,e.owner,'Copy effect');
+    if (e.query?.entityId && !entityDefinition(project,e.query.entityId)) fail('Copy filter references a missing entity.',e.query.entityId);
+    if (e.query?.filters) validateConditionRefs(findings,refs,canonIds,id,'Copy effect filter',e.query.filters);
+    if (e.query?.owner) validateOwner(findings,project,id,e.query.owner,'Copy filter');
+    for (const [propertyId,value] of Object.entries(e.properties ?? {})) {
+      const property=project.localExplorerProperties?.find(p=>p.id===propertyId || p.id===`property:${propertyId}`);
+      if (!property && (!e.entityId || !(propertyId in (entityDefinition(project,e.entityId)?.properties ?? {})))) fail('Copy effect references a missing property.',propertyId);
+      if (!conditionValueMatchesType(value,property?.valueType)) fail('Copy effect property has an incompatible value.',propertyId);
+    }
+    if (Object.values(e.states ?? {}).some(v=>typeof v!=='boolean')) fail('Copy states must have boolean values.');
+  }
+}
+function validateAuthoringDefinitions(findings: ValidationFinding[], refs: ProjectReferenceSets, canonIds: Set<string>) {
+  const project=refs.project;
+  const exists=(id:string)=>authoringNodeExists(project,id);
+  const copies=project.entityInstances ?? [];
+  for(const duplicate of findDuplicates(copies.map(i=>i.id))) findings.push(finding('duplicate_id','error','Duplicate copy ID.',{id:duplicate}));
+  const pools=[copies,project.playerSimulation?.entityInstances ?? [],...(project.playerProfiles ?? []).map(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).map(s=>s.state?.entityInstances ?? [])];
+  for(const pool of pools) for(const copy of pool) {
+    const error=instanceOwnerIssue(project,pool,copy);if(error)findings.push(finding('invalid_consequence','error',error,{id:copy.id,ref:copy.entityId}));
+    for(const [propertyId,value] of Object.entries(copy.properties ?? {})) { const p=project.localExplorerProperties?.find(p=>p.id===propertyId || p.id===`property:${propertyId}`);if(!conditionValueMatchesType(value,p?.valueType)) findings.push(finding('invalid_consequence','error','Copy property has incompatible type.',{id:copy.id,ref:propertyId})); }
+  }
+  for(const override of project.entityOverrides ?? []) if(!entityDefinition(project,override.entityId)) findings.push(finding('missing_canon_ref','error','Capability override references missing entity.',{id:override.entityId}));
+  for(const duplicate of findDuplicates([...(project.narrativeActions ?? []).map(a=>a.id),...(project.narrativeRules ?? []).map(r=>r.id),...(project.authoringScenarios ?? []).map(s=>s.id)])) findings.push(finding('duplicate_id','error','Duplicate action, rule or scenario ID.',{id:duplicate}));
+  for(const action of project.narrativeActions ?? []) {
+    if(action.entityId && !entityDefinition(project,action.entityId)) findings.push(finding('missing_canon_ref','error','Action references a missing entity.',{id:action.id,ref:action.entityId}));
+    if(action.typeId && ![...project.canonRefs.map(e=>e.kind),...(project.localExplorerEntities ?? []).map(e=>e.type),...(project.localExplorerProperties ?? []).filter(p=>p.valueType==='entity-type').map(p=>p.id.replace(/^type:/,''))].some(t=>t?.replace(/^type:/,'')===action.typeId?.replace(/^type:/,''))) findings.push(finding('invalid_consequence','error','Action references a missing entity type.',{id:action.id,ref:action.typeId}));
+    if(action.overridesActionId && !project.narrativeActions?.some(a=>a.id===action.overridesActionId && a.typeId)) findings.push(finding('invalid_consequence','error','Action exception references a missing inherited action.',{id:action.id,ref:action.overridesActionId}));
+    if(action.targetNodeId && !exists(action.targetNodeId)) findings.push(finding('broken_transition','error','Action has a missing narrative destination.',{id:action.id,ref:action.targetNodeId}));
+    validateConditionRefs(findings,refs,canonIds,action.id,'Action availability',action.when);validateNarrativeEffects(findings,refs,canonIds,action.id,action.effects);
+  }
+  for(const rule of project.narrativeRules ?? []) {
+    const scope=rule.scope;
+    if(!['enter','continue','stateChanged'].includes(rule.trigger)) findings.push(finding('invalid_condition','error','Invalid rule trigger.',{id:rule.id}));
+    if(scope.kind==='event' && !refs.eventIds.has(scope.id) || scope.kind==='dialogue' && !project.events.some(e=>e.dialogues?.some(d=>d.id===scope.id)) || scope.kind==='node' && !exists(scope.id)) findings.push(finding('invalid_condition','error','Rule scope references missing content.',{id:rule.id,ref:'id' in scope?scope.id:undefined}));
+    if(rule.priority!==undefined && !Number.isFinite(rule.priority)) findings.push(finding('invalid_condition','error','Rule priority must be finite.',{id:rule.id}));
+    if(rule.targetNodeId && !exists(rule.targetNodeId)) findings.push(finding('broken_transition','error','Rule has a missing narrative destination.',{id:rule.id,ref:rule.targetNodeId}));
+    validateConditionRefs(findings,refs,canonIds,rule.id,'Rule condition',rule.when);validateNarrativeEffects(findings,refs,canonIds,rule.id,rule.effects);
+  }
+  for(const scenario of project.authoringScenarios ?? []) {
+    if(scenario.startNodeId && !exists(scenario.startNodeId)) findings.push(finding('broken_transition','error','Scenario has a missing entry.',{id:scenario.id,ref:scenario.startNodeId}));
+    const state=initialAuthoringState(project,scenario);
+    for(const variable of project.logicVariables ?? []) if(!conditionValueMatchesType(state.variables?.[variable.id],variable.type)) findings.push(finding('invalid_condition','error','Scenario has an incompatible variable value.',{id:scenario.id,ref:variable.id}));
+  }
 }

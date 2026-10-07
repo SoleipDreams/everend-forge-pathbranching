@@ -550,6 +550,7 @@ export function migrateLogicTypeOverridesToPropertyOverrides(
     source: override.source,
     ...(override.grantable !== undefined ? { grantable: override.grantable } : {}),
     ...(override.location !== undefined ? { location: override.location } : {}),
+    ...(override.container !== undefined ? { container: override.container } : {}),
     ...(override.runtimeRoles !== undefined ? { runtimeRoles: override.runtimeRoles } : {}),
   }));
 }
