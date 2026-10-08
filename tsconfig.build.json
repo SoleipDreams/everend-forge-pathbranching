@@ -13,6 +13,7 @@
   "include": [
     "src/index.ts",
     "src/authoringEngine.ts",
+    "src/storyTestController.ts",
     "src/authoringMutations.ts",
     "src/authoringDrafts.ts",
     "src/projectMutations.ts",
