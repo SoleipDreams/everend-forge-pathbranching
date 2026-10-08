@@ -917,7 +917,18 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default()
+            .with_denylist(&["pathbranching-preview", "pathbranching-debug"])
+            .build())
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                for label in ["pathbranching-preview", "pathbranching-debug"] {
+                    if let Some(auxiliary) = window.app_handle().get_webview_window(label) {
+                    let _ = auxiliary.destroy();
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             bridge_status,
             everend_bridge_start,

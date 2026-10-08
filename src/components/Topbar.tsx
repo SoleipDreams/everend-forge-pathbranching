@@ -322,7 +322,7 @@ export function Topbar({
             </button>
             {viewMenuOpen ? <div id={`${id}-view`} className="topbar-menu-popover panel-picker" role="menu" aria-label={c.panels} onKeyDown={(event) => menuKey(event, closeMenus, viewTriggerRef.current)}>
               <strong>{c.panels}</strong>
-              {(Object.keys(panelLabels) as WorkspacePanelId[]).map((panel) => <button className="topbar-menu-option" key={panel} type="button" role="menuitemcheckbox" aria-checked={panelVisibility[panel]} onClick={() => onTogglePanelVisibility(panel)}>
+              {(Object.keys(panelLabels) as WorkspacePanelId[]).filter(panel => panel !== "player").map((panel) => <button className="topbar-menu-option" key={panel} type="button" role="menuitemcheckbox" aria-checked={panelVisibility[panel]} onClick={() => onTogglePanelVisibility(panel)}>
                 <Check size={14} aria-hidden="true" className={panelVisibility[panel] ? "visible" : "hidden"} /> {panelLabels[panel]}
               </button>)}
               {onResetLayout ? <button type="button" role="menuitem" className="topbar-menu-option pb-menu-separated" onClick={() => { onResetLayout(); closeMenus(); viewTriggerRef.current?.focus(); }}><RotateCcw size={14} />{c.reset}</button> : null}

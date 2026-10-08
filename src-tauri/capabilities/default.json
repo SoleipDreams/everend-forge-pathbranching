@@ -3,5 +3,13 @@
   "identifier": "default",
   "description": "Default permissions for the PathBranching desktop authoring window.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default"]
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-set-focus",
+    "dialog:default",
+    "opener:default"
+  ]
 }

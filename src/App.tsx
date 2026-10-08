@@ -30,7 +30,9 @@ import { ReferencePicker } from "./components/ReferencePicker.js";
 import { AssetsPanel } from "./components/AssetsPanel.js";
 import { LogicPanel } from "./components/LogicPanel.js";
 import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
-import { PlayerPanel } from "./components/PlayerPanel.js";
+import { FloatingStoryTestPanel, StoryTestControls, StoryTestDebug, StoryTestPreview } from "./components/StoryTestViews.js";
+import { useStoryTestController } from "./useStoryTestController.js";
+import { useStoryTestWindows } from "./storyTestWindows.js";
 import { ExportPanel } from "./components/ExportPanel.js";
 import { ExportPreviewDialog } from "./components/ExportPreviewDialog.js";
 import { authoringNodeOptions } from "./authoringMutations.js";
@@ -303,7 +305,7 @@ import {
   COLLAPSED_RAIL_WIDTH,
   DEFAULT_WORKSPACE_PANEL_COLLAPSED,
   DEFAULT_WORKSPACE_PANEL_VISIBILITY,
-  WORKSPACE_PANEL_IDS,
+  VISIBLE_WORKSPACE_PANEL_IDS,
   DEFAULT_EXPLORER_WIDTH,
   DEFAULT_PANEL_WIDTH,
   NEW_SEQUENCE_SELECT_VALUE,
@@ -9087,6 +9089,9 @@ function BreadcrumbCrumb({
 function StoryCanvas({
   project,
   authoringWorkspace,
+  storyTestControls,
+  storyTestWorkspace,
+  testingActive = false,
   onToggleAuthoring,
   propertiesConfig,
   files,
@@ -9229,6 +9234,9 @@ function StoryCanvas({
 }: {
   project: BranchingProject;
   authoringWorkspace?: ReactNode;
+  storyTestControls?: ReactNode;
+  storyTestWorkspace?: ReactNode;
+  testingActive?: boolean;
   onToggleAuthoring?: () => void;
   propertiesConfig?: Record<string, unknown>;
   files: PathBranchingFileItem[];
@@ -10670,6 +10678,7 @@ function StoryCanvas({
         {canEnterSelection ? <button type="button" onClick={() => { if (actionNode) openNodeCanvas(actionNode); }}><FolderOpen size={13} />{ui.enter}</button> : null}
       </div>
       {authoringWorkspace}
+      {storyTestWorkspace}
       <div className="canvas-modebar">
         <div className="canvas-breadcrumb" aria-label="Canvas path">
           <span className="canvas-breadcrumb-story" title={project.name}>{project.name}</span>
@@ -10713,21 +10722,20 @@ function StoryCanvas({
           })}
         </div>
       </div>
-      <div className="canvas-layer-switch" role="radiogroup" aria-label={ui.canvasLayer}>
+      <div className="canvas-layer-switch" role="toolbar" aria-label={ui.canvasLayer}>
         <button
           type="button"
-          role="radio"
-          aria-checked={canvasLayerMode === "visual"}
+          aria-pressed={canvasLayerMode === "visual"}
           className={canvasLayerMode === "visual" ? "active" : ""}
           onClick={() => onCanvasLayerModeChange("visual")}
           title={ui.visualHint}
         >
           <Eye size={13} aria-hidden="true" /> {ui.visual}
         </button>
+        {storyTestControls}
         <button
           type="button"
-          role="radio"
-          aria-checked={canvasLayerMode === "logic"}
+          aria-pressed={canvasLayerMode === "logic"}
           className={canvasLayerMode === "logic" ? "active" : ""}
           onClick={() => onCanvasLayerModeChange("logic")}
           title={ui.logicHint}
@@ -10862,7 +10870,7 @@ function StoryCanvas({
           snapToGrid={canvasBackground.snapToGrid}
           snapGrid={snapGrid}
         >
-          {minimapOpen ? (
+          {minimapOpen && !testingActive ? (
             <MiniMap
               className={isNestedCanvas ? "nested-scope-minimap" : undefined}
               pannable
@@ -10944,13 +10952,15 @@ function StoryCanvas({
                   <button
                     type="button"
                     className={`react-flow__controls-button ${minimapOpen ? "active" : ""}`}
+                    disabled={testingActive}
                     onPointerDown={(event) => {
                       event.stopPropagation();
+                      if (testingActive) return;
                       onMinimapOpenChange(!minimapOpen);
                     }}
                     onClick={(event) => event.stopPropagation()}
-                    title={minimapOpen ? "Hide minimap" : "Show minimap"}
-                    aria-label={minimapOpen ? "Hide minimap" : "Show minimap"}
+                    title={testingActive ? canvasUiLocale === "es" ? "Detén el recorrido para recuperar el minimapa" : "Stop the run to restore the minimap" : minimapOpen ? "Hide minimap" : "Show minimap"}
+                    aria-label={testingActive ? canvasUiLocale === "es" ? "Minimapa sustituido por la previsualización" : "Minimap replaced by story preview" : minimapOpen ? "Hide minimap" : "Show minimap"}
                   >
                     {minimapOpen ? <Eye size={14} /> : <EyeOff size={14} />}
                   </button>
@@ -11528,7 +11538,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [eventScriptWorkspace, setEventScriptWorkspace] = useState<{ eventId: string; textKey?: string; tab?: string; entityId?: string; focusId?: string }>();
   const [testPosition, setTestPosition] = useState<string>();
   const [testVisited, setTestVisited] = useState<string[]>([]);
-  const [requestedAuthoringScenario, setRequestedAuthoringScenario] = useState<{ id: string; revision: number }>();
   const [selectedLogicRuleId, setSelectedLogicRuleId] = useState<string>();
   const [canonWidth, setCanonWidth] = useState(DEFAULT_EXPLORER_WIDTH);
   const [storiesWidth, setStoriesWidth] = useState(DEFAULT_PANEL_WIDTH);
@@ -17535,19 +17544,26 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [],
   );
 
-  useEffect(() => {
-    // The nonmodal editor and test drawer share the canvas in narrow windows.
-    if (eventScriptWorkspace) setPanelCollapsedState("player", true);
-  }, [eventScriptWorkspace, setPanelCollapsedState]);
+  const locateTestNode = useCallback((id: string) => {
+    const current = projectRef.current;
+    const target = current && authoringNodeOptions(current).find(node => node.id === id);
+    if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
+    else setSelection({ type: "node", id });
+  }, [navigateCanvasScope]);
+  const { controller: storyTestController, snapshot: storyTest, dispatch: dispatchStoryTest } = useStoryTestController(project, {
+    onUpdate: updateProject, onLocate: locateTestNode, locale: uiLocale, theme: activeTheme,
+    selectedNodeId: selection?.type === "node" ? selection.id : undefined,
+    documentKey: `${fileState.universePath ?? ""}:${project?.storyId ?? project?.projectId ?? ""}`,
+  });
+  const storyTestWindows = useStoryTestWindows(storyTest, storyTestController.request);
+  useEffect(() => { setTestPosition(storyTest.nodeId); setTestVisited(storyTest.visitedNodeIds); }, [storyTest.nodeId, storyTest.visitedNodeIds]);
 
   useEffect(() => {
     const locate = (event: Event) => {
       const id = (event as CustomEvent<{ id: string }>).detail?.id;
       if (!id || !projectRef.current?.authoringScenarios?.some(scenario => scenario.id === id)) return;
-      setEventScriptWorkspace(undefined);
-      setPanelVisibility(current => ({ ...current, player: true }));
-      setPanelCollapsedState("player", false);
-      setRequestedAuthoringScenario(current => ({ id, revision: (current?.revision ?? 0) + 1 }));
+      dispatchStoryTest({ type: "scenario", id });
+      dispatchStoryTest({ type: "debug", open: true });
     };
     window.addEventListener("pathbranching:locate-scenario", locate);
     const locateNarrative = (event: Event) => {
@@ -17558,7 +17574,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     };
     window.addEventListener("pathbranching:locate-narrative", locateNarrative);
     return () => { window.removeEventListener("pathbranching:locate-scenario", locate); window.removeEventListener("pathbranching:locate-narrative", locateNarrative); };
-  }, [setPanelCollapsedState, navigateCanvasScope]);
+  }, [dispatchStoryTest, navigateCanvasScope]);
 
   const focusScriptBlock = useCallback(
     (target: { scriptId: string; blockId: string }) => {
@@ -18061,7 +18077,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         {pendingRecovery ? <div className="workspace-error-banner" role="status"><span>{uiLocale === "es" ? "Hay una edición recuperable que no llegó a guardarse en disco." : "An unsaved editing session can be recovered."}</span><button type="button" onClick={() => { void commitStructuralAction("Recovered editing session", pendingRecovery.project); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Recuperar edición" : "Recover edits"}</button><button type="button" onClick={() => { if (fileState.universePath && project.storyId) clearAuthoringRecovery(fileState.universePath, project.storyId); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Descartar recuperación" : "Discard recovery"}</button></div> : null}
         <AdaptiveWorkspace resizing={panelResizing} requestedPanel={requestedPanel}
           onCollapsedChange={setPanelCollapsedState}
-          panels={WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
+          panels={VISIBLE_WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
           {panelVisibility.assets ? <WorkspacePanelSlot id="assets" side="left" title={uiCopy.assets}><AssetsPanel
             project={project}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
@@ -18134,7 +18150,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           ) : <StoryCanvas
             project={project}
             onToggleAuthoring={() => {
-              if (!eventScriptWorkspace) setPanelCollapsedState("player", true);
               setEventScriptWorkspace(current => current ? undefined : { eventId: authoringNodeOptions(project).find(n => n.id === selection?.id)?.eventId ?? (activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : project.events[0]?.id ?? "") });
             }}
             authoringWorkspace={eventScriptWorkspace ? <AuthoringWorkspace
@@ -18152,7 +18167,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                 else setSelection({ type: "node", id });
               }}
               onClose={() => setEventScriptWorkspace(undefined)}
-              onTest={() => { setEventScriptWorkspace(undefined); setPanelVisibility(current => ({ ...current, player: true })); setPanelCollapsedState("player", false); }}
+              onTest={() => dispatchStoryTest({ type: "play" })}
             /> : undefined}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             files={files}
@@ -18180,6 +18195,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             expandedInspectorTabId={expandedInspectorTabId}
             inspectorMaximized={inspectorMaximized}
             canvasBackground={settings.canvasBackground}
+            storyTestControls={<StoryTestControls snapshot={storyTest} dispatch={dispatchStoryTest} />}
+            testingActive={storyTest.active}
+            storyTestWorkspace={<>
+              {storyTest.active && !storyTestWindows.detached.preview ? <FloatingStoryTestPanel kind="preview" title={uiLocale === "es" ? "Probar historia" : "Test story"} locale={uiLocale} projectId={project.projectId} sessionId={storyTest.sessionId} avoidWriter={Boolean(eventScriptWorkspace)} detachable={storyTestWindows.canDetach} onDetach={() => { void storyTestWindows.detach("preview"); }}><StoryTestPreview snapshot={storyTest} dispatch={dispatchStoryTest} /></FloatingStoryTestPanel> : null}
+              {storyTest.debugOpen && !storyTestWindows.detached.debug ? <FloatingStoryTestPanel kind="debug" title={uiLocale === "es" ? "Debug del recorrido" : "Story debug"} locale={uiLocale} projectId={project.projectId} sessionId={storyTest.sessionId} avoidWriter={Boolean(eventScriptWorkspace)} detachable={storyTestWindows.canDetach} onDetach={() => { void storyTestWindows.detach("debug"); }} onClose={() => dispatchStoryTest({ type: "debug", open: false })}><StoryTestDebug snapshot={storyTest} dispatch={dispatchStoryTest} /></FloatingStoryTestPanel> : null}
+              {storyTestWindows.error ? <div className="story-test-window-error" role="alert"><span>{uiLocale === "es" ? "No se pudo desacoplar. El recorrido sigue disponible aquí." : "Could not detach. The run remains available here."} {storyTestWindows.error}</span><button type="button" onClick={storyTestWindows.clearError}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
+            </>}
             minimapOpen={settings.minimapOpen}
             onMinimapOpenChange={(open) => setSettings((current) => ({ ...current, minimapOpen: open }))}
             canvasLayerMode={canvasLayerMode}
@@ -18297,21 +18319,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               void saveActiveManualInspectorDraft();
             }}
           />}
-          {panelVisibility.player ? <WorkspacePanelSlot id="player" side="right" title={uiCopy.player}><PlayerPanel
-            project={project}
-            collapsed={panelCollapsed.player}
-            onCollapsedChange={(collapsed) => setPanelCollapsedState("player", collapsed)}
-            onContextMenu={openPanelContextMenu}
-            onUpdate={(nextProject) => updateProject(nextProject)}
-            selectedNodeId={selection?.id}
-            requestedScenario={requestedAuthoringScenario}
-            onPosition={(id, visited) => { setTestPosition(id); setTestVisited(visited); }}
-            onLocate={id => {
-              const target = authoringNodeOptions(projectRef.current ?? project).find(node => node.id === id);
-              if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
-              else setSelection({ type: "node", id });
-            }}
-          /></WorkspacePanelSlot> : null}
           {panelVisibility.export ? <WorkspacePanelSlot id="export" side="right" title={uiCopy.exportImport}><ExportPanel
             project={project}
             collapsed={panelCollapsed.export}
@@ -18337,7 +18344,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             style={{ left: panelContextMenu.x, top: panelContextMenu.y }}
           >
             <strong>Panels</strong>
-            {WORKSPACE_PANEL_IDS.map((panel) => (
+            {VISIBLE_WORKSPACE_PANEL_IDS.map((panel) => (
               <button
                 key={panel}
                 type="button"

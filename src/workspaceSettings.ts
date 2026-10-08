@@ -30,13 +30,15 @@ export const WORKSPACE_PANEL_IDS = [
 ] as const;
 
 export type WorkspacePanelId = (typeof WORKSPACE_PANEL_IDS)[number];
+// Keep the legacy player key readable in saved layouts; it no longer occupies workspace space.
+export const VISIBLE_WORKSPACE_PANEL_IDS = WORKSPACE_PANEL_IDS.filter(id => id !== "player");
 export type WorkspacePanelState = Record<WorkspacePanelId, boolean>;
 
 export const DEFAULT_WORKSPACE_PANEL_VISIBILITY: WorkspacePanelState = {
   outline: true,
   assets: true,
   logic: true,
-  player: true,
+  player: false,
   export: true,
   connect: true,
 };
