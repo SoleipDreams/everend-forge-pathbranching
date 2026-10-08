@@ -10,7 +10,7 @@
     "stage:bridge-runtime": "node scripts/stage-bridge-runtime.mjs",
     "typecheck": "node scripts/run-tsc.mjs --noEmit",
     "build:core": "node -e \"fs.rmSync('lib',{recursive:true,force:true})\" && node scripts/run-tsc.mjs -p tsconfig.build.json",
-    "verify:core": "npm run build:core && node scripts/verify-browser-universe.mjs && node scripts/verify-node-placement.mjs && node scripts/verify-unified-logic.mjs && node scripts/verify-core.mjs && node scripts/verify-narrative-integration.mjs && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs && node scripts/verify-dialogue-nodes.mjs && node scripts/verify-event-script-sections.mjs && node scripts/verify-worldnotion-yaml-import.mjs && node scripts/verify-story-outline.mjs && node scripts/verify-canon-change-workflow.mjs && node scripts/verify-inspector-tabs.mjs && node scripts/verify-subcanvas-routing.mjs && node scripts/verify-twine-import-export.mjs && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs && node scripts/verify-conditions.mjs && node scripts/verify-condition-ux.mjs && node scripts/verify-authoring-ux.mjs && node scripts/verify-authoring-drafts.mjs && node scripts/verify-authoring-storage.mjs && node scripts/verify-authoring-engine.mjs && node scripts/verify-authoring-editor.mjs",
+    "verify:core": "npm run build:core && node scripts/verify-browser-universe.mjs && node scripts/verify-node-placement.mjs && node scripts/verify-unified-logic.mjs && node scripts/verify-core.mjs && node scripts/verify-narrative-integration.mjs && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs && node scripts/verify-dialogue-nodes.mjs && node scripts/verify-event-script-sections.mjs && node scripts/verify-worldnotion-yaml-import.mjs && node scripts/verify-story-outline.mjs && node scripts/verify-canon-change-workflow.mjs && node scripts/verify-inspector-tabs.mjs && node scripts/verify-subcanvas-routing.mjs && node scripts/verify-twine-import-export.mjs && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs && node scripts/verify-conditions.mjs && node scripts/verify-condition-ux.mjs && node scripts/verify-authoring-ux.mjs && node scripts/verify-authoring-drafts.mjs && node scripts/verify-authoring-storage.mjs && node scripts/verify-authoring-engine.mjs && node scripts/verify-authoring-editor.mjs && node scripts/verify-story-test-controller.mjs",
     "verify:conditions": "npm run build:core && node scripts/verify-conditions.mjs",
     "verify:twine": "npm run build:core && node scripts/verify-twine-import-export.mjs",
     "verify:evpath": "npm run build:core && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs",
@@ -20,7 +20,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "node scripts/run-tauri-build.mjs",
     "verify:ux": "npm run build:core && node scripts/verify-condition-ux.mjs && node scripts/verify-authoring-ux.mjs",
-    "verify:authoring": "npm run build:core && node scripts/verify-authoring-drafts.mjs && node scripts/verify-authoring-storage.mjs && node scripts/verify-authoring-engine.mjs && node scripts/verify-authoring-editor.mjs"
+    "verify:authoring": "npm run build:core && node scripts/verify-authoring-drafts.mjs && node scripts/verify-authoring-storage.mjs && node scripts/verify-authoring-engine.mjs && node scripts/verify-authoring-editor.mjs && node scripts/verify-story-test-controller.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
