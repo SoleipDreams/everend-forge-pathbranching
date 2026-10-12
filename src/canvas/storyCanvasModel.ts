@@ -16,9 +16,10 @@ import type {
 import { conditionUiCopy, conditionTreeSummary, conditionWarningCount, groupedConditionPresentation, type ConditionUiLocale } from "../conditionPresentation.js";
 import { conditionCount, conditionLabels, consequenceLabel, walkConditions } from "../logic.js";
 import { presentConditionInput, presentConsequences, type LogicPresentation } from "../logicCapabilities.js";
+import { interactionNodeId } from "../interactions.js";
 import { blockValues, localizedValue } from "../localization.js";
 import { activeCanvasScope, canvasScopeKey } from "../storySelection.js";
-import { automaticNarrativeName } from "../narrativeNaming.js";
+import { narrativeLineLabel } from "../narrativeNaming.js";
 import type { AuthoringDisplaySettings, CanvasLayerMode } from "../workspaceSettings.js";
 
 export type StoryCanvasNodeKind =
@@ -39,10 +40,12 @@ export type StoryCanvasNodeKind =
   | "inkSection"
   | "knowledge"
   | "runtimeAction"
+  | "interaction"
+  | "barrier"
   | "missingRef";
 
 export type CanvasInfoBadge = {
-  kind: "decisions" | "outcomes" | "dialogues" | "characters" | "words";
+  kind: "decisions" | "outcomes" | "dialogues" | "lines" | "characters" | "words";
   count: number;
 };
 
@@ -63,6 +66,7 @@ export type StoryCanvasNodeData = {
   badges: string[];
   summaryBadges?: string[];
   infoBadges?: CanvasInfoBadge[];
+  authoringLogicSummary?: StoryCanvasNodeData["logicSummary"];
   logicSummary?: {
     when: string;
     then: string;
@@ -70,6 +74,9 @@ export type StoryCanvasNodeData = {
     whenItems: LogicPresentation[];
     thenItems: LogicPresentation[];
     warningCount: number;
+    conditionCount: number;
+    consequenceCount: number;
+    ruleCount: number;
   };
   canvasLayerMode?: CanvasLayerMode;
   details?: Record<string, unknown>;
@@ -121,18 +128,20 @@ type LayoutCursor = {
 };
 
 const NODE_WIDTH = 230;
+const DEFAULT_STORY_NODE_HEIGHT = 108;
 // Keep React Flow's selection/interaction box aligned with the beat card's
 // CSS layout. Speech beats include the director-note and scene-image rails;
 // direction beats only render the stage-direction editor.
 // Beat node sizes are intentionally fixed to the default 24 px canvas grid.
 // Keep these values independent from the user's grid setting so the authoring
 // surface stays visually stable and the default layout lands on whole cells.
-export const SPEECH_BEAT_NODE_HEIGHT = 240;
+export const SPEECH_BEAT_NODE_HEIGHT = 216;
 export const DIRECTION_BEAT_NODE_HEIGHT = 144;
 const ROUTE_GATE_VISUAL_WIDTH = 34;
 const ROUTE_GATE_VISUAL_HEIGHT = 34;
-const ROUTE_GATE_LOGIC_WIDTH = 168;
-const ROUTE_GATE_LOGIC_HEIGHT = 92;
+const ROUTE_GATE_LOGIC_WIDTH = 176;
+const ROUTE_GATE_LOGIC_HEIGHT = 78;
+const ROUTE_GATE_MIN_LOGIC_WIDTH = 120;
 const ROUTE_GATE_SOURCE_GAP = 58;
 const BRANCH_WIDTH = 390;
 const BRANCH_PADDING_TOP = 82;
@@ -144,6 +153,17 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   exploration: "#2da66f",
   final: "#d45d78",
 };
+
+export function routeGateVisualAnchorFromLogicPosition(
+  position: { x: number; y: number },
+  logicWidth = ROUTE_GATE_LOGIC_WIDTH,
+  logicHeight = ROUTE_GATE_LOGIC_HEIGHT,
+) {
+  return {
+    x: position.x + (logicWidth - ROUTE_GATE_VISUAL_WIDTH) / 2,
+    y: position.y + (logicHeight - ROUTE_GATE_VISUAL_HEIGHT) / 2,
+  };
+}
 
 export type StoryCanvasNodeColors = Partial<Record<StoryCanvasNodeKind, string>>;
 
@@ -294,17 +314,22 @@ function canvasLogicSummary(
   const whenItems = groupedConditionPresentation(project, when, locale, expanded ? 240 : 150);
   const thenItems = presentConsequences(project, effects, expanded ? 3 : 2);
   const effectCount = effects.length + ruleEffects;
+  const conditionWarnings = conditionWarningCount(project, when);
+  const warningCount = conditionWarnings + thenItems.filter(item => item.status !== "enabled").length;
   return {
-    when: whenSummary.text,
+    when: whenSummary.clauses || conditionWarnings ? whenSummary.text : "",
     then: effectCount
       ? thenItems.length
         ? `${effectCount} · ${thenItems.map((item) => item.text).join(" · ") || effectLabels.slice(0, 2).join(" · ")}`
         : `${effectCount} ${locale === "es" ? "consecuencia" : "effect"}${effectCount === 1 ? "" : "s"}`
-      : conditionUiCopy(locale).noEffects,
+      : "",
     expanded,
     whenItems,
     thenItems,
-    warningCount: conditionWarningCount(project, when) + thenItems.filter(item => item.status !== "enabled").length,
+    warningCount,
+    conditionCount: whenSummary.clauses,
+    consequenceCount: effectCount,
+    ruleCount: owner?.logic?.rules?.length ?? 0,
   };
 }
 
@@ -321,16 +346,31 @@ function applyCanvasLogicMode(
       data: {
         ...node.data,
         canvasLayerMode,
+        authoringLogicSummary: canvasLogicSummary(project, node.data.kind, node.data.details ?? {}, false, options.interfaceLocale),
         logicSummary: canvasLayerMode === "logic"
           ? canvasLogicSummary(project, node.data.kind, node.data.details ?? {}, false, options.interfaceLocale)
           : undefined,
       },
     })),
-    edges: model.edges.map((item) => item.data ? ({
-      ...item,
-      data: { ...item.data, canvasLayerMode },
-      animated: canvasLayerMode === "logic" && item.data.routeRole === "route",
-    }) : item),
+    edges: model.edges.map((item) => {
+      if (!item.data) return item;
+      const entryLabel = item.data.label;
+      const hideVisualEntryLabel =
+        canvasLayerMode === "visual" &&
+        item.data.kind === "boundary" &&
+        typeof entryLabel === "string" &&
+        entryLabel.trim().toLowerCase() === "enters";
+      return {
+        ...item,
+        ...(hideVisualEntryLabel ? { label: undefined } : {}),
+        data: {
+          ...item.data,
+          ...(hideVisualEntryLabel ? { label: "" } : {}),
+          canvasLayerMode,
+        },
+        animated: false,
+      };
+    }),
   };
 }
 
@@ -364,12 +404,15 @@ function transitionEdgeData(project: BranchingProject, transition: Transition, l
   );
   const conditions = transition.logic?.when ?? transition.conditions;
   const consequences = transition.logic?.then ?? transition.consequences;
-  const conditionSummary = [conditionTreeSummary(project, conditions, locale, 150).text];
+  const conditionSummary = conditionTreeSummary(project, conditions, locale, 150);
   const consequenceSummary = (consequences ?? [])
     .map(consequenceLabel)
     .slice(0, 1);
   const conditionItems = groupedConditionPresentation(project, conditions, locale, 150);
   const consequenceItems = presentConsequences(project, consequences, 2);
+  const owner = project.events.find((event) => event.transitions?.some((route) => route.id === transition.id));
+  const targetId = owner?.transitions?.find((route) => route.id === transition.id)?.to ?? transition.to;
+  const target = project.events.find((event) => event.id === targetId);
   return {
     routeRole: role,
     conditions,
@@ -378,9 +421,12 @@ function transitionEdgeData(project: BranchingProject, transition: Transition, l
     mode: transition.mode ?? "conditional",
     customLabel: transition.label ?? "",
     routeSourceId: transition.from,
-    routePreview: role === "route" ? {
+    routeTargetId: targetId,
+    routeTargetLabel: target?.name ?? targetId,
+    returnRoute: targetId === owner?.id || targetId === owner?.parentEventId,
+    routePreview: role === "route" || conditionSummary.clauses > 0 || (consequences?.length ?? 0) > 0 || conditionWarningCount(project, conditions) > 0 ? {
       mode: transition.mode ?? "conditional",
-      conditions: conditionItems.length ? conditionItems.map((item) => item.text) : conditionSummary,
+      conditions: conditionItems.length ? conditionItems.map((item) => item.text) : conditionSummary.clauses || conditionWarningCount(project, conditions) ? [conditionSummary.text] : [],
       consequences: consequenceItems.length ? consequenceItems.map((item) => item.text) : consequenceSummary,
       conditionItems,
       consequenceItems,
@@ -393,7 +439,7 @@ function decisionOutcomeNodeId(eventId: string, decisionId: string, outcomeId: s
   return `outcome:${eventId}:${decisionId}:${outcomeId}`;
 }
 
-function decisionOptions(eventId: string, decision: NonNullable<EventNode["decisions"]>[number]) {
+function decisionOptions(project: BranchingProject, eventId: string, decision: NonNullable<EventNode["decisions"]>[number], locale: ConditionUiLocale = "en") {
   return decision.outcomes.map((outcome) => ({
     id: outcome.id,
     name: outcome.visibleText ?? outcome.name,
@@ -401,6 +447,8 @@ function decisionOptions(eventId: string, decision: NonNullable<EventNode["decis
     description: outcome.description,
     icon: outcome.icon,
     handleId: decisionOutcomeNodeId(eventId, decision.id, outcome.id),
+    logicSummary: canvasLogicSummary(project, "outcome", { outcome }, false, locale),
+    unavailableBehavior: outcome.unavailableBehavior ?? "locked",
   }));
 }
 
@@ -454,34 +502,8 @@ function projectRouteGates(
   scope: CanvasScope | undefined,
   options: StoryCanvasModelOptions,
 ) {
-  const isDecisionOutcomeSource = (sourceId: string) => project.events.some((eventNode) =>
-    eventNode.decisions?.some((decision) =>
-      decision.outcomes.some((outcome) =>
-        decisionOutcomeNodeId(eventNode.id, decision.id, outcome.id) === sourceId,
-      ),
-    ),
-  );
-  const hasExplicitRouteLogic = (route: StoryCanvasEdge) =>
-    Boolean(
-      route.data?.conditions ||
-      route.data?.consequences?.length ||
-      route.data?.mode === "fallback" ||
-      route.data?.function ||
-      (route.data?.logic as { when?: unknown; then?: unknown[]; rules?: unknown[] } | undefined)?.when ||
-      (route.data?.logic as { when?: unknown; then?: unknown[]; rules?: unknown[] } | undefined)?.then?.length ||
-      (route.data?.logic as { when?: unknown; then?: unknown[]; rules?: unknown[] } | undefined)?.rules?.length,
-    );
-  const shouldProjectGate = (routeSourceId: string, routes: StoryCanvasEdge[]) => {
-    if (routes.length < 2) return false;
-    // At the story level, bare event-to-event transitions are ordinary flow.
-    // Do not turn them into a shared Logic Gate merely because an event has
-    // several exits. Decisions own their output routes, so each outcome gets
-    // an independent gate only when that specific outcome actually splits.
-    if ((scope?.kind === "sequence" || !scope) && options.canvasLayerMode === "logic") {
-      return isDecisionOutcomeSource(routeSourceId) || routes.some(hasExplicitRouteLogic);
-    }
-    return true;
-  };
+  const shouldProjectGate = (_routeSourceId: string, routes: StoryCanvasEdge[]) =>
+    routes.length >= 2;
   const transitionGroups = new Map<string, StoryCanvasEdge[]>();
   edges
     .filter((item) => item.data?.kind === "transition")
@@ -521,35 +543,82 @@ function projectRouteGates(
     const scopeNodes = scope
       ? project.canvas?.scopes?.[canvasScopeKey(scope)]?.nodes
       : project.canvas?.nodes;
-    const storedGatePosition =
-      scopeNodes?.[gateId]?.position ??
-      project.canvas?.nodes?.[gateId]?.position ??
+    const storedGateState =
+      scopeNodes?.[gateId] ??
+      project.canvas?.nodes?.[gateId] ??
       // Preserve positions saved before gate ids became owner-qualified.
-      scopeNodes?.[legacyGateId]?.position ??
-      project.canvas?.nodes?.[legacyGateId]?.position;
-    const visualPosition = storedGatePosition ?? {
-      x: source.position.x + NODE_WIDTH + ROUTE_GATE_SOURCE_GAP,
-      y: source.position.y + 4,
+      scopeNodes?.[legacyGateId] ??
+      project.canvas?.nodes?.[legacyGateId];
+    const storedGatePosition = storedGateState?.position;
+    const forwardTargets = [...new Set(routes
+      .filter((route) => route.data?.returnRoute !== true)
+      .map((route) => route.target))]
+      .map((targetId) => nodes.find((node) => node.id === targetId))
+      .filter((target): target is StoryCanvasNode => Boolean(target && target.position.x > source.position.x));
+    const alignedTargetCenter = forwardTargets.length
+      ? forwardTargets.reduce((total, target) => total + target.position.y + (target.height ?? target.measured?.height ?? DEFAULT_STORY_NODE_HEIGHT) / 2, 0) / forwardTargets.length
+      : undefined;
+    const sourceCenter = source.position.y + (source.height ?? source.measured?.height ?? DEFAULT_STORY_NODE_HEIGHT) / 2;
+    const visualPosition = {
+      x: storedGatePosition?.x ?? source.position.x + NODE_WIDTH + ROUTE_GATE_SOURCE_GAP,
+      y: storedGateState?.manual && storedGatePosition?.y !== undefined
+        ? storedGatePosition.y
+        : alignedTargetCenter !== undefined
+          ? alignedTargetCenter - ROUTE_GATE_VISUAL_HEIGHT / 2
+          : storedGatePosition?.y ?? sourceCenter - ROUTE_GATE_VISUAL_HEIGHT / 2,
     };
     const visualCenter = {
       x: visualPosition.x + ROUTE_GATE_VISUAL_WIDTH / 2,
       y: visualPosition.y + ROUTE_GATE_VISUAL_HEIGHT / 2,
     };
     const logicMode = options.canvasLayerMode === "logic";
-    const gateWidth = logicMode ? ROUTE_GATE_LOGIC_WIDTH : ROUTE_GATE_VISUAL_WIDTH;
+    const sourceRight = source.position.x + (source.width ?? NODE_WIDTH);
+    const nearestForwardTargetLeft = forwardTargets.length
+      ? Math.min(...forwardTargets.map((target) => target.position.x))
+      : undefined;
+    const availableRouteGap = nearestForwardTargetLeft === undefined
+      ? undefined
+      : nearestForwardTargetLeft - sourceRight;
+    const fitsBetweenNodes = availableRouteGap !== undefined && availableRouteGap >= ROUTE_GATE_MIN_LOGIC_WIDTH + 16;
+    const gateWidth = logicMode
+      ? fitsBetweenNodes
+        ? Math.min(ROUTE_GATE_LOGIC_WIDTH, availableRouteGap - 16)
+        : ROUTE_GATE_LOGIC_WIDTH
+      : ROUTE_GATE_VISUAL_WIDTH;
     const gateHeight = logicMode ? ROUTE_GATE_LOGIC_HEIGHT : ROUTE_GATE_VISUAL_HEIGHT;
     const gatePosition = logicMode
-      ? {
-          x: visualCenter.x - gateWidth / 2,
-          y: visualCenter.y - gateHeight / 2,
-        }
+      ? storedGateState?.manual
+        ? {
+            x: visualCenter.x - gateWidth / 2,
+            y: visualCenter.y - gateHeight / 2,
+          }
+        : {
+            // The Visual knot sits on the edge split. The expanded Logic card
+            // belongs in the open lane between its source and first forward
+            // destination, so it does not cover either narrative node.
+            x: fitsBetweenNodes
+              ? sourceRight + (availableRouteGap! - gateWidth) / 2
+              : sourceRight + ROUTE_GATE_SOURCE_GAP,
+            y: visualCenter.y - gateHeight / 2,
+          }
       : visualPosition;
     const orderedRoutes = [...routes].sort((left, right) => {
       if (left.data?.mode === "fallback" && right.data?.mode !== "fallback") return 1;
       if (right.data?.mode === "fallback" && left.data?.mode !== "fallback") return -1;
       return Number(left.data?.order ?? 0) - Number(right.data?.order ?? 0);
     });
-    const conditionalCount = orderedRoutes.filter((route) => route.data?.conditions).length;
+    const conditionalCount = orderedRoutes.filter((route) => conditionCount(route.data?.conditions) > 0).length;
+    const routeInteractionUseIds = new Set<string>();
+    orderedRoutes.forEach((route) => walkConditions(route.data?.conditions, (condition) => {
+      if (condition.type === "interactionResult" && typeof condition.useId === "string") {
+        routeInteractionUseIds.add(condition.useId);
+      }
+    }));
+    const routeOwnerEvent = project.events.find((eventNode) => eventNode.id === ownerEventId);
+    const sourceInteractionUseIds = (routeOwnerEvent?.interactionUses ?? [])
+      .filter((use) => use.ownerNodeId === routeSourceId || interactionNodeId(ownerEventId ?? "", use.id) === routeSourceId)
+      .map((use) => use.id);
+    const interactionCount = new Set([...routeInteractionUseIds, ...sourceInteractionUseIds]).size;
     const conditionBadges = Array.from(
       new Set(routes.flatMap((route) => conditionLabels(route.data?.conditions))),
     ).slice(0, 2);
@@ -573,8 +642,11 @@ function projectRouteGates(
       ],
       {
         routeSourceId,
+        conditionCount: conditionalCount,
+        interactionCount,
         eventId: ownerEventId,
         transitionIds: orderedRoutes.map((route) => route.id),
+        logicWidth: gateWidth,
         routeOptions: orderedRoutes.map((route, index) => {
           const preview = route.data?.routePreview as {
             conditionItems?: LogicPresentation[];
@@ -584,8 +656,13 @@ function projectRouteGates(
             id: route.id,
             index,
             mode: route.data?.mode === "fallback" ? "fallback" : "conditional",
-            label: typeof route.data?.customLabel === "string" ? route.data.customLabel : "",
+            label: `${options.interfaceLocale === "es" ? "Ruta" : "Route"} ${index + 1}`,
             condition: preview?.conditionItems?.[0]?.text ?? preview?.conditions?.[0] ?? conditionUiCopy(options.interfaceLocale).always,
+            conditionConfigured: conditionCount(route.data?.conditions) > 0,
+            targetId: typeof route.data?.routeTargetId === "string" ? route.data.routeTargetId : route.target,
+            targetLabel: typeof route.data?.routeTargetLabel === "string"
+              ? route.data.routeTargetLabel
+              : nodes.find((node) => node.id === route.target)?.data.title ?? route.target,
           };
         }),
         junctionPresentation: options.canvasLayerMode === "logic" ? "gate" : "split",
@@ -605,7 +682,11 @@ function projectRouteGates(
     const sourceHandle = routes[0]?.sourceHandle;
     gateInputEdges.push({
       ...edge(`edge:route-gate:${gateId}`, sourceId, gateId, "contains", ""),
-      sourceHandle,
+      // Interaction nodes have hidden, result-specific handles in the compact
+      // Logic view. Point the shared gate input at their stable general output
+      // handle so it cannot resolve to a collapsed result handle at (0, 0).
+      // Decision outcomes keep their explicit per-option handle.
+      sourceHandle: sourceHandle ?? (source.data.kind === "interaction" ? "interaction:output" : undefined),
     });
     finalTransitionEdges.push(
       ...orderedRoutes.map((route, routeIndex) => ({
@@ -617,6 +698,7 @@ function projectRouteGates(
               ...route.data,
               routeIndex,
               routeCount: orderedRoutes.length,
+              routeGateId: gateId,
             }
           : route.data,
       })),
@@ -748,7 +830,7 @@ function eventInfoBadges(project: BranchingProject, eventNode: EventNode, option
   const dialogueCount = (eventNode.dialogues?.length ?? 0) + (eventNode.dialogueBeats?.length ?? 0);
   const textCounts = eventTextCounts(project, eventNode);
   return [
-    ...(display.showDecisionCount ? [{ kind: "decisions" as const, count: decisionCount }] : []),
+    ...(display.showDecisionCount && decisionCount > 0 ? [{ kind: "decisions" as const, count: decisionCount }] : []),
     ...(display.showOutcomeCount && outcomeCount > 0 ? [{ kind: "outcomes" as const, count: outcomeCount }] : []),
     ...(display.showDialogueCount && dialogueCount > 0 ? [{ kind: "dialogues" as const, count: dialogueCount }] : []),
     ...(display.showCharacterCount && textCounts.characters > 0 ? [{ kind: "characters" as const, count: textCounts.characters }] : []),
@@ -779,15 +861,20 @@ function dialogueInfoBadges(eventNode: EventNode, dialogue: DialogueNode): Canva
     ).length;
 
   return [
-    ...(beatCount > 0 ? [{ kind: "dialogues" as const, count: beatCount }] : []),
+    ...(beatCount > 0 ? [{ kind: "lines" as const, count: beatCount }] : []),
     ...(decisionCount > 0 ? [{ kind: "decisions" as const, count: decisionCount }] : []),
   ];
 }
 
 function parentLevelInboundTransitions(project: BranchingProject, eventId: string) {
+  const parent = project.events.find((eventNode) => eventNode.id === eventId);
+  const childIds = new Set([
+    ...(parent?.childEventIds ?? []),
+    ...project.events.filter((eventNode) => eventNode.parentEventId === eventId).map((eventNode) => eventNode.id),
+  ]);
   return project.events.flatMap((eventNode) =>
     (eventNode.transitions ?? [])
-      .filter((transition) => transition.to === eventId)
+      .filter((transition) => transition.to === eventId && !childIds.has(eventNode.id))
       .map((transition) => ({ event: eventNode, transition })),
   );
 }
@@ -844,8 +931,34 @@ function buildEventBoundaryPorts(project: BranchingProject, eventNode: EventNode
       targetEventId: undefined,
     }));
   const allInbound = [...inbound, ...preservedBoundInputs];
+  const scopeKey = canvasScopeKey({ kind: "event", id: eventNode.id });
+  const entrySlots = project.canvas?.scopes?.[scopeKey]?.entrySlots ?? [];
+  const emptyInputs = entrySlots.map((slotId) => ({
+    id: boundaryPortId(eventNode.id, "input", slotId),
+    slotId,
+    direction: "input" as const,
+    title: "Add Entry",
+    subtitle: "Choose an existing or new source event",
+    transitionId: undefined,
+    targetEventId: undefined,
+  }));
+  // Local content routes enter this canvas; only external destinations need
+  // End ports. Keep unknown destinations visible so broken routes can be fixed.
+  const internalTargets = new Set([
+    ...(eventNode.interactionUses ?? []).filter(u => !u.ownerNodeId).map(u => `interaction:${eventNode.id}:${u.id}`),
+    ...(eventNode.interactionBarriers ?? []).map(b => `barrier:${eventNode.id}:${b.id}`),
+    ...project.events.filter((event) => event.parentEventId === eventNode.id || eventNode.childEventIds?.includes(event.id)).map((event) => event.id),
+    ...(eventNode.decisions ?? []).flatMap((decision) => [
+      `decision:${eventNode.id}:${decision.id}`,
+      ...decision.outcomes.map((outcome) => decisionOutcomeNodeId(eventNode.id, decision.id, outcome.id)),
+    ]),
+    ...(eventNode.dialogues ?? []).map((dialogue) => `dialogue:${eventNode.id}:${dialogue.id}`),
+    ...[...(eventNode.dialogueBeats ?? []), ...(eventNode.dialogues ?? []).flatMap((dialogue) => dialogue.beats ?? [])]
+      .map((beat) => `beat:${eventNode.id}:${beat.id}`),
+    ...(eventNode.dialogueStarts ?? []).map((start) => `dialogue-start:${eventNode.id}:${start.id}`),
+  ]);
   const outbound = (eventNode.transitions ?? [])
-    .filter((transition) => transition.from === eventNode.id)
+    .filter((transition) => transition.from === eventNode.id && !internalTargets.has(transition.to))
     .map((transition) => {
       const target = project.events.find((event) => event.id === transition.to);
       return {
@@ -859,24 +972,31 @@ function buildEventBoundaryPorts(project: BranchingProject, eventNode: EventNode
       };
     });
 
-  // A restart is an internal route whose destination is the event currently
-  // being edited. Keep it as a dedicated output so it can be referenced from
-  // an outcome without exposing an extra event-level node on the main canvas.
-  const restartTransition = (eventNode.transitions ?? []).find(
-    (transition) => transition.to === eventNode.id && transition.from !== eventNode.id,
-  );
+  // A return is a shared output for authored routes from this event's content
+  // or child events back to the event currently being edited.
+  const childEventIds = new Set([
+    ...(eventNode.childEventIds ?? []),
+    ...project.events
+      .filter((candidate) => candidate.parentEventId === eventNode.id)
+      .map((candidate) => candidate.id),
+  ]);
+  const restartTransition = [
+    ...(eventNode.transitions ?? []).filter((transition) => transition.from !== eventNode.id),
+    ...project.events
+      .filter((candidate) => childEventIds.has(candidate.id))
+      .flatMap((candidate) => candidate.transitions ?? []),
+  ].find((transition) => transition.to === eventNode.id);
   const restartOutput = {
     id: boundaryPortId(eventNode.id, "output", "restart"),
     slotId: "restart",
     direction: "output" as const,
-    title: "Restart event",
+    title: eventNode.name,
     subtitle: "Re-enter this event",
     transitionId: restartTransition?.id,
     targetEventId: eventNode.id,
     restart: true,
   };
 
-  const scopeKey = canvasScopeKey({ kind: "event", id: eventNode.id });
   const exitSlots = project.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
   const emptySlotIds = outbound.length === 0
     ? exitSlots.length ? exitSlots : ["exit"]
@@ -892,8 +1012,8 @@ function buildEventBoundaryPorts(project: BranchingProject, eventNode: EventNode
   }));
 
   return {
-    inbound: allInbound.length
-      ? allInbound
+    inbound: allInbound.length || emptyInputs.length
+      ? [...allInbound, ...emptyInputs]
       : [
           {
             id: boundaryPortId(eventNode.id, "input", "entry"),
@@ -904,7 +1024,7 @@ function buildEventBoundaryPorts(project: BranchingProject, eventNode: EventNode
             targetEventId: undefined,
           },
         ],
-    outbound: [restartOutput, ...outbound, ...emptyOutputs],
+    outbound: [...(restartTransition ? [restartOutput] : []), ...outbound, ...emptyOutputs],
   };
 }
 
@@ -1021,18 +1141,6 @@ function expandedWorkspaceBounds(
   return { x, y, width: right - x, height: bottom - y };
 }
 
-function boundaryPositionForWorkspace(
-  workspace: SubcanvasWorkspaceBounds,
-  direction: "input" | "output",
-  index: number,
-  count: number,
-) {
-  return {
-    x: direction === "input" ? workspace.x - 210 : workspace.x + workspace.width,
-    y: workspace.y + workspace.height / 2 - 53 + (index - (count - 1) / 2) * 112,
-  };
-}
-
 export function layoutSubcanvasNodes(
   nodes: StoryCanvasNode[],
   options: { preserveWorkspace?: boolean; gridSize?: number } = {},
@@ -1052,16 +1160,13 @@ export function layoutSubcanvasNodes(
   const workspace = options.preserveWorkspace
     ? currentWorkspace
     : expandedWorkspaceBounds(currentWorkspace, subcanvasContent(nodes), options.gridSize);
-  const inputs = nodes.filter(
-    (node) => node.data.kind === "boundary" && node.data.details?.direction === "input",
+  const boundaryY = (node: StoryCanvasNode) => Math.min(
+    workspace.y + workspace.height - (node.height ?? 106),
+    Math.max(workspace.y, node.position.y),
   );
-  const outputs = nodes.filter(
-    (node) => node.data.kind === "boundary" && node.data.details?.direction === "output",
-  );
-  const endAdder = nodes.find((node) => node.data.kind === "endAdder");
-
   return nodes.map((node) => {
     if (node.id === workspaceNode.id) {
+      if (node.position.x === workspace.x && node.position.y === workspace.y && node.width === workspace.width && node.height === workspace.height && node.style?.width === workspace.width && node.style?.height === workspace.height) return node;
       return {
         ...node,
         position: { x: workspace.x, y: workspace.y },
@@ -1071,27 +1176,45 @@ export function layoutSubcanvasNodes(
       };
     }
     if (node.data.kind === "endAdder") {
-      const lastOutputPosition = boundaryPositionForWorkspace(
-        workspace,
-        "output",
-        Math.max(outputs.length - 1, 0),
-        Math.max(outputs.length, 1),
-      );
+      const direction = node.data.details?.direction === "input" ? "input" : "output";
+      const width = node.width ?? 48;
+      const position = {
+        x: direction === "input" ? workspace.x - width : workspace.x + workspace.width,
+        y: workspace.y,
+      };
+      const height = workspace.height;
+      if (
+        node.position.x === position.x &&
+        node.position.y === position.y &&
+        node.width === width &&
+        node.height === height &&
+        node.style?.width === width &&
+        node.style?.height === height
+      ) return node;
       return {
         ...node,
-        position: {
-          x: lastOutputPosition.x + 246,
-          y: lastOutputPosition.y + 122,
-        },
+        position,
+        width,
+        height,
+        style: { ...node.style, width, height },
       };
     }
     if (node.data.kind !== "boundary") return node;
+    // Authored return ports are draggable in both axes. Keep their stored
+    // position instead of snapping them back to the workspace's outer edge;
+    // ordinary entry and exit ports remain attached to the frame.
+    if (node.data.details?.restart === true || node.data.details?.returnRoute === true) return node;
     const direction = node.data.details?.direction === "output" ? "output" : "input";
-    const ports = direction === "input" ? inputs : outputs;
-    const index = ports.findIndex((port) => port.id === node.id);
+    const position = {
+      x: direction === "input"
+        ? workspace.x - (node.width ?? 210)
+        : workspace.x + workspace.width,
+      y: boundaryY(node),
+    };
+    if (node.position.x === position.x && node.position.y === position.y) return node;
     return {
       ...node,
-      position: boundaryPositionForWorkspace(workspace, direction, index, ports.length),
+      position,
     };
   });
 }
@@ -1236,7 +1359,7 @@ function addEventSupportNodes(
           : []),
         ...dataUseBadges(project, decision.availability),
       ],
-      { eventId: eventNode.id, decision, options: decisionOptions(eventNode.id, decision) },
+      { eventId: eventNode.id, decision, options: decisionOptions(project, eventNode.id, decision, options.interfaceLocale) },
       {
         nodeColors: options.nodeColors,
         width: 230,
@@ -1345,7 +1468,7 @@ function buildEventScopeModel(
           : []),
         ...dataUseBadges(project, decision.availability),
       ],
-      { eventId: eventNode.id, decision, options: decisionOptions(eventNode.id, decision) },
+      { eventId: eventNode.id, decision, options: decisionOptions(project, eventNode.id, decision, options.interfaceLocale) },
       {
         nodeColors: options.nodeColors,
         scope,
@@ -1370,12 +1493,7 @@ function buildEventScopeModel(
       nodes,
       nodeId,
       beat.kind === "speech" ? "speechBeat" : "directionBeat",
-      block?.content.trim().slice(0, 80) || automaticNarrativeName(
-        project,
-        eventNode.id,
-        beat.kind === "speech" ? "Speech Beat" : "Director Direction",
-        index + 1,
-      ),
+      block?.content.trim().slice(0, 80) || narrativeLineLabel(beat.kind),
       beat.kind === "speech" ? speaker : "Stage direction",
       740,
       420 + index * 168,
@@ -1423,7 +1541,7 @@ function buildEventScopeModel(
       nodes,
       nodeId,
       "dialogueStart",
-      "Dialogue Trigger",
+      "Conversation start",
       sourceLabel ?? "Choose an interactable source",
       410,
       250 + index * 120,
@@ -1447,12 +1565,11 @@ function buildEventScopeModel(
       position.x,
       position.y,
       [],
-      { eventId: eventNode.id, direction: "input", transitionId: port.transitionId },
+      { eventId: eventNode.id, direction: "input", transitionId: port.transitionId, slotId: "slotId" in port ? port.slotId : undefined },
       {
         nodeColors: options.nodeColors,
         scope,
-        autoPosition: true,
-        draggable: false,
+        draggable: true,
         width: 210,
         height: 106,
       },
@@ -1481,34 +1598,35 @@ function buildEventScopeModel(
       {
         nodeColors: options.nodeColors,
         scope,
-        autoPosition: true,
-        draggable: false,
+        draggable: true,
         width: 210,
         height: 106,
       },
     );
   });
-  pushNode(
-    project,
-    nodes,
-    `end-adder:${eventNode.id}`,
-    "endAdder",
-    "",
-    undefined,
-    0,
-    0,
-    [],
-    { eventId: eventNode.id },
-    {
-      scope,
-      autoPosition: true,
-      draggable: false,
-      selectable: true,
-      width: 36,
-      height: 36,
-      zIndex: 4,
-    },
-  );
+  (["input", "output"] as const).forEach((direction) => {
+    pushNode(
+      project,
+      nodes,
+      direction === "output" ? `end-adder:${eventNode.id}` : `end-adder:input:${eventNode.id}`,
+      "endAdder",
+      "",
+      undefined,
+      0,
+      0,
+      [],
+      { eventId: eventNode.id, direction },
+      {
+        scope,
+        autoPosition: true,
+        draggable: false,
+        selectable: false,
+        width: 48,
+        height: SUBCANVAS_WORKSPACE_MIN_HEIGHT,
+        zIndex: 1,
+      },
+    );
+  });
 
   // Dialogue members belong to their own subcanvas. At the event level, an
   // *incoming* legacy route to one of those members is represented as an
@@ -1528,6 +1646,7 @@ function buildEventScopeModel(
       });
   });
 
+  addInteractionCanvasNodes(project, nodes, eventNode, scope, options);
   eventNode.boundaryBindings?.forEach((binding) => {
     const memberContainerId = dialogueContainerByMember.get(binding.nodeId);
     // A child-to-output binding is a Dialogue exit, not an event-canvas edge.
@@ -1567,6 +1686,25 @@ function buildEventScopeModel(
     edges.push(transitionEdge(project, eventNode, { ...transition, to: targetId }, options.interfaceLocale));
   });
 
+  // A child is represented by its event card at this level. Its routes to
+  // siblings and back to the parent remain visible here without exposing the
+  // child's decisions or creating an external Entry port for every return.
+  childEvents.forEach((childEvent) => {
+    childEvent.transitions?.forEach((transition) => {
+      const targetId = transition.to === eventNode.id ? restartOutputId : transition.to;
+      if (!childIds.includes(transition.to) && transition.to !== eventNode.id) return;
+      if (!nodeIds.has(targetId)) return;
+      edges.push(edge(
+        `edge:transition:${transition.id}`,
+        childEvent.id,
+        targetId,
+        "transition",
+        transitionCanvasLabel(transition),
+        transitionEdgeData(project, transition, options.interfaceLocale),
+      ));
+    });
+  });
+
   projectRouteGates(project, nodes, edges, scope, options);
   const laidOutNodes = addSubcanvasWorkspace(project, nodes, scope, options);
 
@@ -1595,6 +1733,35 @@ function buildDialogueScopeModel(
 
   const inputId = `dialogue-boundary:${eventNode.id}:${dialogue.id}:input`;
   const outputId = `dialogue-boundary:${eventNode.id}:${dialogue.id}:output`;
+  const dialogueRef = `dialogue:${eventNode.id}:${dialogue.id}`;
+  const dialogueRoutes = (eventNode.transitions ?? []).filter(
+    (transition) => transition.from === dialogueRef || transition.to === dialogueRef,
+  );
+  const hierarchyEventIds = new Set<string>([eventNode.id]);
+  let hierarchyCursor = eventNode;
+  while (hierarchyCursor.parentEventId && !hierarchyEventIds.has(hierarchyCursor.parentEventId)) {
+    hierarchyEventIds.add(hierarchyCursor.parentEventId);
+    const parentEvent = project.events.find((candidate) => candidate.id === hierarchyCursor.parentEventId);
+    if (!parentEvent) break;
+    hierarchyCursor = parentEvent;
+  }
+  const isDialogueOutputPort = (reference: string) =>
+    reference === outputId || reference.startsWith(`${outputId}:`);
+  // The Dialogue canvas has one opening and one closing boundary. Routes that
+  // enter or leave its container belong to the event hierarchy; showing them
+  // again as conversation ports duplicates the same transition here.
+  const dialogueOutputRoutes = dialogueRoutes.filter(
+    (transition) =>
+      transition.from === dialogueRef &&
+      !isDialogueOutputPort(transition.to) &&
+      transition.to !== dialogueRef &&
+      !hierarchyEventIds.has(transition.to),
+  );
+  const primaryOutputRoute = dialogueOutputRoutes.length === 1 ? dialogueOutputRoutes[0] : undefined;
+  const scopeKey = canvasScopeKey(scope);
+  const authoringScope = project.canvas?.scopes?.[scopeKey];
+  const entrySlots = authoringScope?.entrySlots ?? [];
+  const exitSlots = authoringScope?.exitSlots ?? [];
   const scriptBlocks = new Map(
     (project.scriptDocuments ?? []).flatMap((script) =>
       script.blocks.map((block) => [`${script.id}:${block.id}`, block] as const),
@@ -1610,12 +1777,7 @@ function buildDialogueScopeModel(
       nodes,
       nodeId,
       beat.kind === "speech" ? "speechBeat" : "directionBeat",
-      block?.content.trim().slice(0, 80) || automaticNarrativeName(
-        project,
-        eventNode.id,
-        beat.kind === "speech" ? "Speech Beat" : "Director Direction",
-        index + 1,
-      ),
+      block?.content.trim().slice(0, 80) || narrativeLineLabel(beat.kind),
       beat.kind === "speech" ? speaker : "Stage direction",
       330 + (index % 2) * 310,
       90 + Math.floor(index / 2) * 175,
@@ -1650,12 +1812,14 @@ function buildDialogueScopeModel(
           ? [decision.unavailableBehavior === "hidden" ? "hidden when unavailable" : "locks when unavailable"]
           : []),
       ],
-      { eventId: eventNode.id, dialogueId: dialogue.id, decision, options: decisionOptions(eventNode.id, decision) },
+      { eventId: eventNode.id, dialogueId: dialogue.id, decision, options: decisionOptions(project, eventNode.id, decision, options.interfaceLocale) },
       { nodeColors: options.nodeColors, scope, width: 230 },
     );
   });
 
-  const inputPosition = boundaryPortPosition(nodes, "input", 0, 1);
+  const inputPortCount = entrySlots.length + 1;
+  const outputPortCount = exitSlots.length + 1;
+  const inputPosition = boundaryPortPosition(nodes, "input", 0, inputPortCount);
   pushNode(
     project,
     nodes,
@@ -1670,17 +1834,17 @@ function buildDialogueScopeModel(
       eventId: eventNode.id,
       dialogueId: dialogue.id,
       direction: "input",
+      returnTarget: false,
     },
     {
       nodeColors: options.nodeColors,
       scope,
-      autoPosition: true,
-      draggable: false,
+      draggable: true,
       width: 210,
       height: 106,
     },
   );
-  const outputPosition = boundaryPortPosition(nodes, "output", 0, 1);
+  const outputPosition = boundaryPortPosition(nodes, "output", 0, outputPortCount);
   pushNode(
     project,
     nodes,
@@ -1695,32 +1859,111 @@ function buildDialogueScopeModel(
       eventId: eventNode.id,
       dialogueId: dialogue.id,
       direction: "output",
+      transitionId: primaryOutputRoute?.id,
+      targetId: primaryOutputRoute?.to,
+      returnRoute: false,
     },
     {
       nodeColors: options.nodeColors,
       scope,
-      autoPosition: true,
-      draggable: false,
+      draggable: true,
       width: 210,
       height: 106,
     },
   );
 
+  entrySlots.forEach((slotId, index) => {
+    const nodeId = `dialogue-boundary:${eventNode.id}:${dialogue.id}:input:${slotId}`;
+    const position = boundaryPortPosition(nodes, "input", index + 1, inputPortCount);
+    pushNode(
+      project,
+      nodes,
+      nodeId,
+      "boundary",
+      dialogue.title,
+      "Additional entry",
+      position.x,
+      position.y,
+      [],
+      { eventId: eventNode.id, dialogueId: dialogue.id, direction: "input", slotId },
+      { nodeColors: options.nodeColors, scope, draggable: true, width: 210, height: 106 },
+    );
+  });
+  exitSlots.forEach((slotId, index) => {
+    const nodeId = `dialogue-boundary:${eventNode.id}:${dialogue.id}:output:${slotId}`;
+    const position = boundaryPortPosition(nodes, "output", index + 1, outputPortCount);
+    pushNode(
+      project,
+      nodes,
+      nodeId,
+      "boundary",
+      dialogue.title,
+      "Additional continuation",
+      position.x,
+      position.y,
+      [],
+      { eventId: eventNode.id, dialogueId: dialogue.id, direction: "output", slotId },
+      { nodeColors: options.nodeColors, scope, draggable: true, width: 210, height: 106 },
+    );
+  });
+
+  (['input', 'output'] as const).forEach((direction) => {
+    pushNode(
+      project,
+      nodes,
+      `end-adder:${direction}:${eventNode.id}:${dialogue.id}`,
+      "endAdder",
+      "",
+      undefined,
+      0,
+      0,
+      [],
+      { eventId: eventNode.id, dialogueId: dialogue.id, direction },
+      {
+        scope,
+        autoPosition: true,
+        draggable: false,
+        selectable: false,
+        width: 48,
+        height: SUBCANVAS_WORKSPACE_MIN_HEIGHT,
+        zIndex: 1,
+      },
+    );
+  });
+
+  addInteractionCanvasNodes(project, nodes, eventNode, scope, options);
   const entryBeat = dialogue.entryBeatId
     ? `beat:${eventNode.id}:${dialogue.entryBeatId}`
     : undefined;
-  if (entryBeat && nodes.some((node) => node.id === entryBeat)) {
+  const dialogueInputRefs = new Set([
+    inputId,
+    ...entrySlots.map((slotId) => `${inputId}:${slotId}`),
+  ]);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const hasAuthoredOpeningRoute = (eventNode.transitions ?? []).some(
+    (transition) => dialogueInputRefs.has(transition.from) && nodeIds.has(transition.to),
+  );
+  if (entryBeat && nodeIds.has(entryBeat) && !hasAuthoredOpeningRoute) {
     edges.push(edge(`edge:dialogue-entry:${dialogue.id}`, inputId, entryBeat, "boundary", "enters"));
   }
-  const nodeIds = new Set(nodes.map((node) => node.id));
   (eventNode.transitions ?? []).forEach((transition) => {
+    // Dialogue-container routes are represented by their movable edge ports.
+    // The event canvas owns transitions to and from the container.
+    if (transition.from === dialogueRef || transition.to === dialogueRef) return;
     const source = visualTransitionSource(eventNode, transition);
     const sourceInside = nodeIds.has(source.nodeId);
     const targetInside = nodeIds.has(transition.to);
     if (sourceInside && targetInside) {
       edges.push(transitionEdge(project, eventNode, transition, options.interfaceLocale));
     } else if (sourceInside && !targetInside) {
-      edges.push(transitionEdge(project, eventNode, { ...transition, to: outputId }, options.interfaceLocale));
+      const exitEdge = transitionEdge(project, eventNode, { ...transition, to: outputId }, options.interfaceLocale);
+      if (hierarchyEventIds.has(transition.to) && exitEdge.data) {
+        // The conversation's output boundary already represents an exit to an
+        // ancestor event. Keep the line connected, but leave the return marker
+        // to the event-level canvas where that hierarchy is visible.
+        exitEdge.data = { ...exitEdge.data, returnRoute: false };
+      }
+      edges.push(exitEdge);
     } else if (!sourceInside && targetInside && transition.to !== entryBeat) {
       edges.push(transitionEdge(project, eventNode, { ...transition, from: inputId }, options.interfaceLocale));
     }
@@ -1769,6 +2012,7 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
 
   if (sequence) {
     const startNodeId = `start:${sequence.id}`;
+    const startNodeSize = Math.max(1, options.gridSize ?? 24) * 3;
     pushNode(
       project,
       nodes,
@@ -1786,7 +2030,7 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
             ? sequence.entryEventId
             : undefined,
       },
-      { nodeColors: options.nodeColors, scope },
+      { nodeColors: options.nodeColors, scope, width: startNodeSize, height: startNodeSize },
     );
     cursor.sequenceY += 190;
   }
@@ -1986,4 +2230,40 @@ export function validateStoryCanvasEdges(nodes: StoryCanvasNode[], edges: StoryC
 
     return findings;
   });
+}
+
+function addInteractionCanvasNodes(project: BranchingProject, nodes: StoryCanvasNode[], event: EventNode, scope: Extract<CanvasScope, { kind: "event" | "dialogue" }>, options: StoryCanvasModelOptions) {
+  const dialogueId = scope.kind === 'dialogue' ? scope.id : undefined;
+  const uses = (event.interactionUses ?? []).filter(u => !u.ownerNodeId && u.dialogueId === dialogueId);
+  uses.forEach((use, index) => {
+    const definition = event.interactionDefinitions?.find(d => d.id === use.definitionId);
+    pushNode(project, nodes, `interaction:${event.id}:${use.id}`, 'interaction', definition?.name ?? use.id,
+      options.canvasLayerMode === 'logic' ? JSON.stringify(definition?.mechanic) : definition?.prompt?.content ?? definition?.mechanic.kind,
+      700, 120 + index * 190, definition?.results.map(r => r.name) ?? [], { eventId: event.id, dialogueId, interactionUse: use, interactionResults: definition?.results.map(r => ({ id: r.id, name: r.name })) }, { scope, nodeColors: options.nodeColors });
+  });
+  (event.interactionBarriers ?? []).filter(b => b.dialogueId === dialogueId).forEach((barrier, index) => {
+    pushNode(project, nodes, `barrier:${event.id}:${barrier.id}`, 'barrier', barrier.name,
+      barrier.useIds.map(id => event.interactionDefinitions?.find(d => d.id === event.interactionUses?.find(u => u.id === id)?.definitionId)?.name ?? id).join(' · '),
+      1010, 120 + index * 190, ['Wait / Esperar'], { eventId: event.id, dialogueId, interactionBarrier: barrier }, { scope, nodeColors: options.nodeColors });
+  });
+  // Attached uses are a badge on their authored owner, not additional executable nodes.
+  const cards = (ownerId: string) => (event.interactionUses ?? []).filter(u => u.ownerNodeId === ownerId).map(u => {
+    const definition = event.interactionDefinitions?.find(d => d.id === u.definitionId);
+    return { id: u.id, name: definition?.name ?? u.id, moment: u.moment, mechanic: definition?.mechanic, results: definition?.results };
+  });
+  for (const node of nodes) {
+    const attached = (event.interactionUses ?? []).filter(u => u.ownerNodeId === node.id);
+    node.data.badges.push(...attached.map(u => `${u.moment} · ${event.interactionDefinitions?.find(d => d.id === u.definitionId)?.name ?? u.id}`));
+    if (attached.length) {
+      node.data.details = { ...node.data.details, interactionCards: cards(node.id) };
+      if (node.data.kind === 'speechBeat' || node.data.kind === 'directionBeat') {
+        node.height = (node.height ?? (node.data.kind === 'speechBeat' ? SPEECH_BEAT_NODE_HEIGHT : DIRECTION_BEAT_NODE_HEIGHT)) + attached.length * 48;
+        node.style = { ...node.style, height: node.height };
+      }
+    }
+    if (node.data.kind === 'decision' && Array.isArray(node.data.details?.options)) node.data.details.options = node.data.details.options.map(option => {
+      const value = option as { handleId?: string };
+      return { ...value, interactionCards: value.handleId ? cards(value.handleId) : [] };
+    });
+  }
 }

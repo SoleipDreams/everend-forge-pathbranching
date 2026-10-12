@@ -1,0 +1,167 @@
+/* Everend Forge palette only. Persisted theme IDs retain compatibility; layout, typography, authored colours and motion stay unchanged. */
+.pathbranching-app[data-theme="forge-mono-light"] {
+  color-scheme: light;
+  --wn-bg: #f5ecd9;
+  --wn-panel: #fff8e9;
+  --wn-panel-2: #eadfc7;
+  --wn-card: #fff8e9;
+  --wn-border: #c7b594;
+  --wn-text: #282317;
+  --wn-accent: #87531e;
+  --wn-accent-contrast: #fff8e9;
+  --wn-muted: #655b48;
+  --wn-faint: #776952;
+  --wn-accent-soft: #ead8b1;
+  --wn-editor-bg: #f5ecd9;
+  --wn-editor-text: #282317;
+  --wn-shadow: #3b2c13;
+  --wn-danger: #a04441;
+  --wn-warning: #87531e;
+  --wn-success: #346a4e;
+  --fm-blue: #365c87;
+  --fm-steel: #5e6470;
+  --fm-thread: #a77a35;
+  --fm-grid: #e1d3b6;
+}
+
+.pathbranching-app[data-theme="forge-mono-dark"] {
+  color-scheme: dark;
+  --wn-bg: #0a0b10;
+  --wn-panel: #12141b;
+  --wn-panel-2: #1a1d27;
+  --wn-card: #12141b;
+  --wn-border: #30333f;
+  --wn-text: #efe9dd;
+  --wn-accent: #f2c46d;
+  --wn-accent-contrast: #201609;
+  --wn-muted: #a8a296;
+  --wn-faint: #8c877e;
+  --wn-accent-soft: #282219;
+  --wn-editor-bg: #0a0b10;
+  --wn-editor-text: #efe9dd;
+  --wn-shadow: #000000;
+  --wn-danger: #d9918b;
+  --wn-warning: #f2c46d;
+  --wn-success: #a2c3a6;
+  --fm-blue: #7fb0ff;
+  --fm-steel: #9ca9ba;
+  --fm-thread: #b99556;
+  --fm-grid: #1e2431;
+}
+
+.pathbranching-app[data-theme="forge-mono-dark"] .forge-logo-on-light { display:none; }
+.pathbranching-app[data-theme="forge-mono-dark"] .forge-logo-on-dark { display:block; }
+
+.pathbranching-app:is([data-theme="forge-mono-light"], [data-theme="forge-mono-dark"]) {
+  --wn-button-bg: var(--wn-panel);
+  --wn-button-hover-bg: var(--wn-accent-soft);
+  --border-color: var(--wn-border);
+  --pb-sequence: var(--fm-blue);
+  --pb-start: var(--wn-success);
+  --pb-branch: var(--fm-steel);
+  --pb-event: var(--fm-blue);
+  --pb-final: var(--fm-steel);
+  --pb-decision: var(--wn-accent);
+  --pb-outcome: var(--wn-accent);
+  --pb-ink: var(--fm-steel);
+  --pb-knowledge: var(--fm-blue);
+  --pb-action: var(--wn-accent);
+}
+
+@scope (.pathbranching-app:is([data-theme="forge-mono-light"], [data-theme="forge-mono-dark"])) {
+  :scope :focus-visible {
+    outline-color: var(--wn-accent) !important;
+  }
+  :scope :is(input, select, textarea) {
+    accent-color: var(--wn-accent);
+    caret-color: var(--wn-text);
+  }
+  :scope :is(input, textarea)::placeholder { color: var(--wn-muted); }
+  :scope :is(.home-shell, .app-shell) { background: var(--wn-bg); }
+  :scope .home-shell {
+    background: var(--wn-bg);
+  }
+  :scope :is(.home-topbar, .topbar, .pb-authoring-topbar, .side-panel, .pb-context-surface) {
+    background: var(--wn-panel);
+    border-color: var(--wn-border);
+  }
+  :scope :is(.eyebrow, .dashboard-findings h3, .recent-section h3, .node-identity-kind,
+    .node-kind, .route-gate-kicker, .event-inspector-group-label, .in-development-label) {
+    color: var(--wn-muted);
+  }
+  :scope .home-actions .primary-action {
+    border-color: var(--wn-accent);
+    color: var(--wn-accent-contrast);
+    background: var(--wn-accent);
+  }
+  :scope :is(.active-project-card, .home-metrics div, .recent-open-button) {
+    background: var(--wn-panel);
+  }
+  :scope :is(.pb-explorer, .pb-canvas-layout, .pb-utility-slot, .story-test-panel,
+    .event-inspector-stack, .canvas-inspector, .settings-modal, .feedback-modal,
+    .topbar-menu-popover, .panel-picker, .canvas-tools-menu, .pb-home-menu-popover) {
+    border-color: var(--wn-border);
+  }
+  :scope .pb-window-title-controls .pb-window-close:hover {
+    color: var(--wn-accent-contrast); background: var(--wn-accent);
+  }
+  :scope .feedback-modal-frame-wrap { background: var(--wn-bg); }
+  :scope .feedback-modal-frame-error {
+    color: var(--wn-text); background: var(--wn-panel); border-color: var(--wn-border);
+  }
+  :scope .feedback-modal-frame-error span { color: var(--wn-muted); }
+  :scope :is(.pb-explorer-tabs button.active, .pb-context-toolbar button.active,
+    .inspector-subtabs button.active, .tree-row.active, .tree-row.selected,
+    .logic-authoring-catalog-list button.active) {
+    color: var(--wn-text);
+    background: var(--wn-accent-soft);
+  }
+  :scope .pb-canvas-stage, :scope .canvas-shell .react-flow { background: var(--wn-editor-bg); }
+  :scope .react-flow__background { --xy-background-color: var(--wn-editor-bg); }
+  :scope .react-flow__background :is(path, line) { stroke: var(--fm-grid) !important; }
+  :scope .react-flow__background circle { fill: var(--xy-background-pattern-color-props, var(--fm-grid)) !important; }
+  :scope .react-flow__minimap-mask { fill: color-mix(in srgb, var(--wn-bg) 70%, transparent); }
+
+  /* Keep authored colours and semantic type accents. */
+  :scope .story-node:not(.workspace-node) {
+    border-color: var(--wn-border);
+    border-left-color: var(--node-accent, var(--pb-event));
+  }
+  :scope .story-node.selected {
+    border-color: var(--wn-accent);
+    outline-color: var(--wn-accent);
+  }
+  :scope :is(.event-branch-tag, .node-info-badges, .route-logic-chip, .node-authoring-logic > button,
+    .story-node .node-kind, .story-node .node-badges, .story-node .node-summary-badges) {
+    border-color: var(--wn-border);
+    color: var(--wn-text);
+    background: var(--wn-panel-2);
+  }
+  :scope .route-logic-chip.condition { color: var(--fm-blue); }
+  :scope .route-logic-chip.consequence { color: var(--wn-accent); }
+  :scope :is(.canvas-return-label, .route-gate-ordered-list button b) { color: var(--wn-muted); }
+  :scope .react-flow__edge-path { stroke: var(--fm-thread) !important; }
+  :scope .react-flow__edge.selected .react-flow__edge-path {
+    stroke: var(--wn-accent) !important;
+  }
+  :scope .react-flow__arrowhead { fill: var(--fm-thread) !important; }
+  :scope .react-flow__edges marker :is(path, polyline) {
+    stroke: var(--fm-thread) !important;
+    fill: var(--fm-thread) !important;
+  }
+  :scope .condition-result.satisfied > strong { color: var(--wn-success); }
+  :scope .condition-result.unsatisfied > strong { color: var(--wn-muted); }
+  :scope .condition-result.invalid > strong { color: var(--wn-danger); }
+  :scope .condition-result.unresolved > strong { color: var(--wn-warning); }
+  :scope :is(.condition-tree-group, .condition-tester) { border-color: var(--wn-border); }
+  :scope .brand-loading {
+    color: var(--wn-text);
+    background: var(--wn-bg);
+  }
+  :scope .brand-loading :is(p, .brand-loading-status) { color: var(--wn-muted); }
+  :scope .brand-loading :is(.brand-loading-mark-glow, .brand-loading-pulse),
+  :scope .brand-loading-orbit::after { background: var(--wn-accent); }
+  :scope .brand-loading-orbit, :scope .brand-loading::before, :scope .brand-loading::after {
+    border-color: var(--wn-border);
+  }
+}

@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { isWorldNotionVisualDocument } from "./visualDocumentMarker.js";
 import type {
   BranchingProject,
   CanonRef,
@@ -271,6 +272,7 @@ export function indexWorldNotionVaultFiles(
     .filter((file) => file.relativePath.endsWith(".md"))
     .filter((file) => !file.relativePath.startsWith(".everend/"))
     .forEach((file) => {
+      if (isWorldNotionVisualDocument(file.content)) return;
       const parsed = splitMarkdown(file.content);
       if (!parsed.data) {
         if (isTemplatePath(file.relativePath)) return;

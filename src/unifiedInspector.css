@@ -1,0 +1,299 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
+.unified-authoring-inspector { font-size:13px; min-width:0; overflow-wrap:anywhere; }
+.unified-authoring-inspector :is(input,select,textarea) { max-width:100%; min-width:0; font-size:13px; }
+.unified-authoring-inspector .field-label { display:flex; flex-direction:column; gap:6px; margin:10px 0; }
+.unified-authoring-inspector .field-label:has(input[type="checkbox"]) { flex-direction:row; align-items:center; }
+.unified-authoring-inspector :is(fieldset,details) { min-width:0; margin:12px 0; padding:8px; border:1px solid var(--wn-border); border-radius:6px; }
+.unified-authoring-inspector summary { cursor:pointer; font-weight:600; }
+.unified-authoring-inspector :is(p,li) { line-height:1.5; }
+.unified-authoring-dock .event-inspector-cards { justify-content:flex-start; }
+.unified-authoring-dock .event-inspector-body-scroll { overflow:hidden; scrollbar-gutter:auto; mask-image:none; -webkit-mask-image:none; }
+/* These wrappers frame fixed navigation; only inspector-scroll owns scrolling. */
+.unified-authoring-dock :is(.event-inspector-body,.event-inspector-body-scroll,.event-dock-inspector,.canvas-inspector.embedded) { overflow:clip; }
+.unified-authoring-dock .event-dock-inspector { height:100%; display:flex; flex-direction:column; }
+.unified-authoring-dock .canvas-inspector.embedded { flex:1; min-height:0; display:flex; flex-direction:column; }
+.inspector-manual-save { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 12px; border-bottom:1px solid var(--wn-border); flex-shrink:0; font-size:12px; color:var(--wn-muted); }
+.inspector-manual-save button { min-height:30px; }
+.unified-authoring-dock .inspector-scroll { flex:1; min-height:0; overflow:auto; }
+.unified-authoring-dock .inspector-subtabs { position:sticky; top:0; z-index:3; background:var(--wn-panel); flex-wrap:wrap; }
+.unified-authoring-dock .inspector-stack-tools { flex-shrink:0; }
+.unified-authoring-dock :focus-visible { outline:2px solid var(--wn-accent); outline-offset:2px; }
+.unified-inspector-width-resize { position:absolute; left:-4px; top:10px; bottom:10px; width:8px; cursor:ew-resize; z-index:5; }
+.inspector-debug-content { height:100%; min-height:0; overflow:auto; padding:12px; }
+.unified-authoring-inspector .field-label:has(input[type="checkbox"]) { justify-content:flex-start; text-transform:none; font-weight:500; }
+.unified-authoring-inspector input[type="checkbox"] { width:auto; flex:0 0 auto; }
+.unified-authoring-dock .event-minimized-title.route-gate-titleless { display:flex; }
+.unified-authoring-dock .event-inspector-group-popover { pointer-events:auto; z-index:25; }
+.unified-authoring-dock .unified-inspector-width-resize { pointer-events:auto; }
+.unified-authoring-dock .event-inspector-group-menu.open .event-inspector-group-popover { opacity:1; transform:none; pointer-events:auto; }
+.canvas-shell.canvas-layer-visual .unified-authoring-dock .logic-composer { display:grid; }
+.unified-authoring-dock .unified-authoring-inspector button { min-height:30px; padding:5px 8px; border:1px solid var(--wn-border); border-radius:5px; background:var(--wn-panel-2); color:var(--wn-text); font:inherit; display:inline-flex; align-items:center; gap:5px; }
+.unified-authoring-dock .unified-authoring-inspector button:hover:not(:disabled) { border-color:var(--wn-accent); background:var(--wn-accent-soft); }
+.unified-authoring-dock .unified-authoring-inspector button:disabled { opacity:.5; }
+.unified-authoring-inspector .field-label > :is(input:not([type="checkbox"]),select,textarea) { width:100%; }
+
+
+/* Object identity stays above module navigation; overview contains only context and fields. */
+.unified-authoring-dock .event-inspector-card.expanded .event-editor-header { flex-basis:auto; min-height:60px; padding:10px 12px; }
+.unified-authoring-dock .event-inspector-card.expanded .event-header-name { font-size:1rem !important; font-weight:700; line-height:1.3; }
+.unified-authoring-dock .event-inspector-card.expanded .event-header-copy { gap:3px; }
+.unified-authoring-dock .event-header-kind { font-size:11px; font-weight:500; color:var(--wn-muted); }
+.unified-authoring-dock .event-editor-actions { flex-shrink:0; }
+.event-inspector-context { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin:0 0 16px; color:var(--wn-muted); font-size:12px; }
+.event-inspector-context > span { display:inline-flex; align-items:center; gap:5px; min-width:0; }
+.event-inspector-context .event-inspector-context-branch { overflow-wrap:anywhere; flex:1 1 140px; }
+.event-inspector-context svg { flex-shrink:0; }
+
+
+/* Overview is the pilot for shared inspector fields and secondary actions. */
+.inspector-overview.inspector-section { padding:4px 12px 16px; border:0; border-radius:0; background:transparent; }
+.inspector-overview .inspector-field-group { display:grid; gap:12px; padding-block:16px; }
+.inspector-overview .inspector-field-group + .inspector-field-group { border-top:1px solid var(--wn-border); }
+.inspector-overview .event-inspector-context { padding-block:8px 12px; margin:0; border-bottom:1px solid var(--wn-border); }
+.inspector-overview .inspector-group-title { margin:0; font-size:12px; font-weight:600; color:var(--wn-muted); }
+.inspector-overview .inspector-field { display:grid; gap:8px; margin:0; text-transform:none; font-size:13px; font-weight:500; }
+.inspector-field-title { display:flex; align-items:center; gap:8px; color:var(--wn-text); line-height:1.4; }
+.inspector-field-title svg { flex:0 0 16px; color:var(--wn-muted); stroke-width:1.75; }
+.inspector-overview .inspector-field :is(select,textarea) { width:100%; max-width:100%; min-height:36px; height:auto; padding:8px 10px; border:1px solid var(--wn-border); border-radius:6px; background:var(--wn-panel-2); color:var(--wn-text); font:inherit; font-weight:400; line-height:1.5; }
+.inspector-overview .inspector-field textarea { min-height:112px; resize:vertical; }
+.inspector-overview .inspector-field :is(select,textarea):focus-visible { outline:2px solid var(--wn-accent); outline-offset:2px; }
+
+
+.inspector-select { display:grid; gap:8px; min-width:0; }
+.inspector-overview .inspector-select .inspector-select-trigger { display:flex; align-items:center; gap:10px; width:100%; min-height:48px; padding:7px 10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); color:var(--wn-text); font:inherit; text-align:left; cursor:pointer; }
+.inspector-overview .inspector-select .inspector-select-trigger:hover,
+.inspector-overview .inspector-select .inspector-select-trigger[aria-expanded="true"] { border-color:var(--wn-accent); background:color-mix(in srgb,var(--wn-accent-soft) 45%,var(--wn-panel-2)); }
+.inspector-select-trigger:focus-visible { outline:2px solid var(--wn-accent); outline-offset:2px; }
+.inspector-select-thumb { width:32px; height:32px; object-fit:cover; border-radius:5px; flex:0 0 32px; }
+.inspector-select-symbol { display:grid; place-items:center; width:32px; height:32px; border-radius:5px; background:var(--wn-accent-soft); color:var(--wn-accent); flex:0 0 32px; }
+.inspector-select-value { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.inspector-select-chevron { flex:0 0 16px; color:var(--wn-muted); }
+.inspector-select-menu { box-sizing:border-box; z-index:1000; overflow:auto; padding:5px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); color:var(--wn-text); box-shadow:0 12px 32px #0004; }
+.inspector-select-option { display:flex; align-items:center; gap:10px; min-height:44px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.inspector-select-option[data-active] { background:var(--wn-accent-soft); outline:1px solid var(--wn-accent); outline-offset:-1px; }
+.inspector-select-option[aria-selected="true"] > svg { color:var(--wn-accent); flex-shrink:0; }
+.inspector-select-option-copy { display:grid; gap:3px; min-width:0; flex:1; font-size:13px; overflow-wrap:anywhere; }
+.inspector-select-option-copy small { color:var(--wn-muted); font-size:11px; }
+
+
+/* Both toolbar rows use the same square controls and alignment. */
+.unified-authoring-dock .inspector-window-tools { display:flex; justify-content:flex-end; align-items:center; gap:6px; }
+.unified-authoring-dock .inspector-window-tools .event-inspector-group-menu.stack { position:relative; inset:auto; display:flex; align-items:center; width:30px; height:30px; flex:0 0 30px; margin:0; }
+.unified-authoring-dock .inspector-window-tools :is(.event-inspector-group-trigger,.inspector-maximize-button) { display:grid; place-items:center; box-sizing:border-box; padding:0; margin:0; width:30px; height:30px; min-height:30px; }
+.unified-authoring-dock .event-editor-actions > button { display:grid; place-items:center; box-sizing:border-box; padding:0; margin:0; width:30px; height:30px; min-height:30px; }
+.unified-authoring-dock .inspector-module-bar > .inspector-module-add { display:grid; place-items:center; padding:0; border:1px solid transparent; background:transparent; color:var(--wn-muted); box-shadow:none; }
+.unified-authoring-dock .inspector-module-bar > .inspector-module-add:hover,
+.unified-authoring-dock .inspector-module-bar > .inspector-module-add[aria-expanded="true"] { border-color:var(--wn-border); background:var(--wn-accent-soft); color:var(--wn-text); }
+.inspector-module-menu { z-index:1000; box-sizing:border-box; min-width:0; max-width:none; overflow:auto; pointer-events:auto; }
+.inspector-module-menu > button { min-height:32px; border:0; text-align:left; background:transparent; color:var(--wn-text); font:inherit; font-size:12px; cursor:pointer; }
+.inspector-module-menu > button:hover { background:var(--wn-accent-soft); }
+.inspector-module-menu > button:focus-visible { outline:2px solid var(--wn-accent); outline-offset:-2px; }
+
+.unified-authoring-dock .inspector-module-bar { background:var(--wn-editor-bg); }
+
+/* Connection hierarchy first; detailed relation presentation is reviewed separately. */
+.inspector-connections { padding:0 12px 16px; }
+.inspector-connections .inspector-connection-group { padding:16px 0; }
+.inspector-connections .inspector-connection-group + .inspector-connection-group { border-top:1px solid var(--wn-border); }
+.inspector-connections h2 { margin:0 0 8px; font-size:14px; font-weight:600; }
+.inspector-connections h3 { margin:12px 0 8px; font-size:13px; font-weight:500; }
+.inspector-connections h3 > span { color:var(--wn-muted); font-size:12px; }
+.inspector-connections .inspector-connection-hint { margin:0 0 12px; }
+.inspector-connections :is(.canon-ref-dropzone,.canon-context-list) { padding:0; margin:16px 0 0; background:transparent; border:0; border-radius:0; }
+.inspector-connections .narrative-connections { display:block; }
+.inspector-connections .narrative-continuation { margin-top:16px; }
+.inspector-connections .inspector-connection-advanced { padding-top:16px; border-top:1px solid var(--wn-border); }
+.inspector-connection-advanced > summary { cursor:pointer; font-size:13px; font-weight:500; }
+.inspector-connection-advanced[open] > summary { margin-bottom:12px; }
+
+
+/* Connections owns its scroll area below the module navigation. */
+.unified-authoring-dock .event-dock-inspector .canvas-inspector.embedded .inspector-scroll:has(> .inspector-connections) { display:flex; flex-direction:column; overflow:hidden; }
+.unified-authoring-dock .inspector-scroll:has(> .inspector-connections) > .inspector-module-bar { position:relative; flex:0 0 auto; margin-bottom:10px; }
+.inspector-connections { overflow:auto; min-height:0; container-type:inline-size; padding:0 10px 12px; display:flex; flex-direction:column; gap:12px; }
+.inspector-connections .inspector-connection-group,
+.inspector-connections .inspector-connection-advanced { flex-shrink:0; padding:14px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); }
+.inspector-connections .inspector-connection-group + .inspector-connection-group { border:1px solid var(--wn-border); }
+.inspector-route-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start; }
+.inspector-route-columns > :is(.narrative-connections,.narrative-continuation) { min-width:0; margin:0; }
+.inspector-route-columns h3 { display:flex; justify-content:space-between; gap:8px; margin:0 0 12px; color:var(--wn-text); }
+.inspector-route-columns .narrative-connections > div { display:grid; gap:8px; }
+.inspector-connections .narrative-incoming-route,
+.pb-context-surface .inspector-connections .narrative-route,
+.inspector-route-empty { padding:10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.inspector-connections .narrative-incoming-route { display:flex; gap:6px; align-items:center; min-width:0; }
+.inspector-connections .narrative-incoming-route > button:first-child { flex:1; min-width:0; text-align:left; }
+.pb-context-surface .inspector-connections .narrative-route { margin:0 0 8px; }
+.inspector-connections .inspector-route-destination { display:flex; align-items:center; gap:10px; min-width:0; margin:0 0 8px; padding:10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.inspector-route-destination > span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.unified-authoring-dock .unified-authoring-inspector .inspector-route-navigate { flex:0 0 auto; width:30px; height:30px; padding:0; justify-content:center; }
+.inspector-route-empty { margin:0; color:var(--wn-muted); line-height:1.5; }
+.inspector-route-columns .narrative-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+.inspector-connections .canon-ref-chips { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+.inspector-connections .canon-ref-chips > button,
+.inspector-connections .reference-picker-values > span { display:flex; align-items:center; padding:10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); text-align:left; overflow-wrap:anywhere; }
+.inspector-connections .canon-ref-dropzone + .canon-ref-dropzone { border-top:1px solid var(--wn-border); padding-top:16px; }
+@container (max-width:420px) { .inspector-route-columns { grid-template-columns:minmax(0,1fr); } }
+
+/* Rounded module frame, including Add, above the clipped content viewport. */
+.unified-authoring-dock .event-dock-inspector .canvas-inspector.embedded .inspector-scroll { padding:0; scrollbar-gutter:auto; }
+.unified-authoring-dock .inspector-module-bar,
+.unified-authoring-dock .inspector-scroll:has(> .inspector-connections) > .inspector-module-bar {
+  box-sizing:border-box; width:100%; margin:0; padding:4px;
+  gap:6px; background:var(--wn-panel); border:1px solid var(--wn-border);
+  border-radius:10px; z-index:4; isolation:isolate;
+}
+.pb-context-surface .inspector-module-bar .inspector-subtabs.inspector-module-tabs {
+  border:0; border-radius:0; background:transparent; padding:0;
+}
+.unified-authoring-dock .inspector-module-bar > .inspector-module-add { flex:0 0 34px; }
+.inspector-fixed-navigation { flex:0 0 auto; min-width:0; width:100%; box-sizing:border-box; padding:8px; position:relative; z-index:4; background:var(--wn-editor-bg); }
+.inspector-fixed-navigation:empty { display:none; }
+.inspector-fixed-navigation > .inspector-subtabs { margin:0; width:100%; box-sizing:border-box; }
+.context-focus .unified-authoring-dock .event-dock-inspector { position:relative; min-width:0; }
+.context-focus .unified-authoring-dock .canvas-inspector.embedded { position:absolute; inset:0; width:auto; height:auto; max-height:none; min-width:0; flex:none; }
+.context-focus .unified-authoring-dock .canvas-inspector.embedded > .inspector-fixed-navigation {
+  position:absolute; inset:0 0 auto; z-index:12; box-sizing:border-box; padding:8px 8px 18px;
+  background:linear-gradient(to bottom, color-mix(in srgb,var(--wn-editor-bg) 98%,transparent) 0%, color-mix(in srgb,var(--wn-editor-bg) 90%,transparent) 72%, transparent 100%);
+  pointer-events:none;
+}
+.context-focus .unified-authoring-dock .canvas-inspector.embedded > .inspector-fixed-navigation > * { pointer-events:auto; }
+.context-focus .unified-authoring-dock .canvas-inspector.embedded > .inspector-scroll { box-sizing:border-box; padding-top:68px; }
+.unified-authoring-dock .inspector-connections {
+  padding:10px 8px 12px 12px; scrollbar-width:auto;
+  scrollbar-color:auto; overscroll-behavior:contain;
+}
+.unified-authoring-dock .inspector-connections::-webkit-scrollbar { width:6px; height:6px; }
+.unified-authoring-dock .inspector-connections::-webkit-scrollbar-track { background:transparent; }
+.unified-authoring-dock .inspector-connections::-webkit-scrollbar-thumb { background:var(--wn-border); border-radius:6px; }
+.unified-authoring-dock .inspector-connections::-webkit-scrollbar-button { display:none; width:0; height:0; }
+
+/* Heading pilot: section, subsection, then supporting explanation. */
+/* Shared framing extends the Connections design to the remaining inspector modules. */
+.unified-authoring-dock .inspector-scroll > .inspector-section:not(.inspector-overview) { margin:10px 8px 12px 12px; padding:14px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); }
+.unified-authoring-dock .inspector-scroll > .inspector-section:not(.inspector-overview) > h2 { margin:0 0 14px; padding-inline-start:10px; border-inline-start:3px solid var(--wn-accent); font-size:17px; line-height:1.3; font-weight:700; color:var(--wn-text); }
+.unified-authoring-dock .route-inspector { padding:10px 8px 12px 12px; }
+.inspector-uniform-content { padding:10px 8px 12px 12px; }
+.inspector-overview.inspector-section { display:grid; gap:12px; padding:10px 8px 12px 12px; }
+.inspector-overview .inspector-field-group,
+.inspector-overview .inspector-field-group + .inspector-field-group,
+.inspector-panel,
+.pb-context-surface .unified-authoring-inspector .conversation-group,
+.pb-context-surface .unified-authoring-inspector .inspector-source-advanced {
+  box-sizing:border-box; min-width:0; padding:14px; margin:0;
+  border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel);
+}
+.inspector-overview .event-inspector-context { border:0; padding:0 2px; }
+.inspector-panel-title,
+.inspector-overview .inspector-group-title,
+.unified-authoring-inspector .conversation-group > summary {
+  margin:0 0 14px; padding:0 0 0 10px; border-inline-start:3px solid var(--wn-accent);
+  font-size:17px; line-height:1.3; font-weight:700; color:var(--wn-text);
+}
+.unified-authoring-inspector .conversation-group:not([open]) > summary { margin-bottom:0; }
+.unified-authoring-inspector .conversation-group-heading { align-items:center; flex-wrap:wrap; }
+.unified-authoring-inspector .conversation-group-heading small { font-size:11px; font-weight:400; color:var(--wn-muted); }
+.unified-authoring-inspector .conversation-group-body { padding:0; }
+.unified-authoring-inspector .conversation-groups { display:grid; gap:12px; }
+.pb-context-surface .unified-authoring-inspector .inspector-source-advanced { margin-top:12px; }
+.unified-authoring-inspector .inspector-source-advanced > summary { font-size:15px; line-height:1.4; font-weight:600; }
+.inspector-panel :is(h3,h4,h5) { font-size:13px; font-weight:600; color:var(--wn-text); }
+.inspector-panel .narrative-inspector-section { padding:0; }
+.inspector-panel .narrative-block-body { min-width:0; }
+.inspector-panel .narrative-block-body + .narrative-block-body { margin-top:12px; }
+.pb-context-surface .inspector-panel :is(.narrative-response,.condition-tree-group,.authoring-card) {
+  min-width:0; padding:10px; margin-block:10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2);
+}
+.inspector-panel .logic-composer { margin:0; border:0; background:transparent; padding:0; }
+.inspector-panel .logic-composer > header > strong { font-size:13px; font-weight:600; }
+.unified-authoring-dock .inspector-overview .inspector-group-title { font-size:17px; font-weight:700; color:var(--wn-text); }
+.inspector-event-hero { display:grid; grid-template-columns:minmax(150px, .8fr) minmax(0, 1.6fr); gap:20px; padding:16px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); container-type:inline-size; }
+.inspector-event-cover { display:grid; align-content:start; gap:12px; min-width:0; }
+.inspector-select-cover > .inspector-field-title { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.inspector-overview .inspector-select-cover .inspector-select-trigger { position:relative; display:block; padding:0; aspect-ratio:4/3; overflow:hidden; border-radius:8px; }
+.inspector-select-cover .inspector-event-cover-image,.inspector-select-cover .inspector-event-cover-empty { display:flex; width:100%; height:100%; aspect-ratio:auto; border:0; border-radius:0; }
+.inspector-cover-caption { position:absolute; inset:auto 0 0; display:flex; align-items:center; gap:8px; padding:10px; background:#000a; color:#fff; font-size:12px; }
+.inspector-cover-caption > span { flex:1; text-align:left; }
+.inspector-select-cover .inspector-event-cover-empty { padding-bottom:36px; }
+@media (max-width:700px) { .inspector-overview .inspector-select-cover .inspector-select-trigger { aspect-ratio:16/7; } }
+.inspector-event-cover-image,.inspector-event-cover-empty { width:100%; aspect-ratio:4/3; border-radius:8px; object-fit:cover; background:var(--wn-panel-2); }
+.inspector-event-cover-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--wn-muted); border:1px dashed var(--wn-border); box-sizing:border-box; }
+.inspector-event-details { display:grid; align-content:start; gap:20px; min-width:0; }
+.inspector-interactions .interactions-editor { padding:0; }
+.inspector-interactions .interactions-editor > label { display:grid; gap:8px; font-size:13px; }
+.inspector-interactions .narrative-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.inspector-interactions .interaction-card { border-color:var(--wn-border); background:var(--wn-panel-2); }
+.inspector-event-hero .inspector-select-trigger { box-sizing:border-box; min-width:0; max-width:100%; }
+.inspector-event-metadata { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.inspector-event-description { display:grid; gap:12px; }
+.inspector-event-description > .authoring-text-field > span:first-child { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.inspector-overview .inspector-event-description textarea { box-sizing:border-box; width:100%; min-height:112px; padding:8px 10px; border:1px solid var(--wn-border); border-radius:6px; background:var(--wn-panel-2); color:var(--wn-text); font:inherit; font-size:13px; line-height:1.5; resize:vertical; }
+.inspector-event-description textarea:focus-visible { outline:2px solid var(--wn-accent); outline-offset:2px; }
+.inspector-event-statistics dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0; }
+.inspector-event-statistics dl > div { display:grid; gap:12px; padding:12px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.inspector-event-statistics dt { display:flex; align-items:center; gap:8px; color:var(--wn-muted); font-size:12px; }
+.inspector-event-statistics dd { margin:0; font-size:24px; font-weight:700; color:var(--wn-text); }
+.unified-authoring-dock .inspector-event-statistics dl > div { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+.unified-authoring-dock .inspector-event-statistics dt { font-size:12px; font-weight:400; text-transform:none; }
+@media (max-width:700px) { .inspector-event-hero { grid-template-columns:minmax(0,1fr); } .inspector-event-cover-image,.inspector-event-cover-empty { aspect-ratio:16/7; } .inspector-event-metadata { grid-template-columns:minmax(0,1fr); } .inspector-event-statistics dt { flex-wrap:wrap; } }
+.inspector-panel .logic-composer > header > strong { color:var(--wn-text); letter-spacing:0; text-transform:none; }
+.unified-authoring-dock .inspector-panel :is(button,input:not([type="checkbox"]):not([type="radio"]),select,textarea) { font-size:13px; }
+.unified-authoring-dock .inspector-panel :is(input:not([type="checkbox"]):not([type="radio"]),select) { min-height:30px; border-radius:6px; }
+.inspector-panel .narrative-inspector-section > section.narrative-block-body { margin:0 0 12px; padding:12px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.unified-authoring-dock .unified-authoring-inspector .inspector-flow-add { padding:0; min-height:26px; width:26px; height:26px; }
+.inspector-panel .authoring-studio { margin:0; padding:0; border:0; background:transparent; }
+.unified-authoring-dock .inspector-scroll { scrollbar-width:auto; scrollbar-color:auto; }
+.unified-authoring-dock .inspector-scroll::-webkit-scrollbar { width:6px; height:6px; }
+.unified-authoring-dock .inspector-scroll::-webkit-scrollbar-track { background:transparent; }
+.unified-authoring-dock .inspector-scroll::-webkit-scrollbar-thumb { background:var(--wn-border); border-radius:6px; }
+.unified-authoring-dock .inspector-scroll::-webkit-scrollbar-button { display:none; width:0; height:0; }
+.inspector-world-links { margin-top:18px; min-width:0; }
+.inspector-world-links + .inspector-world-links { padding-top:16px; border-top:1px solid var(--wn-border); }
+.inspector-world-links > h3 { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:0 0 10px; }
+.inspector-world-group { margin-top:12px; }
+.inspector-world-group > h4 { display:flex; align-items:center; gap:8px; margin:0 0 6px; color:var(--wn-accent); font-size:11px; font-weight:600; }
+.inspector-world-group > h4 > span { color:var(--wn-muted); font-weight:400; }
+.inspector-world-group > div { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr)); gap:6px; }
+.inspector-world-reference-list { display:grid; gap:6px; }
+.inspector-world-item { display:flex; align-items:center; gap:8px; min-width:0; padding:6px 8px; border:1px solid var(--wn-border); border-radius:7px; background:var(--wn-panel-2); }
+.unified-authoring-dock .inspector-world-name { flex:1; min-width:0; padding:0; border:0; background:transparent; text-align:left; color:var(--wn-text); overflow-wrap:anywhere; font-size:12px; }
+.inspector-world-category { color:var(--wn-muted); font-size:11px; overflow-wrap:anywhere; max-width:35%; }
+.unified-authoring-dock .inspector-world-remove { display:grid; place-items:center; flex:0 0 24px; min-height:24px; height:24px; padding:0; border:0; background:transparent; color:var(--wn-muted); }
+.inspector-world-empty { display:block; color:var(--wn-muted); font-size:12px; }
+.inspector-world-search { margin-bottom:10px; padding:8px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.inspector-world-search > div:first-child { display:flex; gap:6px; }
+.inspector-world-search input { flex:1; min-width:0; width:0; }
+.inspector-world-results { display:grid; gap:4px; max-height:190px; overflow:auto; margin-top:6px; }
+.inspector-world-results > button { display:flex; align-items:center; justify-content:space-between; gap:8px; text-align:left; }
+.inspector-world-results small { color:var(--wn-muted); }
+.inspector-flow-heading-tools { display:flex; align-items:center; gap:8px; }
+.inspector-route-columns h3 { align-items:center; }
+.unified-authoring-dock .inspector-flow-add { display:grid; place-items:center; padding:0; width:26px; height:26px; min-height:26px; border:1px solid var(--wn-border); border-radius:6px; background:transparent; color:var(--wn-muted); }
+.unified-authoring-dock .inspector-flow-add:hover { background:var(--wn-accent-soft); color:var(--wn-text); }
+.inspector-route-columns .narrative-connections > .inspector-flow-start { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px; margin-bottom:8px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); }
+.inspector-flow-start > svg { color:var(--wn-accent); }
+.inspector-flow-start > span { color:var(--wn-muted); font-size:11px; }
+.inspector-flow-return { color:var(--wn-accent); font-size:11px; white-space:nowrap; }
+.inspector-connections .inspector-connection-group > h2 {
+  margin:0 0 10px; padding-inline-start:10px;
+  border-inline-start:3px solid var(--wn-accent);
+  font-size:17px; line-height:1.3; font-weight:700; color:var(--wn-text);
+}
+.inspector-connections h3,
+.inspector-connections .inspector-route-columns h3 {
+  font-size:13px; line-height:1.4; font-weight:600; color:var(--wn-text);
+}
+.inspector-connections h3 > span {
+  font-size:11px; font-weight:400; color:var(--wn-muted);
+}
+.inspector-connections .inspector-connection-hint,
+.inspector-connections .canon-ref-dropzone > p {
+  font-size:12px; line-height:1.5; font-weight:400; color:var(--wn-muted);
+}
+.inspector-connections .inspector-connection-hint { margin:0 0 18px; }
+.inspector-connections .inspector-connection-advanced > summary {
+  font-size:15px; line-height:1.4; font-weight:600; color:var(--wn-text);
+}
+
+}

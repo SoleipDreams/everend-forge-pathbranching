@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 .narrative-editor { min-width: 0; max-width: 100%; container-type: inline-size; color: var(--wn-text); font-size: 13px; line-height: 1.45; }
 .narrative-editor *, .authoring-text-field * { box-sizing: border-box; }
 .narrative-editor :is(input, select, textarea) { min-width: 0; max-width: 100%; width: 100%; font: inherit; }
@@ -40,3 +42,5 @@
 .narrative-context-logic { margin: 12px 0; }
 .narrative-context-logic > summary { cursor: pointer; }
 @container (max-width: 350px) { .narrative-response { padding: 8px; } .narrative-block-body { padding: 0 8px 8px; } .narrative-actions > button { flex: 1 1 130px; } }
+
+}

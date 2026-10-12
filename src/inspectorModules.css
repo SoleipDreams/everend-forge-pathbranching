@@ -1,0 +1,15 @@
+.inspector-module-bar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 12px; background: var(--wn-panel); }
+.inspector-module-scroll { min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: thin; }
+.pb-context-surface .inspector-module-bar .inspector-subtabs.inspector-module-tabs { position: static; display: flex; flex-wrap: nowrap; width: max-content; min-width: 100%; margin: 0; padding: 4px; gap: 4px; border-radius: 10px; }
+.pb-context-surface .inspector-module-bar .inspector-module-tabs > button { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; }
+.inspector-module-add { flex: 0 0 34px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; }
+.inspector-module-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 190px; max-width: 100%; padding: 6px; border: 1px solid var(--wn-border); border-radius: 10px; background: var(--wn-panel); box-shadow: 0 8px 24px #0005; display: grid; gap: 3px; }
+.inspector-module-menu > button { text-align: left; padding: 9px 12px; border-radius: 6px; }
+.inspector-module-menu > span { padding: 10px; font-size: 12px; }
+.pb-context-surface .unified-authoring-inspector .conversation-group { margin-block: 8px; padding: 0; border: 1px solid var(--wn-border); border-radius: 10px; min-width: 0; }
+.conversation-group > summary { cursor: pointer; padding: 12px; overflow-wrap: anywhere; }
+.conversation-group-heading { display: inline-flex; gap: 8px; align-items: baseline; max-width: 90%; }
+.conversation-group-heading small { flex-shrink: 0; opacity: .65; }
+.conversation-group-body { padding: 0 10px 10px; }
+.conversation-group-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.conversation-group-actions button { font-size: 12px; border-radius: 7px; }

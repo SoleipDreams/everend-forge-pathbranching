@@ -28,11 +28,11 @@ const copy = {
     actual: 'Actual value', expected: 'Expected', selected: 'Selected route', blocked: 'Resolution stopped at', noRoute: 'No route matches',
     notEvaluated: 'Not evaluated · an earlier route selected or stopped resolution', duplicateElse: 'Resolution stopped: more than one Else route.',
     else: 'Else', route: 'Route', externalResult: 'Temporary function result',
-    review: 'Review the marked fields.', consequence: 'Consequence', addConsequence: 'Add consequence', noEffects: 'No effects',
-    conditionalConsequence: 'Conditional consequence', addRule: 'Add conditional consequence', removeRule: 'Remove rule',
+    review: 'Review the marked fields.', consequence: 'Change', addConsequence: 'Add change', noEffects: 'No changes',
+    conditionalConsequence: 'Conditional rule', addRule: 'Add rule', removeRule: 'Remove rule',
     actionType: 'Action type', action: 'Action', grantable: 'Grantable', variable: 'Variable', effectValue: 'New value',
     noEffectFields: 'This entity has no writable property or state. Enable one in Logic.', chooseWritable: 'Choose a writable property or state',
-    createEffectValues: 'Create a Grantable type or Variable in Logic to add consequences.',
+    createEffectValues: 'Create a Grantable type or Variable in Logic to add changes.',
   },
   es: {
     subject: 'Referencia', field: 'Propiedad o estado', operator: 'Comparación', value: 'Valor esperado',
@@ -55,11 +55,11 @@ const copy = {
     actual: 'Valor utilizado', expected: 'Esperado', selected: 'Ruta seleccionada', blocked: 'Resolución detenida en', noRoute: 'Ninguna ruta cumple',
     notEvaluated: 'Sin evaluar · una ruta anterior seleccionó o detuvo la resolución', duplicateElse: 'Resolución detenida: hay más de una ruta Else.',
     else: 'Else', route: 'Ruta', externalResult: 'Resultado temporal de la función',
-    review: 'Revisa los campos señalados.', consequence: 'Consecuencia', addConsequence: 'Añadir consecuencia', noEffects: 'Sin consecuencias',
-    conditionalConsequence: 'Consecuencia condicionada', addRule: 'Añadir consecuencia condicionada', removeRule: 'Eliminar regla',
+    review: 'Revisa los campos señalados.', consequence: 'Cambio', addConsequence: 'Añadir cambio', noEffects: 'Sin cambios',
+    conditionalConsequence: 'Regla condicional', addRule: 'Añadir regla', removeRule: 'Eliminar regla',
     actionType: 'Tipo de acción', action: 'Acción', grantable: 'Otorgable', variable: 'Variable', effectValue: 'Nuevo valor',
     noEffectFields: 'Esta entidad no tiene propiedades o estados editables. Habilita alguno en Logic.', chooseWritable: 'Elige una propiedad o estado editable',
-    createEffectValues: 'Crea un tipo otorgable o una variable en Logic para añadir consecuencias.',
+    createEffectValues: 'Crea un tipo otorgable o una variable en Logic para añadir cambios.',
   },
 } as const;
 
@@ -163,6 +163,11 @@ export function conditionTreeSummary(project: BranchingProject, input: Condition
     if (!value || Array.isArray(value) && !value.length) return c.always;
     if (Array.isArray(value)) return render({all: value} as ConditionExpression, nested);
     if (!isConditionSet(value)) { clauses++;
+      if (value.type === 'interactionResult') {
+        const use = project.events.flatMap(e => (e.interactionUses ?? []).map(use => ({ use, event: e }))).find(x => x.use.id === value.useId);
+        const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
+        return `${definition?.name ?? String(value.useId)} ${String(value.operator)} ${definition?.results.find(r => r.id === value.resultId)?.name ?? String(value.resultId)}`;
+      }
       if (value.type === 'instanceQuery') {
         const query = value as InstanceQuery;
         const title = query.entityId ? project.canonRefs.find(e => e.id === query.entityId)?.label ?? project.localExplorerEntities?.find(e => e.id === query.entityId)?.name ?? query.entityId : locale === 'es' ? 'copias' : 'copies';

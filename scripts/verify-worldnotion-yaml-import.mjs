@@ -209,3 +209,17 @@ assert.equal(
 );
 
 console.log("WorldNotion YAML import verified.");
+
+const diagramFiles = [
+  { relativePath: "Timeline.md", content: "---\nid: timeline\nname: Timeline\nforgeView:\n  version: 1\n  kind: timeline\n---\nNotes" },
+  { relativePath: "Future.md", content: "---\nforgeView:\n  version: 99\n  kind: future\n---\nNotes" },
+  { relativePath: "Draft.md", content: "---\nforgeView:\n  nodes: [\n---\nNotes" },
+  { relativePath: "Quoted.md", content: "---\n'forgeView': [unfinished\n---\nNotes" },
+];
+const diagramSource = JSON.stringify(diagramFiles);
+const diagramIndex = indexWorldNotionVaultFiles(diagramFiles);
+assert.deepEqual(diagramIndex.entities, []);
+assert.deepEqual(diagramIndex.canonRefs, []);
+assert.deepEqual(diagramIndex.findings, []);
+assert.equal(JSON.stringify(diagramFiles), diagramSource);
+console.log("Visual document envelopes remain outside the canon index.");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { inspectorFlowContext } from "../lib/inspectorFlow.js";
 import { orderedMomentEffects, splitNarrativeEffects } from "../lib/logic.js";
 import { createAuthoringSession } from "../lib/authoringEngine.js";
 import { normalizeProject } from "../lib/projectSerialization.js";
@@ -30,6 +31,36 @@ const nodeId = result => { assert.equal(result.selection?.type, "node"); return 
   assert.equal(run.state.entityInstances[0].properties.wear, 3, "The generated copy must exist before its property effect executes.");
 }
 let checks = 1;
+
+// Start and return are semantic graph facts; inspecting them leaves the story intact.
+{
+  const flow = fixture();
+  flow.sequences[0].eventIds.push("event:next");
+  flow.events[0].transitions = [{ id: "forward", from: eventId, to: "event:next" }];
+  flow.events.push({ id: "event:next", name: "Next", type: "normal", transitions: [{ id: "return", from: "event:next", to: eventId }] });
+  const before = JSON.stringify(flow);
+  const context = inspectorFlowContext(flow, eventId, eventId);
+  assert.equal(context.starts.length, 1);
+  assert.equal(context.returns.has("return"), true);
+  assert.equal(context.returns.has("forward"), false);
+  assert.equal(inspectorFlowContext(flow, "event:next", "event:next").starts.length, 0);
+  assert.equal(JSON.stringify(flow), before);
+  checks++;
+}
+
+// Event predecessors live on their source event, while internal connections stay local.
+{
+  const flow = fixture();
+  flow.events.push({ id: "event:before", name: "Before event", type: "normal", transitions: [{ id: "before-route", from: "event:before", to: eventId }] });
+  flow.events[0].transitions = [{ id: "after-route", from: eventId, to: "event:after" }];
+  flow.events.push({ id: "event:after", name: "After event", type: "normal" });
+  const serializedBefore = JSON.stringify(flow);
+  assert.deepEqual(narrativeConnections(flow, eventId, eventId).incoming.map(route => route.from), ["event:before"]);
+  assert.deepEqual(narrativeConnections(flow, eventId, eventId).outgoing.map(route => route.to), ["event:after"]);
+  assert.equal(narrativeConnections(flow, eventId, "event:after").incoming.length, 1);
+  assert.equal(JSON.stringify(flow), serializedBefore, "Inspecting flow must not alter the document.");
+  checks++;
+}
 
 // Direct graph editing must wire an empty scope, then splice content without losing the gate.
 let project = fixture();
@@ -144,6 +175,21 @@ const responseWithEffects = project.events[0].decisions[0].outcomes[0].logic;
 assert.deepEqual(responseWithEffects.when, gate);
 assert.equal(responseWithEffects.repeat, "each-entry");
 assert.deepEqual(responseWithEffects.narrativeEffects, [copyEffect]);
+// Removing a condition must also clear legacy aliases or reopen will revive it.
+project.events[0].decisions[0].outcomes[0].availability = gate;
+project = updateOutcome(project, eventId, decisionId, responseId, { conditions: undefined }).project;
+const clearedResponse = project.events[0].decisions[0].outcomes[0];
+assert.equal(clearedResponse.conditions, undefined);
+assert.equal(clearedResponse.availability, undefined);
+assert.equal(clearedResponse.logic?.when, undefined);
+assert.equal(clearedResponse.logic?.repeat, "each-entry");
+assert.deepEqual(clearedResponse.logic?.narrativeEffects, [copyEffect]);
+const reopenedWithoutResponseCondition = normalizeProject(JSON.parse(JSON.stringify(project)));
+assert.equal(reopenedWithoutResponseCondition.events[0].decisions[0].outcomes[0].availability, undefined);
+assert.equal(reopenedWithoutResponseCondition.events[0].decisions[0].outcomes[0].conditions, undefined);
+assert.equal(reopenedWithoutResponseCondition.events[0].decisions[0].outcomes[0].logic?.when, undefined);
+assert.equal(reopenedWithoutResponseCondition.events[0].decisions[0].outcomes[0].logic?.repeat, "each-entry");
+assert.deepEqual(reopenedWithoutResponseCondition.events[0].decisions[0].outcomes[0].logic?.narrativeEffects, [copyEffect]);
 checks++;
 
 console.log(`Authoring editor: ${checks} regression scenarios passed.`);

@@ -11,6 +11,8 @@ export function authoringNodeOptions(project: BranchingProject, eventId?: string
   return project.events.filter(event => !eventId || event.id === eventId).flatMap(event => [
     { id: event.id, label: event.name, eventId: event.id, dialogueId: undefined as string | undefined, kind: "event" as string },
     ...narrativeNodeReferences(project, event.id).map(node => ({ id: node.id, label: node.label, eventId: event.id, dialogueId: node.kind === "dialogue" ? node.elementId : node.dialogueId, kind: node.kind as string })),
+    ...(event.interactionUses ?? []).filter(u => !u.ownerNodeId).map(u => ({ id: `interaction:${event.id}:${u.id}`, label: event.interactionDefinitions?.find(d => d.id === u.definitionId)?.name ?? u.id, eventId: event.id, dialogueId: u.dialogueId, kind: 'interaction' as string })),
+    ...(event.interactionBarriers ?? []).map(b => ({ id: `barrier:${event.id}:${b.id}`, label: b.name, eventId: event.id, dialogueId: b.dialogueId, kind: 'barrier' as string })),
   ]);
 }
 
@@ -21,7 +23,7 @@ export function narrativeNodeReferences(project: BranchingProject, eventId: stri
   const references: NarrativeNodeReference[] = [];
   const addBeat = (beat: DialogueBeat, dialogueId?: string) => {
     const block = project.scriptDocuments?.find(script => script.id === beat.blockRef.scriptId)?.blocks.find(item => item.id === beat.blockRef.blockId);
-    references.push({ id: `beat:${eventId}:${beat.id}`, elementId: beat.id, kind: beat.kind, label: block ? block.content.trim().slice(0, 80) || (beat.kind === "speech" ? "Speech" : "Direction") : beat.id, dialogueId, beat, block });
+    references.push({ id: `beat:${eventId}:${beat.id}`, elementId: beat.id, kind: beat.kind, label: block ? block.content.trim().slice(0, 80) || (beat.kind === "speech" ? "Dialogue" : "Stage direction") : beat.id, dialogueId, beat, block });
   };
   (event.dialogueBeats ?? []).forEach(beat => addBeat(beat));
   (event.dialogues ?? []).forEach(dialogue => {
@@ -38,7 +40,7 @@ export function narrativeNodeReferences(project: BranchingProject, eventId: stri
 export function narrativeConnections(project: BranchingProject, eventId: string, nodeId: string) {
   const event = project.events.find(item => item.id === eventId);
   return {
-    incoming: (event?.transitions ?? []).filter(route => route.to === nodeId),
+    incoming: (nodeId === eventId ? project.events.flatMap(item => item.transitions ?? []) : event?.transitions ?? []).filter(route => route.to === nodeId),
     outgoing: (event?.transitions ?? []).filter(route => route.from === nodeId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
   };
 }

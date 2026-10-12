@@ -9,7 +9,7 @@ import {
 import { pathBranchingMetadataPaths, storyPath, type PathBranchingStoryManifestEntry, type PathBranchingWorkspace } from "./pathBranchingWorkspace.js";
 import { createEmptyBranchingProjectFromWorldNotionIndex } from "./worldnotionBridge.js";
 import { normalizeProject } from "./projectSerialization.js";
-import { slugify, uniqueId } from "./projectMutations.js";
+import { canSaveAfterRemovingStaleScenarioReferences, slugify, uniqueId } from "./projectMutations.js";
 
 export type DocumentSaveInput = {
   project: BranchingProject;
@@ -57,9 +57,16 @@ export async function saveBranchingDocument(input: DocumentSaveInput): Promise<D
     throw new Error("Open a universe before saving a PathBranching story.");
   }
 
+  const recoveredScenarioReferences = canSaveAfterRemovingStaleScenarioReferences(
+    input.project,
+    input.workspace.saveBlockReasons,
+  );
+  const workspaceForSave = recoveredScenarioReferences
+    ? { ...input.workspace, loadingIncomplete: false, saveBlocked: false, saveBlockReasons: undefined }
+    : input.workspace;
   const result = await saveUniverseStory(
     input.fileState.universePath,
-    input.workspace,
+    workspaceForSave,
     input.project,
     input.fileState.modifiedMs,
   );
@@ -84,6 +91,14 @@ export async function saveBranchingDocument(input: DocumentSaveInput): Promise<D
 
   const nextWorkspace: PathBranchingWorkspace = {
     ...input.workspace,
+    ...(recoveredScenarioReferences ? {
+      loadingIncomplete: false,
+      saveBlocked: false,
+      saveBlockReasons: undefined,
+      loadWarnings: input.workspace.loadWarnings?.filter((warning) =>
+        !input.workspace.saveBlockReasons?.includes(warning),
+      ),
+    } : {}),
     manifest: result.manifest ?? input.workspace.manifest,
     activeProject: savedProject,
     files: result.savedFiles ? [

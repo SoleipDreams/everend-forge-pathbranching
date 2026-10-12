@@ -1,3 +1,4 @@
+import { hasInteractions } from './interactions.js';
 import type { BranchingProject, ConditionInput, Consequence, Decision, EventNode, Outcome, Transition } from "./domain.js";
 import { asConditionExpressions, conditionLabel, consequenceLabel } from "./logic.js";
 
@@ -9,7 +10,7 @@ export type InkExportFile = {
 export type InkProjectExport = {
   format: "ink";
   files: InkExportFile[];
-  diagnostics?: { location: string; message: string }[];
+  diagnostics?: { location: string; message: string; feature?: string }[];
   symbols?: Record<string,string>;
 };
 
@@ -81,6 +82,7 @@ function inkSafeId(id: string) {
 export { exportInkProject } from "./inkExport.js";
 
 export function exportSinpoGameData(project: BranchingProject): SinpoGameDataExport {
+  if (hasInteractions(project)) throw new Error('interactions-v1: SINPO cannot execute interactions or wait barriers. Use Enhanced.');
   const canonRefDetails = (ids: string[] | undefined) =>
     (ids ?? [])
       .map((id) => project.canonRefs.find((ref) => ref.id === id))

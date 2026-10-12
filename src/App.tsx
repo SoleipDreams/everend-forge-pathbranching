@@ -1,3 +1,20 @@
+import { NarrativeNameEditor } from './components/NarrativeNameEditor.js';
+import { AuthoringTextField } from "./components/AuthoringTextField.js";
+import { InspectorPanel } from "./components/InspectorPanel.js";
+import { InteractionsEditor } from './components/InteractionsEditor.js';
+import { setInteractionResultRoute } from './interactionMutations.js';
+import { useInspectorMenuPlacement } from "./components/useInspectorMenuPlacement.js";
+import { InspectorSelect } from "./components/InspectorSelect.js";
+import { InspectorWorldLinks } from "./components/InspectorWorldLinks.js";
+import { mergeUniverseProfile } from "./universeProfilePersistence.js";
+import { readUniverseProfileSource } from "./projectPersistence.js";
+import { PathBranchingSettingsModal, type PathBranchingSettingsSection } from "./components/PathBranchingSettingsModal.js";
+import { useLearningAdapter, useLearningReporter } from "./learning";
+import { pathbranchingIntroduction, pathbranchingLessons } from "./learningCatalog";
+import { learningActionsForMutation } from "./learningActions";
+import { NotificationProvider, NotificationBell, useNotificationMessage } from "./notifications";
+import { SceneChoices } from "./SceneChoices";
+import { normalizeBackgroundScene } from "./backgroundScenes";
 import {
   Background,
   BackgroundVariant,
@@ -30,27 +47,52 @@ import { ReferencePicker } from "./components/ReferencePicker.js";
 import { AssetsPanel } from "./components/AssetsPanel.js";
 import { LogicPanel } from "./components/LogicPanel.js";
 import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
-import { FloatingStoryTestPanel, StoryTestControls, StoryTestDebug, StoryTestPreview } from "./components/StoryTestViews.js";
+import { StoryTestControls, StoryTestDebug, StoryTestInspectorView, StoryTestPlayback } from "./components/StoryTestViews.js";
+import { storyTestSpeaker } from "./storyTestMedia.js";
 import { useStoryTestController } from "./useStoryTestController.js";
 import { useStoryTestWindows } from "./storyTestWindows.js";
 import { ExportPanel } from "./components/ExportPanel.js";
 import { ExportPreviewDialog } from "./components/ExportPreviewDialog.js";
-import { authoringNodeOptions } from "./authoringMutations.js";
-import { AuthoringWorkspace } from "./components/AuthoringWorkspace.js";
+import { authoringNodeOptions, narrativeNodeReferences } from "./authoringMutations.js";
+import { inspectorDocumentIndex } from "./inspectorDocumentIndex.js";
+import { createCanvasPresentationCache } from "./canvas/presentationCache.js";
+import { createCanvasValidationCache, requiresSubcanvasLayout } from "./canvas/interactionPerformance.js";
+import { createNarrativeValidationCache, narrativeContentUnchanged } from "./narrativeValidation.js";
+import { RouteInspector } from "./components/RouteInspector.js";
+import { canvasInspectorTarget, inspectorTargetKind, inspectorTargetTitle, inspectorStackCardHeight, inspectorStackKey, orderedInspectorStack, type InspectorSize } from "./inspectorNavigation.js";
+import { useInspectorLayoutMotion } from "./components/useInspectorLayoutMotion.js";
+import { InspectorIndexHost } from "./components/InspectorIndexHost.js";
+import "./unifiedInspector.css";
+import { UnifiedAuthoringInspector } from "./components/UnifiedAuthoringInspector.js";
+import { InspectorModuleTabs } from "./components/InspectorModuleTabs.js";
+import { narrativeInspectorModules, readInspectorModulePreferences, resolveInspectorModulePreferences, saveInspectorModulePreferences } from "./inspectorModules.js";
+import { ConversationEditor } from "./components/ConversationEditor.js";
+import { conversationLineForCanvasSelection } from "./conversationModel.js";
+import { inspectorSelectionKey, type InspectorRequest } from "./appTypes.js";
 import { useAuthoringDraftCount } from "./components/useAuthoringDraft.js";
 import { authoringDraftEntries, authoringDraftKey, getAuthoringDraft, setAuthoringDraft, clearAuthoringRecovery, readAuthoringRecovery, storeAuthoringRecovery, type AuthoringRecovery } from "./authoringDrafts.js";
 import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
+import { DesktopMenuBar } from "./components/DesktopMenuBar.js";
+import { WindowTitleControls } from "./components/WindowTitleControls.js";
 import { ConnectPanel } from "./components/ConnectPanel.js";
 import { EverendBridgePanel } from "./components/EverendBridgePanel.js";
 import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
 import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
-import { Topbar } from "./components/Topbar.js";
+import { HomeForgeMenu, Topbar } from "./components/Topbar.js";
 import { authoringDiagnosticTarget, diagnosticSelection, findingPresentation } from "./diagnosticPresentation.js";
 import { entityUsages } from "./authoringEntities.js";
 import { useOverlayFocus } from "./components/useOverlayFocus.js";
+import { ApplicationActivity, useApplicationEffect } from "./components/useApplicationActivity.js";
+import { ExplorerGroup, ExplorerPane, useExplorerEmbedded } from "./components/ExplorerPresentation.js";
 import { AdaptiveWorkspace, WorkspacePanelSlot } from "./components/AdaptiveWorkspace.js";
-import { StoriesPanel } from "./components/StoriesPanel.js";
+import { isExplorerPanel, managementPanelCollapsedState, type ExplorerPanelId } from "./adaptiveWorkspace.js";
+import { guardUniverseSwitch } from "./universeSwitchGuard.js";
+import "./forgeAuthoring.css";
+import "./explorerPresentation.css";
+import "./forgeMotion.css";
+import "./forgeAmbient.css";
+import { StoriesPanel, storiesViewCopy } from "./components/StoriesPanel.js";
 import { AccessibleTabs } from "./components/AccessibleTabs.js";
 import { FeedbackModal } from "./components/FeedbackModal.js";
 import { UniverseIconFrame } from "./components/UniverseIconFrame.js";
@@ -97,6 +139,7 @@ import {
   Crosshair,
   Castle,
   CircleDot,
+  ChevronLeft,
   Database,
   Download,
   Eye,
@@ -114,6 +157,8 @@ import {
   LayoutGrid,
   MapPin,
   Maximize2,
+  Fullscreen,
+  Shrink,
   MessageSquare,
   MoreHorizontal,
   MousePointerClick,
@@ -122,7 +167,9 @@ import {
   MessageSquareText,
   OctagonAlert,
   Package,
+  Play,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   Split,
@@ -132,6 +179,7 @@ import {
   Pencil,
   Power,
   Trash2,
+  Tag,
   UserRound,
   X,
 } from "lucide-react";
@@ -139,6 +187,7 @@ import pathbranchingIcon from "./assets/pathbranching-icon.png";
 import {
   useCallback,
   cloneElement,
+  Fragment,
   isValidElement,
   useEffect,
   useMemo,
@@ -333,14 +382,13 @@ import {
   type WorkspacePanelState,
 } from "./workspaceSettings.js";
 import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale, useInterfaceLocale, authoringUiCopy, onboardingUiCopy, homeUiCopy, inspectorUiCopy, panelUiText } from "./i18n.js";
-import { validateProject } from "./validate.js";
 import {
   buildStoryCanvasModel,
   DIRECTION_BEAT_NODE_HEIGHT,
   fitSubcanvasWorkspaceBounds,
   layoutSubcanvasNodes,
+  routeGateVisualAnchorFromLogicPosition,
   SPEECH_BEAT_NODE_HEIGHT,
-  validateStoryCanvasEdges,
   type PathBranchingFileItem,
   type StoryCanvasEdge,
   type StoryCanvasEdgeData,
@@ -349,7 +397,9 @@ import {
   type SubcanvasWorkspaceBounds,
 } from "./canvas/storyCanvasModel.js";
 import { connectedNarrativeNodePosition } from "./canvas/nodePlacement.js";
+import { canvasReturnConnectors } from "./canvas/returnConnectors.js";
 import { isTauriRuntime, shortcutMatches } from "./utils/appEnvironment.js";
+import { handleWindowTitlebarMouseDown } from "./utils/windowTitlebar.js";
 import { resolveUniverseAssetUrl } from "./utils/assetUrl.js";
 
 function groupCanon(project: BranchingProject) {
@@ -458,6 +508,37 @@ function imageAssetsForLocation(
     : undefined;
   const scoped = gallery?.length ? allImages.filter((asset) => gallery.includes(asset.id)) : allImages;
   return scoped.map((asset) => ({ id: asset.id, name: asset.name }));
+}
+
+function DialogueBeatDirectionNote({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const latestDraft = useRef(draft);
+  const committedValue = useRef(value);
+  const onCommitRef = useRef(onCommit);
+  useEffect(() => { onCommitRef.current = onCommit; }, [onCommit]);
+  useEffect(() => {
+    setDraft(value);
+    latestDraft.current = value;
+    committedValue.current = value;
+  }, [value]);
+  useEffect(() => () => {
+    if (latestDraft.current !== committedValue.current) onCommitRef.current(latestDraft.current);
+  }, []);
+  const commit = () => {
+    if (draft === committedValue.current) return;
+    committedValue.current = draft;
+    onCommit(draft);
+  };
+  return <textarea
+    rows={3}
+    value={draft}
+    onChange={(event) => {
+      latestDraft.current = event.target.value;
+      setDraft(event.target.value);
+    }}
+    onBlur={commit}
+    placeholder={useInterfaceLocale() === "es" ? "Añade una nota de dirección, tono o ritmo…" : "Add a direction note about mood or timing…"}
+  />;
 }
 
 function dialogueTriggerPortraitUrl(
@@ -670,13 +751,15 @@ function updateProjectCanvas(
   project: BranchingProject,
   nodes: StoryCanvasNode[],
   scope = activeCanvasScope(project),
+  manuallyPositionedNodeId?: string,
 ): BranchingProject {
   const scopeKey = scope ? canvasScopeKey(scope) : undefined;
+  const persistBoundaryPorts = scope?.kind === "event" || scope?.kind === "dialogue";
   const persistableNodes = nodes.filter(
     (node) =>
-      node.data.kind !== "boundary" &&
       node.data.kind !== "workspace" &&
-      node.data.kind !== "endAdder",
+      node.data.kind !== "endAdder" &&
+      (node.data.kind !== "boundary" || persistBoundaryPorts),
   );
   const withoutBoundaryPositions = (
     storedNodes: Record<string, { position?: { x: number; y: number } }> | undefined,
@@ -697,6 +780,9 @@ function updateProjectCanvas(
           ? project.canvas?.scopes?.[scopeKey]?.nodes?.[node.id]
           : project.canvas?.nodes?.[node.id]),
         position: node.position,
+        ...(node.data.kind === "routeGate" && node.id === manuallyPositionedNodeId
+          ? { manual: true }
+          : {}),
       },
     ]),
   );
@@ -1122,7 +1208,7 @@ function ownerEventIdFromCanvasSelection(
 ) {
   if (selection.type !== "node") return undefined;
   if (findEvent(project, selection.id)) return selection.id;
-  const prefixes = ["decision:", "outcome:", "dialogue:", "dialogue-boundary:", "beat:", "dialogue-start:"];
+  const prefixes = ["decision:", "outcome:", "dialogue:", "dialogue-boundary:", "beat:", "dialogue-start:", "boundary:", "route-gate:"];
   return project.events.find((event) =>
     prefixes.some((prefix) => selection.id.startsWith(`${prefix}${event.id}:`)),
   )?.id;
@@ -1139,7 +1225,7 @@ function canvasScopeForSelection(
 
   if (selection.id.startsWith("dialogue-boundary:")) {
     const dialogue = event.dialogues?.find((candidate) =>
-      selection.id === `dialogue-boundary:${event.id}:${candidate.id}:input`,
+      selection.id.startsWith(`dialogue-boundary:${event.id}:${candidate.id}:`),
     );
     return dialogue ? { kind: "dialogue", id: dialogue.id, eventId: event.id } : undefined;
   }
@@ -1751,9 +1837,110 @@ function canvasBreadcrumb(
   if (scope.kind === "dialogue") {
     const owner = findEvent(project, scope.eventId);
     const dialogue = owner?.dialogues?.find((item) => item.id === scope.id);
-    crumbs.push({ scope, label: dialogue?.title ?? "Dialogue" });
+    crumbs.push({ scope, label: dialogue?.title ?? "Conversation" });
   }
   return crumbs;
+}
+
+function CanvasBreadcrumbScroller({ children, ariaLabel, es }: { children: ReactNode; ariaLabel: string; es: boolean }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const directionRef = useRef<-1 | 0 | 1>(0);
+  const frameRef = useRef<number | undefined>(undefined);
+  const overflowRef = useRef({ left: false, right: false });
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const syncOverflow = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const left = viewport.scrollLeft > 1;
+    const right = viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 1;
+    if (overflowRef.current.left !== left) {
+      overflowRef.current.left = left;
+      setCanScrollLeft(left);
+    }
+    if (overflowRef.current.right !== right) {
+      overflowRef.current.right = right;
+      setCanScrollRight(right);
+    }
+  }, []);
+
+  const stopEdgeScroll = useCallback(() => {
+    directionRef.current = 0;
+    if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
+    frameRef.current = undefined;
+  }, []);
+
+  const startEdgeScroll = useCallback(() => {
+    if (frameRef.current !== undefined) return;
+    let previousTime = 0;
+    const step = (time: number) => {
+      const viewport = viewportRef.current;
+      const direction = directionRef.current;
+      if (!viewport || direction === 0) {
+        frameRef.current = undefined;
+        return;
+      }
+      const elapsed = previousTime === 0 ? 16 : Math.min(time - previousTime, 32);
+      previousTime = time;
+      const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const nextScroll = Math.max(0, Math.min(maxScroll, viewport.scrollLeft + direction * elapsed * 0.55));
+      viewport.scrollLeft = nextScroll;
+      syncOverflow();
+      if (nextScroll <= 0 && direction < 0 || nextScroll >= maxScroll && direction > 0) {
+        frameRef.current = undefined;
+        return;
+      }
+      frameRef.current = requestAnimationFrame(step);
+    };
+    frameRef.current = requestAnimationFrame(step);
+  }, [syncOverflow]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    syncOverflow();
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(syncOverflow);
+    observer?.observe(viewport);
+    if (viewport.firstElementChild) observer?.observe(viewport.firstElementChild);
+    return () => observer?.disconnect();
+  }, [children, syncOverflow]);
+
+  useEffect(() => stopEdgeScroll, [stopEdgeScroll]);
+
+  const trackPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const bounds = viewport.getBoundingClientRect();
+    const edgeWidth = Math.min(34, bounds.width * 0.2);
+    const maxScroll = viewport.scrollWidth - viewport.clientWidth;
+    const nextDirection: -1 | 0 | 1 = event.clientX < bounds.left + edgeWidth && viewport.scrollLeft > 1
+      ? -1
+      : event.clientX > bounds.right - edgeWidth && viewport.scrollLeft < maxScroll - 1
+        ? 1
+        : 0;
+    directionRef.current = nextDirection;
+    if (nextDirection) startEdgeScroll();
+    else stopEdgeScroll();
+  };
+
+  const scrollByPage = (direction: -1 | 1) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    viewport.scrollBy({ left: direction * Math.max(140, viewport.clientWidth * 0.72), behavior: reduceMotion ? "auto" : "smooth" });
+  };
+
+  return (
+    <div className="canvas-breadcrumb-scroller" onPointerMove={trackPointer} onPointerLeave={stopEdgeScroll}>
+      <div className="canvas-breadcrumb-viewport" ref={viewportRef} onScroll={syncOverflow}>
+        <div className="canvas-breadcrumb" aria-label={ariaLabel}>{children}</div>
+      </div>
+      {canScrollLeft ? <button type="button" className="canvas-breadcrumb-edge left" aria-label={es ? "Ver elementos anteriores de la ruta" : "Show previous path items"} title={es ? "Elementos anteriores" : "Previous path items"} onPointerDown={event => event.stopPropagation()} onClick={() => scrollByPage(-1)}><ChevronLeft size={16} aria-hidden="true" /></button> : null}
+      {canScrollRight ? <button type="button" className="canvas-breadcrumb-edge right" aria-label={es ? "Ver elementos siguientes de la ruta" : "Show next path items"} title={es ? "Elementos siguientes" : "Next path items"} onPointerDown={event => event.stopPropagation()} onClick={() => scrollByPage(1)}><ChevronRight size={16} aria-hidden="true" /></button> : null}
+    </div>
+  );
 }
 
 function fieldSummary(value: unknown) {
@@ -1797,7 +1984,7 @@ function conditionSummary(input: ConditionInput | undefined) {
 
 function consequenceSummary(consequences: Consequence[] | undefined) {
   if (!consequences?.length) {
-    return "No consequences.";
+  return "No state changes.";
   }
   return consequences.map(consequenceLabel).join(", ");
 }
@@ -1826,7 +2013,7 @@ function LogicSection({
           </span>
         </div>
         <div className="mini-card">
-          <strong>Consequences</strong>
+          <strong>State changes</strong>
           <span>{consequenceSummary(consequences)}</span>
         </div>
       </div>
@@ -2353,17 +2540,22 @@ function TransitionConditionEditor({
 }
 
 function InspectorContentTabs({
+  project, selection,
   value,
   tabs,
   onChange,
 }: {
+  project?: BranchingProject;
+  selection?: Selection;
   value: string;
   tabs: Array<{ id: string; label: string }>;
   onChange: (value: string) => void;
 }) {
   const locale = useInterfaceLocale();
   const copy = authoringUiCopy(locale);
-  const labels: Record<string, string> = locale === "es" ? { Overview: "Resumen", Content: "Contenido", Path: "Texto", Connections: "Conexiones", Conditions: "Condiciones", Consequences: "Consecuencias", Choices: "Opciones", Logic: "Lógica", Routes: "Rutas" } : {};
+  const labels: Record<string, string> = locale === "es" ? { Overview: "Resumen", Content: "Contenido", Path: "Conversación", Conversation: "Narrativa", Connections: "Conexiones", Conditions: "Condiciones", Choices: "Opciones", Logic: "Lógica", Routes: "Rutas" } : {};
+  const modules = project && selection?.type === "node" ? narrativeInspectorModules(project, selection.id) : undefined;
+  if (modules && project && selection) return <InspectorModuleTabs key={JSON.stringify([project.projectId, inspectorSelectionKey(selection)])} projectId={project.projectId} objectKey={inspectorSelectionKey(selection)} modules={modules} value={value} onChange={onChange} />;
   return <AccessibleTabs className="inspector-subtabs" value={value} tabs={tabs.map((tab) => ({ ...tab, label: labels[tab.label] ?? tab.label }))} onChange={onChange} ariaLabel={copy.inspectorSections} />;
 }
 
@@ -2559,15 +2751,18 @@ function ConsequenceEditor({
 
 function CanonRefsPicker({
   title = "Canon Refs",
+  description,
   value,
   canonRefs,
   onChange,
 }: {
   title?: string;
+  description?: string;
   value?: string[];
   canonRefs: CanonRef[];
   onChange: (value: string[] | undefined) => void;
 }) {
+  const es = useInterfaceLocale() === "es";
   const [query, setQuery] = useState("");
   const refs = value ?? [];
   const refSet = new Set(refs);
@@ -2616,13 +2811,13 @@ function CanonRefsPicker({
         addRef(id.trim());
       }}
     >
-      <h2>{title}</h2>
+      {description ? <><h3>{title}</h3><p className="inspector-connection-hint">{description}</p></> : <h2>{title}</h2>}
       <div className="canon-ref-search">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search or drop canon ref"
-          aria-label={`Search ${title}`}
+          placeholder={es ? "Buscar o arrastrar un elemento" : "Search or drop a world element"}
+          aria-label={`${es ? "Buscar" : "Search"} ${title}`}
         />
         {normalizedQuery ? (
           <div className="canon-ref-results">
@@ -2638,7 +2833,7 @@ function CanonRefsPicker({
               </button>
             ))}
             {matches.length === 0 ? (
-              <span className="empty-line">No canon refs found.</span>
+              <span className="empty-line">{es ? "No se encontraron elementos." : "No world elements found."}</span>
             ) : null}
           </div>
         ) : null}
@@ -2649,14 +2844,14 @@ function CanonRefsPicker({
             key={ref}
             type="button"
             onClick={() => removeRef(ref)}
-            title="Remove canon ref"
+            title={es ? "Quitar vínculo" : "Remove link"}
           >
             {canonRefs.find((canonRef) => canonRef.id === ref)?.label ?? ref}
           </button>
         ))}
         {refs.length === 0 ? (
           <span className="empty-line">
-            Drop canon refs here or search to add them.
+            {es ? "Busca o arrastra elementos para vincularlos." : "Search or drop elements to link them."}
           </span>
         ) : null}
       </div>
@@ -2750,24 +2945,27 @@ function CanonEntityRefPicker({
 
 function CanonContextList({
   title = "WorldNotion Context",
+  embedded = false,
   refs,
   canonRefs,
   onSelectCanon,
   onSuggestEdit,
 }: {
   title?: string;
+  embedded?: boolean;
   refs?: string[];
   canonRefs: CanonRef[];
   onSelectCanon: (id: string) => void;
   onSuggestEdit: (id: string) => void;
 }) {
+  const es = useInterfaceLocale() === "es";
   const linkedRefs = (refs ?? [])
     .map((id) => canonRefs.find((ref) => ref.id === id))
     .filter((ref): ref is CanonRef => Boolean(ref));
 
   return (
     <section className="inspector-section canon-context-list">
-      <h2>{title}</h2>
+      {!embedded ? <h2>{title}</h2> : null}
       <div className="stack-list">
         {linkedRefs.map((ref) => (
           <div className="mini-card canon-context-card" key={ref.id}>
@@ -2788,10 +2986,10 @@ function CanonContextList({
             ) : null}
             <div className="inspector-actions wrap">
               <button type="button" onClick={() => onSelectCanon(ref.id)}>
-                Preview Canon
+                {es ? "Ver en WorldNotion" : "View in WorldNotion"}
               </button>
               <button type="button" onClick={() => onSuggestEdit(ref.id)}>
-                Suggest Edit
+                {es ? "Sugerir cambios" : "Suggest changes"}
               </button>
             </div>
           </div>
@@ -2824,6 +3022,9 @@ function HomeDashboard({
   onRemoveRecentProject,
   onExportRuntime,
   onFeedback,
+  desktopMenu,
+  windowControlsManaged,
+  appSwitcher,
 }: {
   project?: BranchingProject;
   workspace?: PathBranchingWorkspace;
@@ -2841,6 +3042,9 @@ function HomeDashboard({
   onRemoveRecentProject: (path: string) => void;
   onExportRuntime: () => void;
   onFeedback: () => void;
+  desktopMenu?: boolean;
+  windowControlsManaged?: boolean;
+  appSwitcher?: ReactNode;
 }) {
   const useLocale = useInterfaceLocale();
   const c = homeUiCopy(useLocale);
@@ -2858,20 +3062,18 @@ function HomeDashboard({
 
   return (
     <main className="home-shell">
-      <header className="home-topbar">
+      <header className="home-topbar" onMouseDown={handleWindowTitlebarMouseDown}>
+        <div className="home-topbar-leading">
+        {appSwitcher ?? <HomeForgeMenu onFeedback={onFeedback} />}
+        {desktopMenu ? <DesktopMenuBar /> : null}
         <div className="brand">
-          <img
-            className="app-brand-icon"
-            src={pathbranchingIcon}
-            alt=""
-            aria-hidden="true"
-          />
-          <div>
+          <div title={c.tagline}>
             <h1>Pathbranching</h1>
-            <p>{c.tagline}</p>
           </div>
         </div>
+        </div>
         <div className="home-topbar-actions">
+          <NotificationBell locale={useLocale} />
           <button
             type="button"
             className="dock-icon-button"
@@ -2898,6 +3100,7 @@ function HomeDashboard({
           >
             {isDarkTheme(theme) ? <Sun size={15} /> : <Moon size={15} />}
           </button>
+          {!windowControlsManaged ? <WindowTitleControls /> : null}
         </div>
       </header>
 
@@ -3167,906 +3370,6 @@ function ConfirmActionDialog({
   );
 }
 
-type PathBranchingSettingsSection =
-  | "suite"
-  | "update"
-  | "overview"
-  | "authoring"
-  | "markdown"
-  | "bridge"
-  | "workspace"
-  | "recents"
-  | "tutorials";
-
-const primaryFontOptions = [
-  ["sans", "Sans serif"],
-  ["serif", "Serif editorial"],
-  ["humanist", "Humanist"],
-] as const;
-
-const NODE_COLOR_FIELDS: Array<{
-  key: keyof NodeColorSettings;
-  label: string;
-}> = [
-  { key: "sequence", label: "Sequence" },
-  { key: "start", label: "Start" },
-  { key: "branch", label: "Branch" },
-  { key: "event", label: "Event" },
-  { key: "decision", label: "Decision" },
-  { key: "outcome", label: "Outcome" },
-  { key: "inkSection", label: "Ink" },
-  { key: "knowledge", label: "Knowledge" },
-  { key: "runtimeAction", label: "Runtime action" },
-];
-
-function EventCategoriesSettings({
-  categories,
-  usedCategoryIds,
-  onChange,
-}: {
-  categories: EventCategoryDefinition[];
-  usedCategoryIds: Set<string>;
-  onChange: (categories: EventCategoryDefinition[]) => void;
-}) {
-  const fixedCategoryIds = new Set(["normal", "final"]);
-  const updateCategory = (
-    id: string,
-    updates: Partial<EventCategoryDefinition>,
-  ) => {
-    onChange(
-      categories.map((category) =>
-        category.id === id
-          ? {
-              ...category,
-              ...updates,
-              terminal:
-                category.id === "final"
-                  ? true
-                  : category.id === "normal"
-                    ? false
-                    : (updates.terminal ?? category.terminal),
-            }
-          : category,
-      ),
-    );
-  };
-  const addCategory = () => {
-    const id = uniqueId(
-      "custom",
-      categories.map((category) => category.id),
-    );
-    onChange([...categories, { id, label: "Custom" }]);
-  };
-  const deleteCategory = (id: string) => {
-    if (fixedCategoryIds.has(id) || usedCategoryIds.has(id)) return;
-    onChange(categories.filter((category) => category.id !== id));
-  };
-
-  return (
-    <section className="settings-subsection">
-      <div className="settings-page-title compact">
-        <h3>Event categories</h3>
-        <p>
-          Project-level categories used by event nodes. Terminal categories
-          cannot create outgoing transitions.
-        </p>
-      </div>
-      <div className="settings-category-list">
-        {categories.map((category) => {
-          const isFixed = fixedCategoryIds.has(category.id);
-          const isUsed = usedCategoryIds.has(category.id);
-          return (
-            <div className="mini-card category-editor" key={category.id}>
-              <label className="field-label">
-                Label
-                <input
-                  value={category.label}
-                  onChange={(event) =>
-                    updateCategory(category.id, { label: event.target.value })
-                  }
-                />
-              </label>
-              <label className="field-label color-field">
-                Color
-                <input
-                  type="color"
-                  value={category.color ?? "#4f8cff"}
-                  onChange={(event) =>
-                    updateCategory(category.id, { color: event.target.value })
-                  }
-                />
-              </label>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={Boolean(category.terminal)}
-                  disabled={category.id === "final" || category.id === "normal"}
-                  onChange={(event) =>
-                    updateCategory(category.id, {
-                      terminal: event.target.checked,
-                    })
-                  }
-                />
-                Terminal
-              </label>
-              <span>
-                {category.id}
-                {isUsed ? " - in use" : ""}
-              </span>
-              <button
-                type="button"
-                className="danger"
-                disabled={isFixed || isUsed}
-                title={
-                  isFixed
-                    ? "Default categories cannot be deleted."
-                    : isUsed
-                      ? "Category is used by one or more events."
-                      : "Delete category"
-                }
-                onClick={() => deleteCategory(category.id)}
-              >
-                Delete
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div className="inspector-actions">
-        <button type="button" onClick={addCategory}>
-          Add Category
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function PathBranchingSettingsModal({
-  project,
-  fileState,
-  settings,
-  findings,
-  theme,
-  onUpdateEventCategories,
-  onAuthoringDisplayChange,
-  onUpdateSpeechBeatCounter,
-  onCanvasBackgroundChange,
-  onNodeColorChange,
-  onThemeChange,
-  onToggleTheme,
-  onInspectorTabCloseSelectsNextChange,
-  onCollapseInspectorTabOnCanvasClickChange,
-  onInspectorDebugEnabledChange,
-  onShowStatusMessagesChange,
-  onLocalePreferenceChange,
-  onOpenUniverse,
-  onOpenRecentUniverse,
-  onRemoveRecentUniverse,
-  onSaveUniverseProfile,
-  onResetOnboarding,
-  onClose,
-  suiteSettings,
-}: {
-  project?: BranchingProject;
-  fileState: ProjectFileState;
-  settings: AppSettings;
-  findings: ValidationFinding[];
-  theme: ThemeId;
-  onUpdateEventCategories: (categories: EventCategoryDefinition[]) => void;
-  onAuthoringDisplayChange: (updates: Partial<AuthoringDisplaySettings>) => void;
-  onUpdateSpeechBeatCounter: (updates: Partial<SpeechBeatCounterPreference>) => void;
-  onCanvasBackgroundChange: (
-    updates: Partial<CanvasBackgroundSettings>,
-  ) => void;
-  onNodeColorChange: (updates: Partial<NodeColorSettings>) => void;
-  onThemeChange: (theme: ThemeId) => void;
-  onToggleTheme: () => void;
-  onInspectorTabCloseSelectsNextChange: (value: boolean) => void;
-  onCollapseInspectorTabOnCanvasClickChange: (value: boolean) => void;
-  onInspectorDebugEnabledChange: (value: boolean) => void;
-  onShowStatusMessagesChange: (value: boolean) => void;
-  onLocalePreferenceChange: (value: AppSettings["localePreference"]) => void;
-  onOpenUniverse: () => void;
-  onOpenRecentUniverse: (path: string) => void;
-  onRemoveRecentUniverse: (path: string) => void;
-  onSaveUniverseProfile: (profile: UniverseProfile) => Promise<void>;
-  onResetOnboarding: () => void;
-  onClose: () => void;
-  suiteSettings?: SuiteSettings;
-}) {
-  const [activeSection, setActiveSection] =
-    useState<PathBranchingSettingsSection>(project ? "overview" : "workspace");
-  const interfaceCopy = interfaceLocaleCopy(
-    resolveInterfaceLocale(suiteSettings?.localePreference ?? settings.localePreference),
-  );
-  const settingsText = pathbranchingSettingsCopy(
-    resolveInterfaceLocale(suiteSettings?.localePreference ?? settings.localePreference),
-  );
-  const locale = useInterfaceLocale();
-  const overlayRef = useRef<HTMLDivElement>(null);
-  useOverlayFocus(overlayRef, true, onClose, true);
-  const errorCount = findings.filter(
-    (finding) => finding.severity === "error",
-  ).length;
-  const warningCount = findings.filter(
-    (finding) => finding.severity === "warning",
-  ).length;
-  const universeName = universeDisplayName(project, fileState);
-  const universePath = universeDisplayPath(fileState);
-  const [profileDraft, setProfileDraft] = useState<UniverseProfile>(() => ({
-    name: fileState.universeProfile?.name ?? universeName,
-    icon: fileState.universeProfile?.icon ?? { type: "preset", value: "book" },
-    localization: fileState.universeProfile?.localization ?? {
-      primaryLocale: machineLocale(),
-      locales: [machineLocale()],
-    },
-  }));
-  const [profileSaving, setProfileSaving] = useState(false);
-
-  useEffect(() => {
-    setProfileDraft({
-      name: fileState.universeProfile?.name ?? universeName,
-      icon: fileState.universeProfile?.icon ?? { type: "preset", value: "book" },
-      localization: fileState.universeProfile?.localization ?? {
-        primaryLocale: machineLocale(),
-        locales: [machineLocale()],
-      },
-    });
-  }, [fileState.universeProfile, universeName]);
-
-  return (
-    <div
-      ref={overlayRef}
-      className="settings-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Everend PathBranching settings"
-    >
-      <div className="settings-modal pathbranching-settings-modal">
-        <header className="settings-header">
-          <div>
-            <p className="eyebrow">
-              {project ? `${settingsText.universe} settings` : `${settingsText.application} settings`}
-            </p>
-            <h2>{project ? universeName : "Everend PathBranching"}</h2>
-          </div>
-          <button type="button" onClick={onClose} title="Close settings">
-            <X size={16} />
-          </button>
-        </header>
-
-        <div className="settings-body">
-          <nav className="settings-nav">
-            {suiteSettings ? (
-              <div className="settings-nav-group">
-              <p>{settingsText.forge}</p>
-                <button
-                  className={activeSection === "suite" ? "active" : ""}
-                  onClick={() => setActiveSection("suite")}
-                  type="button"
-                >
-                  <Settings size={14} />
-                  {settingsText.suite}
-                </button>
-                <button
-                  className={activeSection === "update" ? "active" : ""}
-                  onClick={() => setActiveSection("update")}
-                  type="button"
-                >
-                  <RefreshCw size={14} />
-                  {settingsText.update}
-                </button>
-              </div>
-            ) : null}
-            <div className="settings-nav-group">
-              <p>{settingsText.universe}</p>
-              <button
-                className={activeSection === "overview" ? "active" : ""}
-                onClick={() => setActiveSection("overview")}
-                type="button"
-              >
-                <Settings size={14} />
-                {settingsText.overview}
-              </button>
-              <button
-                className={activeSection === "authoring" ? "active" : ""}
-                onClick={() => setActiveSection("authoring")}
-                type="button"
-              >
-                <GitBranch size={14} />
-                {settingsText.authoring}
-              </button>
-              <button
-                className={activeSection === "markdown" ? "active" : ""}
-                onClick={() => setActiveSection("markdown")}
-                type="button"
-              >
-                <FilePlus2 size={14} />
-                Markdown
-              </button>
-              <button
-                className={activeSection === "bridge" ? "active" : ""}
-                onClick={() => setActiveSection("bridge")}
-                type="button"
-              >
-                <Link size={14} />
-                {settingsText.bridge}
-              </button>
-            </div>
-
-            <div className="settings-nav-group app-settings-group">
-              <p>{settingsText.application}</p>
-              <button
-                className={activeSection === "workspace" ? "active" : ""}
-                onClick={() => setActiveSection("workspace")}
-                type="button"
-              >
-                <Home size={14} />
-                {settingsText.workspace}
-              </button>
-              <button
-                className={activeSection === "recents" ? "active" : ""}
-                onClick={() => setActiveSection("recents")}
-                type="button"
-              >
-                <FolderOpen size={14} />
-                {settingsText.recents}
-              </button>
-              <button
-                className={activeSection === "tutorials" ? "active" : ""}
-                onClick={() => setActiveSection("tutorials")}
-                type="button"
-              >
-                <RefreshCw size={14} />
-                {settingsText.tutorials}
-              </button>
-            </div>
-          </nav>
-
-          <section className="settings-section">
-            {activeSection === "suite" && suiteSettings ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>{settingsText.suiteTitle}</h3>
-                  <p>{settingsText.suiteDescription}</p>
-                </div>
-                <div className="settings-grid">
-                  <label>
-                    <span>{interfaceCopy.interfaceLanguage}</span>
-                    <select
-                      value={suiteSettings.localePreference}
-                      onChange={(event) => suiteSettings.onLocalePreferenceChange(event.target.value as "system" | "en" | "es")}
-                    >
-                      <option value="system">{interfaceCopy.system}</option>
-                      <option value="en">English</option>
-                      <option value="es">Español</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>{settingsText.style}</span>
-                    <select
-                      value={suiteSettings.style}
-                      onChange={(event) => suiteSettings.onStyleChange(event.target.value)}
-                    >
-                      {THEMES.map((themeOption) => (
-                        <option key={themeOption.id} value={themeOption.id}>
-                          {themeOption.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>{settingsText.typeface}</span>
-                    <select
-                      value={suiteSettings.primaryFont}
-                      onChange={(event) => suiteSettings.onPrimaryFontChange(event.target.value)}
-                    >
-                      {primaryFontOptions.map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </div>
-            ) : null}
-            {activeSection === "update" && suiteSettings ? (
-              <div className="settings-panel forge-update-panel">
-                <div className="settings-page-title">
-                  <h3>{settingsText.updateTitle}</h3>
-                  <p>{settingsText.updateDescription}</p>
-                </div>
-                <div className="settings-grid">
-                  <label><span>{settingsText.installedVersion}</span><input value={suiteSettings.update.currentVersion} readOnly /></label>
-                  <label><span>{settingsText.platform}</span><input value={suiteSettings.update.platform} readOnly /></label>
-                  <label><span>{settingsText.applicationId}</span><input value={suiteSettings.update.identifier} readOnly /></label>
-                </div>
-                <div className={`forge-update-status ${suiteSettings.update.status}`} role="status">
-                  <RefreshCw size={18} className={suiteSettings.update.status === "checking" || suiteSettings.update.status === "downloading" ? "spinning" : ""} />
-                  <div>
-                    <strong>{suiteSettings.update.status === "checking" ? settingsText.checking : suiteSettings.update.status === "available" ? settingsText.available.replace("{{version}}", suiteSettings.update.availableVersion ?? "") : suiteSettings.update.status === "downloading" ? settingsText.downloading.replace("{{version}}", suiteSettings.update.availableVersion ?? "") : suiteSettings.update.status === "up-to-date" ? settingsText.upToDate : suiteSettings.update.status === "error" ? settingsText.failed : settingsText.ready}</strong>
-                    <p>{suiteSettings.update.error ?? settingsText.updaterReady}</p>
-                  </div>
-                </div>
-                <div className="settings-action-list forge-update-actions">
-                  <button type="button" onClick={suiteSettings.update.onCheck} disabled={suiteSettings.update.status === "checking" || suiteSettings.update.status === "downloading"}><RefreshCw size={14} /> {settingsText.check}</button>
-                  {suiteSettings.update.status === "available" ? <button type="button" onClick={suiteSettings.update.onInstall}>{settingsText.install}</button> : null}
-                </div>
-              </div>
-            ) : null}
-            {activeSection === "overview" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title universe-profile-summary">
-                  <UniverseIconFrame
-                    profile={fileState.universeProfile}
-                    size={42}
-                  />
-                  <div>
-                    <h3>{universeName}</h3>
-                    <p>
-                      {fileState.universePath ??
-                        "Open a universe folder to begin."}
-                    </p>
-                  </div>
-                </div>
-                <div className="universe-profile-editor">
-                  <UniverseIconFrame profile={profileDraft} size={48} />
-                  <div className="universe-profile-fields">
-                    <label>
-                      <span>Universe name</span>
-                      <input value={profileDraft.name ?? ""} onChange={(event) => setProfileDraft((current) => ({ ...current, name: event.target.value }))} placeholder={universeName} />
-                    </label>
-                    <LocaleSettingsFields
-                      value={profileDraft.localization}
-                      fallbackLocale={machineLocale()}
-                      onChange={(localization) => setProfileDraft((current) => ({ ...current, localization }))}
-                    />
-                    <div className="icon-preset-row">
-                      {[["book", BookOpen], ["globe", Globe2], ["castle", Castle], ["sparkles", Sparkles]].map(([value, Icon]) => (
-                        <button key={value as string} type="button" className={profileDraft.icon?.type === "preset" && profileDraft.icon.value === value ? "active" : ""} onClick={() => setProfileDraft((current) => ({ ...current, icon: { type: "preset", value: value as string } }))} title={`Use ${value} icon`}><Icon size={16} /></button>
-                      ))}
-                      <label className="image-upload-button" title="Use PNG or JPG"><Upload size={16} /><input type="file" accept="image/png,image/jpeg" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setProfileDraft((current) => ({ ...current, icon: { type: "image", value: String(reader.result ?? "") } })); reader.readAsDataURL(file); }} /></label>
-                    </div>
-                    <button type="button" onClick={async () => { setProfileSaving(true); try { await onSaveUniverseProfile(profileDraft); } finally { setProfileSaving(false); } }} disabled={profileSaving}>Save customization</button>
-                  </div>
-                </div>
-                <div className="universe-stats">
-                  <div>
-                    <strong>{project?.sequences.length ?? 0}</strong>
-                    <span>Sequences</span>
-                  </div>
-                  <div>
-                    <strong>{project?.branches.length ?? 0}</strong>
-                    <span>Branches</span>
-                  </div>
-                  <div>
-                    <strong>{project?.events.length ?? 0}</strong>
-                    <span>Events</span>
-                  </div>
-                  <div>
-                    <strong>
-                      {errorCount}/{warningCount}
-                    </strong>
-                    <span>Errors / warnings</span>
-                  </div>
-                </div>
-                <div className="settings-action-list">
-                  <button type="button" onClick={onOpenUniverse}>
-                    <FolderOpen size={15} />
-                    Open universe folder
-                  </button>
-                  <button type="button" onClick={onToggleTheme}>
-                    {isDarkTheme(theme) ? (
-                      <Sun size={15} />
-                    ) : (
-                      <Moon size={15} />
-                    )}
-                    Toggle {isDarkTheme(theme) ? "light" : "dark"} mode
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {activeSection === "authoring" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>Branching authoring</h3>
-                  <p>
-                    {universePath ||
-                      "Everend PathBranching stores story graph data inside `.everend/.pathbranching`."}
-                  </p>
-                </div>
-                <div className="settings-grid">
-                  <label>
-                    <span>Story file</span>
-                    <input
-                      value={fileState.storyPath ?? "Not created yet"}
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Runtime validation</span>
-                    <input
-                      value={
-                        findings.length
-                          ? `${findings.length} finding(s)`
-                          : "Clean"
-                      }
-                      readOnly
-                    />
-                  </label>
-                </div>
-                {project ? (
-                  <EventCategoriesSettings
-                    categories={project.eventCategories ?? []}
-                    usedCategoryIds={
-                      new Set(project.events.map((event) => event.type))
-                    }
-                    onChange={onUpdateEventCategories}
-                  />
-                ) : null}
-                <section className="settings-subsection">
-                  <div className="settings-page-title compact">
-                    <h3>Canvas information</h3>
-                    <p>Choose which icon-and-number metrics appear on event and decision nodes.</p>
-                  </div>
-                  <div className="settings-grid">
-                    <label>
-                      <span>Decisions</span>
-                      <input type="checkbox" checked={settings.authoringDisplay.showDecisionCount} onChange={(event) => onAuthoringDisplayChange({ showDecisionCount: event.target.checked })} />
-                    </label>
-                    <label>
-                      <span>Outcomes</span>
-                      <input type="checkbox" checked={settings.authoringDisplay.showOutcomeCount} onChange={(event) => onAuthoringDisplayChange({ showOutcomeCount: event.target.checked })} />
-                    </label>
-                    <label>
-                      <span>Dialogue elements</span>
-                      <input type="checkbox" checked={settings.authoringDisplay.showDialogueCount} onChange={(event) => onAuthoringDisplayChange({ showDialogueCount: event.target.checked })} />
-                    </label>
-                    <label>
-                      <span>Character count</span>
-                      <input type="checkbox" checked={settings.authoringDisplay.showCharacterCount} onChange={(event) => onAuthoringDisplayChange({ showCharacterCount: event.target.checked })} />
-                    </label>
-                    <label>
-                      <span>Word count</span>
-                      <input type="checkbox" checked={settings.authoringDisplay.showWordCount} onChange={(event) => onAuthoringDisplayChange({ showWordCount: event.target.checked })} />
-                    </label>
-                  </div>
-                  <div className="settings-page-title compact">
-                    <h3>Speech beat counter</h3>
-                    <p>The default maximum per speech beat is saved with the universe. You can also right-click a speech beat counter on the canvas to edit it; individual events can still override it from the event editor.</p>
-                  </div>
-                  <div className="settings-grid">
-                    <label>
-                      <span>Show counter</span>
-                      <input
-                        type="checkbox"
-                        disabled={!project}
-                        checked={project?.authoringPreferences?.speechBeatCounter?.enabled ?? DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE.enabled}
-                        onChange={(event) => onUpdateSpeechBeatCounter({ enabled: event.target.checked })}
-                      />
-                    </label>
-                    <label>
-                      <span>Measure</span>
-                      <select
-                        disabled={!project}
-                        value={project?.authoringPreferences?.speechBeatCounter?.unit ?? DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE.unit}
-                        onChange={(event) => onUpdateSpeechBeatCounter({ unit: event.target.value as "words" | "characters" })}
-                      >
-                        <option value="characters">Characters</option>
-                        <option value="words">Words</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span>Maximum</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={2000}
-                        step={1}
-                        disabled={!project}
-                        value={project?.authoringPreferences?.speechBeatCounter?.target ?? DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE.target}
-                        onChange={(event) => onUpdateSpeechBeatCounter({ target: Number(event.target.value) })}
-                      />
-                    </label>
-                  </div>
-                </section>
-              </div>
-            ) : null}
-
-            {activeSection === "markdown" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>Markdown working copies</h3>
-                  <p>
-                    Canon Markdown remains owned by WorldNotion. Editable
-                    variants are saved as working copies.
-                  </p>
-                </div>
-                <div className="settings-grid">
-                  <label>
-                    <span>Working copy folder</span>
-                    <input
-                      value=".everend/.pathbranching/working-copies"
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Supported draft formats</span>
-                    <input
-                      value="Markdown, Ink Beat, GameData, Frontmatter"
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Canon editing</span>
-                    <input
-                      value="Read-only from Everend PathBranching"
-                      readOnly
-                    />
-                  </label>
-                </div>
-              </div>
-            ) : null}
-
-            {activeSection === "bridge" ? (
-              <div className="settings-panel">
-                <EverendBridgePanel project={project} fileState={fileState} />
-              </div>
-            ) : null}
-
-            {activeSection === "workspace" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>Workspace</h3>
-                  <p>
-                    Theme and onboarding behavior are shared with the desktop
-                    shell.
-                  </p>
-                </div>
-                <div className="settings-grid">
-                  <label>
-                    <span>{interfaceCopy.interfaceLanguage}</span>
-                    <select
-                      value={suiteSettings?.localePreference ?? settings.localePreference}
-                      onChange={(event) => onLocalePreferenceChange(event.target.value as "system" | "en" | "es")}
-                    >
-                      <option value="system">{interfaceCopy.system}</option>
-                      <option value="en">English</option>
-                      <option value="es">Español</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>Active style</span>
-                    <select
-                      value={theme}
-                      onChange={(event) =>
-                        onThemeChange(normalizeThemeId(event.target.value))
-                      }
-                    >
-                      {THEMES.map((themeOption) => (
-                        <option key={themeOption.id} value={themeOption.id}>
-                          {themeOption.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    <span>Theme mode</span>
-                    <button type="button" onClick={onToggleTheme}>
-                      {isDarkTheme(theme)
-                        ? "Switch to light"
-                        : "Switch to dark"}
-                    </button>
-                  </label>
-                  <label>
-                    <span>Last universe</span>
-                    <input
-                      value={settings.lastOpenedProject ?? "None"}
-                      readOnly
-                    />
-                  </label>
-                  <label>
-                    <span>Open next tab on close</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.inspectorTabCloseSelectsNext}
-                      onChange={(event) =>
-                        onInspectorTabCloseSelectsNextChange(
-                          event.target.checked,
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Collapse tab on canvas click</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.collapseInspectorTabOnCanvasClick}
-                      onChange={(event) =>
-                        onCollapseInspectorTabOnCanvasClickChange(
-                          event.target.checked,
-                        )
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Inspector Debug</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.inspectorDebugEnabled}
-                      onChange={(event) =>
-                        onInspectorDebugEnabledChange(event.target.checked)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Status messages</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.showStatusMessages}
-                      onChange={(event) =>
-                        onShowStatusMessagesChange(event.target.checked)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Canvas circles</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.canvasBackground.showDots}
-                      onChange={(event) =>
-                        onCanvasBackgroundChange({
-                          showDots: event.target.checked,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Canvas grid</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.canvasBackground.showGrid}
-                      onChange={(event) =>
-                        onCanvasBackgroundChange({
-                          showGrid: event.target.checked,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Align to grid</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.canvasBackground.snapToGrid}
-                      onChange={(event) =>
-                        onCanvasBackgroundChange({
-                          snapToGrid: event.target.checked,
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Grid size</span>
-                    <input
-                      type="number"
-                      min={8}
-                      max={80}
-                      step={2}
-                      value={settings.canvasBackground.gridSize}
-                      onChange={(event) =>
-                        onCanvasBackgroundChange({
-                          gridSize: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>Grid opacity</span>
-                    <input
-                      type="range"
-                      min={0.05}
-                      max={1}
-                      step={0.05}
-                      value={settings.canvasBackground.opacity}
-                      onChange={(event) =>
-                        onCanvasBackgroundChange({
-                          opacity: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="settings-subsection">
-                  <div className="settings-page-title compact">
-                    <h3>Node colors</h3>
-                    <p>
-                      Canvas node types use these colors as their left outline.
-                    </p>
-                  </div>
-                  <div className="settings-grid node-color-grid">
-                    {NODE_COLOR_FIELDS.map((field) => (
-                      <label key={field.key}>
-                        <span>{field.label}</span>
-                        <input
-                          type="color"
-                          value={settings.nodeColors[field.key]}
-                          onChange={(event) =>
-                            onNodeColorChange({
-                              [field.key]: event.target.value,
-                            })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {activeSection === "recents" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>Recent universes</h3>
-                  <p>
-                    Everend PathBranching opens the latest valid universe
-                    automatically on startup.
-                  </p>
-                </div>
-                <div className="space-list">
-                  {settings.recentProjects.map((path) => (
-                    <button
-                      type="button"
-                      key={path}
-                      onClick={() => onOpenRecentUniverse(path)}
-                    >
-                      <GitBranch size={15} />
-                      <span>{path}</span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onRemoveRecentUniverse(path);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onRemoveRecentUniverse(path);
-                          }
-                        }}
-                      >
-                        remove
-                      </span>
-                    </button>
-                  ))}
-                  {settings.recentProjects.length === 0 ? (
-                    <span className="empty-line">No recent universes yet.</span>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            {activeSection === "tutorials" ? (
-              <div className="settings-panel">
-                <div className="settings-page-title">
-                  <h3>{settingsText.tutorials}</h3>
-                  <p>{locale === "es" ? "Vuelve a mostrar la guía básica de PathBranching para este universo." : "Show the introductory guide again for this universe."}</p>
-                </div>
-                <button type="button" onClick={onResetOnboarding}>
-                  <RefreshCw size={15} />
-                  {locale === "es" ? "Reiniciar tutorial" : "Restart tutorial"}
-                </button>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function PanelShell({
   title,
   open,
@@ -4092,6 +3395,7 @@ function PanelShell({
   dataOnboardingTarget?: string;
   children: ReactNode;
 }) {
+  const embedded = useExplorerEmbedded();
   const ui = authoringUiCopy(useInterfaceLocale());
   const displayTitle = title === "Stories" ? ui.stories : title;
   const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -4129,15 +3433,15 @@ function PanelShell({
   }
 
   return (
-    <aside className="side-panel" data-onboarding-target={dataOnboardingTarget} onContextMenu={onContextMenu}>
-      <div className="panel-title">
+    <aside className={`side-panel ${embedded ? "pb-explorer-embedded" : ""}`} data-onboarding-target={dataOnboardingTarget} onContextMenu={onContextMenu}>
+      {!embedded ? <div className="panel-title">
         <div>
           <strong>{displayTitle}</strong>
         </div>
         <button type="button" title={`${ui.stories === "Historias" ? "Contraer" : "Collapse"} ${displayTitle}`} onClick={onToggle}>
           <span aria-hidden="true">&lt;</span>
         </button>
-      </div>
+      </div> : null}
       {children}
       {resizable ? (
         <button
@@ -4355,7 +3659,7 @@ function SequenceOutlinePanel({
   if (!sequence) {
     return (
       <span className="empty-line">
-        Create a sequence to start outlining this story.
+        {es ? "Crea una secuencia para empezar a organizar esta historia." : "Create a sequence to start outlining this story."}
       </span>
     );
   }
@@ -4368,7 +3672,7 @@ function SequenceOutlinePanel({
         onClick={() => onSelect(`file:sequence:${sequence.id}`)}
       >
         <strong>{sequence.name}</strong>
-        <span>{sequence.id}</span>
+
         <OutlineBadges
           badges={[
             sequence.id === project.entrySequenceId ? (es ? "secuencia inicial" : "entry sequence") : "",
@@ -4383,7 +3687,7 @@ function SequenceOutlinePanel({
           ]}
         />
       </button>
-      <section className="outline-editor">
+      <ExplorerGroup id="sequence-settings" title={es ? "Configuración de secuencia" : "Sequence settings"}><section className="outline-editor">
         <label className="field-label">
           {es ? "Nombre" : "Name"}
           <input
@@ -4428,9 +3732,9 @@ function SequenceOutlinePanel({
             ))}
           </select>
         </label>
-      </section>
+      </section></ExplorerGroup>
+      <ExplorerGroup id="sequence-connections" title={es ? "Conexiones de secuencia" : "Sequence connections"} defaultOpen>
       <section className="outline-section">
-        <h3>{es ? "Conexiones de secuencia" : "Sequence Connections"}</h3>
         {connections.length ? (
           connections.map((connection) => (
             <button
@@ -4458,7 +3762,8 @@ function SequenceOutlinePanel({
         ) : (
           <span className="empty-line">{es ? "Todavía no hay rutas entre secuencias." : "No cross-sequence transitions yet."}</span>
         )}
-      </section>
+      </section></ExplorerGroup>
+      <ExplorerGroup id="sequence-identity" title={es ? "Detalles técnicos" : "Technical details"}><code>{sequence.id}</code></ExplorerGroup>
     </div>
   );
 }
@@ -4872,7 +4177,8 @@ function FilesPanel({
   activeOutlineTab: StoryOutlineTab;
   onOutlineTabChange: (tab: StoryOutlineTab) => void;
 }) {
-  const ui = authoringUiCopy(useInterfaceLocale());
+  const locale = useInterfaceLocale();
+  const ui = authoringUiCopy(locale);
   const currentSequenceId = activeSequenceId(project) ?? "";
   const activeSequence = currentSequenceId
     ? findSequence(project, currentSequenceId)
@@ -4903,9 +4209,9 @@ function FilesPanel({
         onCreateSequence={onCreateSequence} onRenameSequence={onRenameSequence} onDeleteSequence={onDeleteSequence} />
       {activeStoryId && activeSequence ? <div className="panel-scroll">
         <AccessibleTabs className="story-outline-tabs" value={activeOutlineTab}
-          tabs={[{ id: "sequence", label: ui.sequence }, { id: "branches", label: ui.branches }, { id: "paths", label: ui.paths }]}
+          tabs={[{ id: "sequence", label: storiesViewCopy(locale).sequence }, { id: "branches", label: storiesViewCopy(locale).branches }, { id: "paths", label: storiesViewCopy(locale).paths }]}
           onChange={(tab) => onOutlineTabChange(tab as StoryOutlineTab)} ariaLabel={ui.stories} />
-        {activeOutlineTab === "sequence" ? (
+        <ExplorerPane active={activeOutlineTab === "sequence"}>
           <SequenceOutlinePanel
             project={project}
             propertiesConfig={propertiesConfig}
@@ -4914,8 +4220,8 @@ function FilesPanel({
             onSelect={onSelect}
             onUpdateSequence={onUpdateSequence}
           />
-        ) : null}
-        {activeOutlineTab === "branches" ? (
+        </ExplorerPane>
+        <ExplorerPane active={activeOutlineTab === "branches"}>
           <BranchTagPanel
             project={project}
             sequence={activeSequence}
@@ -4927,15 +4233,15 @@ function FilesPanel({
             onCreateEventInBranch={onCreateEventInBranch}
             onAssignEventToBranch={onAssignEventToBranch}
           />
-        ) : null}
-        {activeOutlineTab === "paths" ? (
+        </ExplorerPane>
+        <ExplorerPane active={activeOutlineTab === "paths"}>
           <PathOutlinePanel
             project={project}
             sequence={activeSequence}
             selectedId={selectedId}
             onNavigate={onNavigatePathNode}
           />
-        ) : null}
+        </ExplorerPane>
         {totalItems === 0 ? (
           <span className="empty-line">No story objects yet.</span>
         ) : null}
@@ -4966,17 +4272,17 @@ function explorerInspectorTab(
       kind === "dialogue"
         ? details?.dialogue?.title ||
           details?.dialogue?.text?.content?.slice(0, 48) ||
-          "Dialogue"
+          "Conversation"
           : kind === "decision"
           ? details?.decision?.name || "Decision"
           : kind === "speechBeat"
-            ? "Speech Beat"
+            ? "Dialogue"
             : kind === "directionBeat"
-              ? "Direction Beat"
+              ? "Stage direction"
           : kind === "routeGate"
             ? "Route Gate"
           : kind === "outcome"
-            ? details?.outcome?.name || "Outcome"
+            ? details?.outcome?.name || "Option"
             : kind === "branch"
               ? "Branch"
               : kind === "sequence"
@@ -5012,6 +4318,7 @@ type ManualInspectorDraft = {
   selection: ManualInspectorSelection;
   project: BranchingProject;
   dirty: boolean;
+  integrationMappingIds?: string[];
 };
 
 function recoverManualInspectorDrafts(projectId: string): Record<string, ManualInspectorDraft> {
@@ -5083,20 +4390,12 @@ function mergeManualInspectorDraft(
           (item) => item.id === selection.id,
         )
       : undefined;
-  const draftOverride = draftProject.logicPropertyOverrides?.find(
-    (item) =>
-      item.propertyId === selection.id && item.source === selection.source,
-  );
-  const currentOverrides = project.logicPropertyOverrides ?? [];
-  const nextOverrides = draftOverride
-    ? [
-        ...currentOverrides.filter(
-          (item) =>
-            item.propertyId !== selection.id || item.source !== selection.source,
-        ),
-        draftOverride,
-      ]
-    : currentOverrides;
+  // Capabilities save immediately. A metadata draft must not overwrite them.
+  const mappingIds = draft.integrationMappingIds ?? (selection.source === "canon" ? ["pathbranching:additional-characters"] : []);
+  const mappings = mappingIds.length ? [
+    ...(project.integrationConfigOverride?.mappings ?? []).filter(mapping => !mappingIds.includes(mapping.id)),
+    ...(draftProject.integrationConfigOverride?.mappings ?? []).filter(mapping => mappingIds.includes(mapping.id)),
+  ] : undefined;
   return {
     ...project,
     ...(localProperty
@@ -5106,12 +4405,12 @@ function mergeManualInspectorDraft(
           ),
         }
       : {}),
-    logicPropertyOverrides: nextOverrides,
-    integrationConfigOverride: draftProject.integrationConfigOverride,
+    ...(mappings ? { integrationConfigOverride: { ...project.integrationConfigOverride, specVersion: project.integrationConfigOverride?.specVersion ?? "0.1", mappings } } : {}),
   };
 }
 
 function inspectorTabIcon(tab: InspectorTab) {
+  if (tab.mode === "play") return Play;
   if (tab.id.startsWith("dialogue:")) return MessageSquare;
   if (tab.id.startsWith("routeGate:")) return GitBranch;
   if (tab.id.startsWith("decision:") || tab.id.startsWith("outcome:"))
@@ -5152,84 +4451,46 @@ function DebugInspector({
   return <section className="inspector-section debug-inspector"><h2>Debug</h2><pre>{JSON.stringify(payload, null, 2)}</pre></section>;
 }
 
-function EventInspectorTabPreview({
-  project,
-  event,
-  compact = false,
-}: {
-  project: BranchingProject;
-  event: EventNode;
-  compact?: boolean;
-}) {
-  const c = inspectorUiCopy(useInterfaceLocale());
-  const cover = eventCoverImageForNode(project, event);
-  const branch = event.branchRef
-    ? project.branches.find((candidate) => candidate.id === event.branchRef)
-    : undefined;
-  const category = project.eventCategories?.find((candidate) => candidate.id === event.type);
-  const outcomeCount = event.decisions?.reduce(
-    (count, decision) => count + decision.outcomes.length,
-    0,
-  ) ?? 0;
-  const dialogueCount = (event.dialogues?.length ?? 0) + (event.dialogueBeats?.length ?? 0);
-  const description = event.description?.trim().replace(/\s+/gu, " ");
-
-  return (
-    <div className={`event-inspector-tab-preview${compact ? " compact" : ""}`}>
-      <div className="event-inspector-tab-preview-image" aria-hidden="true">
-        {cover?.url ? (
-          <img src={cover.url} alt="" />
-        ) : (
-          <ImagePlus size={compact ? 14 : 17} />
-        )}
-      </div>
-      <div className="event-inspector-tab-preview-copy">
-        <strong className="event-inspector-tab-preview-name">{event.name || c.untitled}</strong>
-        {!compact ? (
-          <span className="event-inspector-tab-preview-description">
-            {description ? description.slice(0, 120) : c.noDescription}
-          </span>
-        ) : null}
-        <span className="event-inspector-tab-preview-tags">
-          <span title={c.eventType}><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
-          <span title={c.branch}><GitBranch size={11} aria-hidden="true" />{branch?.title ?? c.noBranch}</span>
-          {!compact ? (
-            <>
-              <span title={c.decisions}><CircleDot size={11} aria-hidden="true" />{event.decisions?.length ?? 0}</span>
-              <span title={c.outcomes}><Split size={11} aria-hidden="true" />{outcomeCount}</span>
-              <span title={c.dialogues}><MessageSquare size={11} aria-hidden="true" />{dialogueCount}</span>
-            </>
-          ) : null}
-        </span>
-      </div>
-    </div>
-  );
+function EventInspectorStatistics({ event }: { event: EventNode }) {
+  const locale = useInterfaceLocale();
+  const c = inspectorUiCopy(locale);
+  const statistics = [
+    { label: c.decisions, count: event.decisions?.length ?? 0, icon: <CircleDot size={16} aria-hidden="true" /> },
+    { label: c.outcomes, count: event.decisions?.reduce((count, decision) => count + decision.outcomes.length, 0) ?? 0, icon: <Split size={16} aria-hidden="true" /> },
+    { label: c.dialogues, count: (event.dialogues?.length ?? 0) + (event.dialogueBeats?.length ?? 0), icon: <MessageSquare size={16} aria-hidden="true" /> },
+  ];
+  return <section className="inspector-field-group inspector-event-statistics" aria-label={locale === "es" ? "Estadísticas" : "Statistics"}>
+    <h2 className="inspector-group-title">{locale === "es" ? "Estadísticas" : "Statistics"}</h2>
+    <dl>{statistics.map(item => <div key={item.label}><dt>{item.icon}{item.label}</dt><dd>{item.count}</dd></div>)}</dl>
+  </section>;
 }
 
-function EventInspectorTabHeader({
-  project,
-  event,
+function MinimizedInspectorTabTitle({
+  title,
+  kind,
+  Icon,
 }: {
-  project: BranchingProject;
-  event: EventNode;
+  title: string;
+  kind?: string;
+  Icon: typeof GitBranch;
 }) {
-  const c = inspectorUiCopy(useInterfaceLocale());
-  const branch = event.branchRef
-    ? project.branches.find((candidate) => candidate.id === event.branchRef)
-    : undefined;
-  const category = project.eventCategories?.find((candidate) => candidate.id === event.type);
-  return (
-    <div className="event-inspector-tab-header">
-      <strong className="event-inspector-tab-header-main" title={event.name}>
-        <GitBranch className="event-header-icon" size={14} aria-hidden="true" />
-        <span>{event.name || c.untitled}</span>
-      </strong>
-      <span className="event-inspector-tab-preview-tags" aria-label="Event metadata">
-        <span title={c.eventType}><Split size={11} aria-hidden="true" />{category?.label ?? event.type}</span>
-        <span title={c.branch}><GitBranch size={11} aria-hidden="true" />{branch?.title ?? c.noBranch}</span>
-      </span>
-    </div>
-  );
+  return <strong title={title}>
+    <Icon className="event-header-icon" size={14} aria-hidden="true" />
+    <span className="event-header-copy event-header-inline">
+      <span className="event-header-name">{title}</span>
+      {kind ? <><span className="event-header-separator" aria-hidden="true">·</span><span className="event-header-kind">{kind}</span></> : null}
+    </span>
+  </strong>;
+}
+
+function EventInspectorTabHeader({ project, event }: { project: BranchingProject; event: EventNode }) {
+  const locale = useInterfaceLocale();
+  const c = inspectorUiCopy(locale);
+  return <MinimizedInspectorTabTitle
+    title={event.name || c.untitled}
+    kind={inspectorTargetKind(project, { type: "node", id: event.id }, locale)}
+    Icon={GitBranch}
+  />;
 }
 
 function EventAuthoringDock({
@@ -5263,6 +4524,8 @@ function EventAuthoringDock({
   onCloseOtherInspectorTabs,
   onDisableInspectorDebug,
   onToggleInspectorMaximized,
+  inspectorSize, onInspectorResize, onFold, inspectorStackOrder, onInspectorStackOrderChange,
+  fullscreen, onFullscreenChange, onNameMutation,
   children,
 }: {
   project: BranchingProject;
@@ -5295,6 +4558,14 @@ function EventAuthoringDock({
   onCloseOtherInspectorTabs: (id: string) => void;
   onDisableInspectorDebug: () => void;
   onToggleInspectorMaximized: () => void;
+  inspectorSize: InspectorSize;
+  inspectorStackOrder: string[];
+  onInspectorStackOrderChange: (order: string[]) => void;
+  onInspectorResize:(size:InspectorSize)=>void;
+  onFold:()=>void;
+  fullscreen: boolean;
+  onFullscreenChange: (fullscreen: boolean) => void;
+  onNameMutation: (mutate: (current: BranchingProject) => BranchingProject) => void | Promise<void>;
   children: ReactNode;
 }) {
   const locale = useInterfaceLocale();
@@ -5305,7 +4576,49 @@ function EventAuthoringDock({
   const manuallyClosedEventIdRef = useRef<string | undefined>(undefined);
   const [selectedTabGroupId, setSelectedTabGroupId] = useState("");
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
-  const [inspectorHeights, setInspectorHeights] = useState<Record<string, number>>({});
+  const [inspectorSearchOpen, setInspectorSearchOpen] = useState(false);
+  const [inspectorSearchQuery, setInspectorSearchQuery] = useState("");
+  const inspectorSearchRef = useRef<HTMLDivElement>(null);
+  const inspectorSearchInputRef = useRef<HTMLInputElement>(null);
+  const groupMenuRef = useRef<HTMLDivElement>(null);
+  useApplicationEffect(() => {
+    if (!groupMenuOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!groupMenuRef.current?.contains(event.target as Node)) setGroupMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [groupMenuOpen]);
+  useApplicationEffect(() => {
+    if (!inspectorSearchOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!inspectorSearchRef.current?.contains(event.target as Node)) setInspectorSearchOpen(false);
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setInspectorSearchOpen(false);
+        setInspectorSearchQuery("");
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", keydown);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", keydown);
+    };
+  }, [inspectorSearchOpen]);
+  const groupPopoverRef = useRef<HTMLDivElement>(null);
+  const [indexHost, setIndexHost] = useState<HTMLDivElement | null>(null);
+  const groupPopoverStyle = useInspectorMenuPlacement(groupMenuOpen, groupMenuRef, groupPopoverRef, 300, eventInspector.openEventIds.length + inspectorTabs.length > 0 ? "left-of-anchor" : "auto");
+  const [dockHeight, setDockHeight] = useState(0);
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) return;
+    const observer = new ResizeObserver(entries => setDockHeight(entries[0]?.contentRect.height ?? 0));
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [eventInspector.open, inspectorTabs.length, eventInspector.openEventIds.length]);
   const [tabContextMenu, setTabContextMenu] = useState<
     | { kind: "event"; eventId: string; x: number; y: number }
     | { kind: "inspector"; tabId: string; x: number; y: number }
@@ -5314,8 +4627,8 @@ function EventAuthoringDock({
     (sequence) => sequence.id === activeSequenceId(project),
   );
   const validEventIds = useMemo(
-    () => currentSequence?.eventIds ?? [],
-    [currentSequence?.eventIds],
+    () => project.events.map(event=>event.id),
+    [project.events],
   );
   const selectedEventId = eventIdFromSelection(project, nodes, selection);
   const selectedEvent = selectedEventId
@@ -5328,47 +4641,61 @@ function EventAuthoringDock({
     (group) => group.id === selectedTabGroupId,
   );
   const hasInspectorTabs = openEvents.length + inspectorTabs.length > 0;
+  const inspectorSearchItems = useMemo(() => {
+    const events = project.events.flatMap(event => {
+      const parentName = event.parentEventId ? project.events.find(parent => parent.id === event.parentEventId)?.name : undefined;
+      return [
+        { key: `event:${event.id}`, kind: "event" as const, eventId: event.id, id: event.id, title: event.name || (locale === "es" ? "Evento sin nombre" : "Untitled event"), detail: locale === "es" ? "Evento" : "Event" },
+        ...(event.dialogues ?? []).map(dialogue => ({ key: `narrative:dialogue:${event.id}:${dialogue.id}`, kind: "narrative" as const, eventId: event.id, id: `dialogue:${event.id}:${dialogue.id}`, title: dialogue.title || (locale === "es" ? "Conversación sin título" : "Untitled conversation"), detail: [locale === "es" ? "Conversación" : "Conversation", parentName || event.name].filter(Boolean).join(" · ") })),
+        ...(event.decisions ?? []).map(decision => ({ key: `narrative:decision:${event.id}:${decision.id}`, kind: "narrative" as const, eventId: event.id, id: `decision:${event.id}:${decision.id}`, title: decision.name || (locale === "es" ? "Decisión sin nombre" : "Untitled decision"), detail: [locale === "es" ? "Decisión" : "Decision", parentName || event.name].filter(Boolean).join(" · ") })),
+      ];
+    });
+    const tabs = inspectorTabs.map(tab => ({ key: `inspector:${tab.id}`, kind: "inspector" as const, id: tab.id, title: inspectorTargetTitle(project, tab.selection, locale), detail: inspectorTargetKind(project, tab.selection, locale) }));
+    const query = inspectorSearchQuery.trim().toLocaleLowerCase();
+    if (!query) return [];
+    return [...events, ...tabs].filter(item => `${item.title} ${item.detail}`.toLocaleLowerCase().includes(query)).slice(0, 30);
+  }, [project, inspectorTabs, inspectorSearchQuery, locale]);
+  const stack = orderedInspectorStack([
+    ...inspectorTabs.map(tab => ({kind:"inspector" as const, id:tab.id})),
+    ...openEvents.map(event => ({kind:"event" as const, id:event.id})),
+  ], inspectorStackOrder);
+  useInspectorLayoutMotion(dockRef, fullscreen, JSON.stringify(stack.map(inspectorStackKey)));
+  const moveTab = (key: string, destination: number) => {
+    const order = stack.map(inspectorStackKey);
+    const from = order.indexOf(key);
+    if (from < 0 || destination < 0 || destination >= order.length || from === destination) return;
+    order.splice(from, 1); order.splice(destination, 0, key);
+    onInspectorStackOrderChange(order);
+  };
   const availableInspectorHeight = useCallback(() => {
-    if (inspectorMaximized) return Number.POSITIVE_INFINITY;
-    const dockHeight = dockRef.current?.getBoundingClientRect().height;
-    if (!dockHeight) return 440;
-    const cardCount = openEvents.length + inspectorTabs.length;
-    const minimizedCards = Math.max(0, cardCount - 1);
-    const cardGaps = Math.max(0, cardCount - 1) * 4;
-    const toolsHeight = inspectorTabs.length > 0 ? 36 : 0;
-    const toolsGap = inspectorTabs.length > 0 ? 6 : 0;
-    return Math.max(0, dockHeight - minimizedCards * 42 - cardGaps - toolsHeight - toolsGap);
-  }, [eventInspector.expandedEventId, inspectorMaximized, inspectorTabs.length, openEvents.length]);
+    const measuredHeight = dockHeight || dockRef.current?.getBoundingClientRect().height;
+    if (!measuredHeight) return 440;
+    if (fullscreen) return measuredHeight;
+    return inspectorStackCardHeight(measuredHeight, openEvents.length + inspectorTabs.length, 440, true);
+  }, [dockHeight, inspectorMaximized, inspectorTabs.length, openEvents.length, fullscreen]);
   const inspectorCardHeight = useCallback(
     (tabId: string) => {
-      const requested = inspectorHeights[tabId] ?? 440;
+      const requested = inspectorMaximized || fullscreen ? availableInspectorHeight() : inspectorSize.height ?? 440;
       const available = availableInspectorHeight();
       return Number.isFinite(available) ? Math.min(requested, available) : requested;
     },
-    [availableInspectorHeight, inspectorHeights],
+    [availableInspectorHeight, inspectorSize.height, inspectorMaximized, fullscreen],
   );
   const canExpandInspector = useCallback(
-    () => inspectorMaximized || availableInspectorHeight() >= 240,
-    [availableInspectorHeight, inspectorMaximized],
+    () => fullscreen || inspectorMaximized || availableInspectorHeight() >= 240,
+    [availableInspectorHeight, inspectorMaximized, fullscreen],
   );
   const resizeInspectorCard = useCallback((event: ReactPointerEvent<HTMLDivElement>, tabId: string) => {
-    if (inspectorMaximized) return;
     event.preventDefault();
     event.stopPropagation();
     const card = event.currentTarget.parentElement;
     const startY = event.clientY;
-    const startHeight = card?.getBoundingClientRect().height ?? inspectorHeights[tabId] ?? 440;
+    const startHeight = card?.getBoundingClientRect().height ?? 440;
     const maxHeight = availableInspectorHeight();
     const minHeight = Math.min(240, maxHeight);
     const onMove = (moveEvent: PointerEvent) => {
       const requestedHeight = startHeight + startY - moveEvent.clientY;
-      setInspectorHeights((current) => ({
-        ...current,
-        [tabId]: Math.min(
-          maxHeight,
-          Math.max(minHeight, Math.min(window.innerHeight - 70, requestedHeight)),
-        ),
-      }));
+      onInspectorResize({...inspectorSize,height:Math.min(maxHeight,Math.max(minHeight,requestedHeight))});
     };
     const onEnd = () => {
       window.removeEventListener("pointermove", onMove);
@@ -5376,12 +4703,14 @@ function EventAuthoringDock({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onEnd, { once: true });
-  }, [availableInspectorHeight, inspectorHeights, inspectorMaximized]);
+  }, [availableInspectorHeight, inspectorSize, onInspectorResize, inspectorMaximized]);
   const renderGroupMenu = useCallback(
     (variant: "stack" | "collapsed") => (
       <div
+        ref={groupMenuRef}
         className={`event-inspector-group-menu ${variant} ${groupMenuOpen ? "open" : ""}`}
         aria-label={ui("Inspector tab groups")}
+        onKeyDown={event => { if (groupMenuOpen && event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setGroupMenuOpen(false); groupMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); } }}
       >
         <button
           type="button"
@@ -5389,6 +4718,7 @@ function EventAuthoringDock({
           title={ui("Inspector tab groups")}
           aria-label={ui("Inspector tab groups")}
           aria-expanded={groupMenuOpen}
+          aria-haspopup="dialog"
           onClick={(event) => {
             event.stopPropagation();
             setGroupMenuOpen((open) => !open);
@@ -5396,9 +4726,9 @@ function EventAuthoringDock({
         >
           <FolderOpen size={15} />
         </button>
-        {groupMenuOpen ? <div className="event-inspector-group-popover">
+        {groupMenuOpen ? <div ref={groupPopoverRef} style={fullscreen ? {position:"absolute",visibility:"visible",left:0,right:"auto",top:"calc(100% + 8px)",bottom:"auto",maxHeight:"calc(100vh - 180px)",transform:"none"} : groupPopoverStyle} className="event-inspector-group-popover" role="dialog" aria-label={locale === "es" ? "Grupos de pestañas" : "Tab groups"} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setGroupMenuOpen(false); groupMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); } }}>
           <div className="event-inspector-group-popover-header">
-            <strong>Tab groups</strong>
+            <strong>{locale === "es" ? "Grupos de pestañas" : "Tab groups"}</strong>
             <span>{tabGroups.length}</span>
           </div>
           {variant === "stack" ? (
@@ -5407,17 +4737,17 @@ function EventAuthoringDock({
               disabled={!hasInspectorTabs}
               onClick={onSaveGroup}
             >
-              Save current group
+              {locale === "es" ? "Guardar grupo actual" : "Save current group"}
             </button>
           ) : null}
           <select
-            aria-label="Saved inspector tab groups"
+            aria-label={locale === "es" ? "Grupos de pestañas guardados" : "Saved inspector tab groups"}
             disabled={tabGroups.length === 0}
             value={selectedTabGroupId}
             onChange={(event) => setSelectedTabGroupId(event.target.value)}
           >
             {tabGroups.length === 0 ? (
-              <option value="">No saved groups</option>
+              <option value="">{locale === "es" ? "Sin grupos guardados" : "No saved groups"}</option>
             ) : null}
             {tabGroups.map((group) => (
               <option key={group.id} value={group.id}>
@@ -5433,7 +4763,7 @@ function EventAuthoringDock({
                 selectedTabGroup && onLoadGroup(selectedTabGroup.id)
               }
             >
-              Load
+              {locale === "es" ? "Cargar" : "Load"}
             </button>
             {variant === "stack" ? (
               <button
@@ -5443,7 +4773,7 @@ function EventAuthoringDock({
                   selectedTabGroup && onDeleteGroup(selectedTabGroup.id)
                 }
               >
-                Delete
+                {locale === "es" ? "Eliminar" : "Delete"}
               </button>
             ) : null}
           </div>
@@ -5456,6 +4786,8 @@ function EventAuthoringDock({
       onSaveGroup,
       hasInspectorTabs,
       groupMenuOpen,
+      groupPopoverStyle,
+      fullscreen,
       selectedTabGroup,
       selectedTabGroupId,
       tabGroups,
@@ -5494,6 +4826,19 @@ function EventAuthoringDock({
     },
     [canExpandInspector, expandedInspectorTabId, onOpenInspectorTab],
   );
+
+  const openInspectorSearchItem = useCallback((item: (typeof inspectorSearchItems)[number]) => {
+    if (item.kind === "event") {
+      toggleInspector(item.id);
+    } else if (item.kind === "narrative") {
+      onOpenEvent(item.eventId);
+      onSelect({ type: "node", id: item.id });
+    } else {
+      toggleInspectorTab(item.id);
+    }
+    setInspectorSearchOpen(false);
+    setInspectorSearchQuery("");
+  }, [inspectorSearchItems, onOpenEvent, onSelect, toggleInspector, toggleInspectorTab]);
 
   const closeInspector = useCallback(
     (eventId: string) => {
@@ -5547,7 +4892,7 @@ function EventAuthoringDock({
     [],
   );
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!tabContextMenu) return;
     function handlePointerDown(event: PointerEvent) {
       if (tabContextMenuRef.current?.contains(event.target as Node)) return;
@@ -5564,7 +4909,9 @@ function EventAuthoringDock({
     };
   }, [tabContextMenu]);
 
-  if (!eventInspector.open || openEvents.length === 0) {
+  useEffect(()=>{const frame=requestAnimationFrame(()=>dockRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({block:"nearest"}));return()=>cancelAnimationFrame(frame);},[eventInspector.expandedEventId,expandedInspectorTabId]);
+
+  if (openEvents.length + inspectorTabs.length === 0) {
     if (inspectorTabs.length > 0) {
       return (
         <aside
@@ -5579,7 +4926,7 @@ function EventAuthoringDock({
               <button
                 type="button"
                 className="inspector-maximize-button"
-                title={inspectorMaximized ? ui("Restore inspector") : ui("Expand inspector")}
+                title={inspectorMaximized ? locale === "es" ? "Restaurar ancho" : "Restore width" : locale === "es" ? "Ampliar ancho" : "Expand width"}
                 onClick={onToggleInspectorMaximized}
               >
                 {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -5606,12 +4953,12 @@ function EventAuthoringDock({
                       title={tab.id.startsWith("routeGate:") ? undefined : tab.title}
                       onClick={() => toggleInspectorTab(tab.id)}
                     >
-                      <strong><TabIcon className="event-header-icon" size={14} /><span className="event-header-copy"><span className="event-header-name">{tab.title}</span></span></strong>
+                      <MinimizedInspectorTabTitle title={inspectorTargetTitle(project,tab.selection,locale)} kind={inspectorTargetKind(project,tab.selection,locale)} Icon={TabIcon} />
                     </button>
                     <div className="event-editor-actions">
-                      <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
+                      {tab.mode !== "play" ? <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
                         <Crosshair size={14} />
-                      </button>
+                      </button> : null}
                       <button type="button" title={expanded ? ui("Minimize inspector") : ui("Expand inspector")} onClick={() => toggleInspectorTab(tab.id)}>
                         {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
                       </button>
@@ -5620,7 +4967,7 @@ function EventAuthoringDock({
                       ) : <button type="button" title={ui("Close inspector")} onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
                     </div>
                   </div>
-                  {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
+                  {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) && children.type !== Fragment ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
                 </section>
               );
             })}
@@ -5667,28 +5014,98 @@ function EventAuthoringDock({
 
   return (
     <aside
-      className={`event-authoring-dock ${inspectorMaximized ? "maximized" : ""}`}
+      className={`event-authoring-dock unified-authoring-dock ${inspectorMaximized ? "maximized" : ""} ${fullscreen ? "centered" : ""}`} style={{"--inspector-width":`${inspectorSize.width}px`} as CSSProperties}
       ref={dockRef}
-      aria-label="Event inspector stack"
+      aria-label="Inspector dock"
+      onKeyDown={event => {
+        if (event.key !== "Escape" || tabContextMenu) return;
+        if (groupMenuOpen) {
+          event.preventDefault(); event.stopPropagation();
+          setGroupMenuOpen(false);
+          groupMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+        } else if (event.target instanceof Element && !event.target.closest('[role="dialog"],[role="menu"]')) {
+          event.stopPropagation(); onFold();
+          requestAnimationFrame(() => dockRef.current?.querySelector<HTMLButtonElement>(".event-minimized-title, .event-stack-launcher")?.focus());
+        }
+      }}
     >
+      <InspectorIndexHost.Provider value={fullscreen ? indexHost : null}>
       <div className="event-inspector-stack">
         <div className="event-inspector-tab-cluster">
+          {fullscreen ? <div className="inspector-centered-index-slot" ref={setIndexHost} /> : null}
+          {fullscreen ? (
+            <div className="inspector-centered-sidebar">
+              <div className="inspector-centered-actions">
+                {renderGroupMenu("stack")}
+                <div className={`inspector-centered-search ${inspectorSearchOpen ? "open" : ""}`} ref={inspectorSearchRef}>
+                  <button
+                    type="button"
+                    className="inspector-centered-search-trigger"
+                    title={locale === "es" ? "Buscar inspectores" : "Search inspectors"}
+                    aria-label={locale === "es" ? "Buscar inspectores" : "Search inspectors"}
+                    aria-expanded={inspectorSearchOpen}
+                    aria-haspopup="dialog"
+                    onClick={() => {
+                      setInspectorSearchOpen(open => !open);
+                      if (!inspectorSearchOpen) requestAnimationFrame(() => inspectorSearchInputRef.current?.focus({ preventScroll: true }));
+                      else setInspectorSearchQuery("");
+                    }}
+                  ><Search size={15} aria-hidden="true" /></button>
+                  {inspectorSearchOpen ? <div className="inspector-centered-search-popover" role="dialog" aria-label={locale === "es" ? "Buscar inspectores" : "Search inspectors"}>
+                    <label className="inspector-centered-search-field">
+                      <Search size={15} aria-hidden="true" />
+                      <input ref={inspectorSearchInputRef} type="search" value={inspectorSearchQuery} onChange={event => setInspectorSearchQuery(event.target.value)} placeholder={locale === "es" ? "Buscar eventos, conversaciones…" : "Search events, conversations…"} aria-label={locale === "es" ? "Buscar eventos, conversaciones y decisiones" : "Search events, conversations and decisions"} />
+                      {inspectorSearchQuery ? <button type="button" aria-label={locale === "es" ? "Limpiar búsqueda" : "Clear search"} onClick={() => { setInspectorSearchQuery(""); inspectorSearchInputRef.current?.focus({ preventScroll: true }); }}><X size={14} aria-hidden="true" /></button> : null}
+                    </label>
+                    <div className="inspector-centered-search-results" role="listbox" aria-label={locale === "es" ? "Resultados" : "Results"}>
+                      {inspectorSearchQuery.trim() ? inspectorSearchItems.length ? inspectorSearchItems.map(item => <button type="button" role="option" aria-selected="false" key={item.key} onClick={() => openInspectorSearchItem(item)}><strong>{item.title}</strong><span>{item.detail}</span></button>) : <p role="status">{locale === "es" ? "No se encontraron inspectores." : "No inspectors found."}</p> : <p>{locale === "es" ? "Busca eventos, conversaciones o decisiones." : "Search events, conversations or decisions."}</p>}
+                    </div>
+                  </div> : null}
+                </div>
+              </div>
+              <nav className="inspector-centered-tabs" aria-label={locale === "es" ? "Inspectores abiertos" : "Open inspectors"}>
+                {stack.map((target, index) => {
+                  const key = inspectorStackKey(target);
+                  const tab = target.kind === "inspector" ? inspectorTabs.find(tab => tab.id === target.id) : undefined;
+                  const event = target.kind === "event" ? openEvents.find(event => event.id === target.id) : undefined;
+                  const TabIcon = tab ? inspectorTabIcon(tab) : GitBranch;
+                  const active = tab ? expandedInspectorTabId === tab.id : eventInspector.expandedEventId === event?.id;
+                  const title = tab ? inspectorTargetTitle(project, tab.selection, locale) : event?.name || (locale === "es" ? "Evento sin nombre" : "Untitled event");
+                  return <div className="inspector-centered-tab-row" key={key} data-tab-key={key} draggable
+                    onDragStart={drag => { drag.dataTransfer.setData("application/x-forge-inspector-tab", key); drag.dataTransfer.effectAllowed = "move"; }}
+                    onDragOver={drag => { if (drag.dataTransfer.types.includes("application/x-forge-inspector-tab")) { drag.preventDefault(); drag.dataTransfer.dropEffect = "move"; } }}
+                    onDrop={drag => { drag.preventDefault(); moveTab(drag.dataTransfer.getData("application/x-forge-inspector-tab"), index); }}>
+                    <button type="button" className="inspector-centered-tab-open-button" title={title} aria-label={title} aria-current={active ? "page" : undefined} onClick={() => { if (!active) tab ? toggleInspectorTab(tab.id) : event && toggleInspector(event.id); }}><TabIcon size={16} aria-hidden="true" /><span>{title}</span></button>
+                    <button type="button" className="inspector-centered-tab-close-button" title={locale === "es" ? `Cerrar ${title}` : `Close ${title}`} aria-label={locale === "es" ? `Cerrar ${title}` : `Close ${title}`} draggable={false} onClick={closeEvent => { closeEvent.stopPropagation(); if (tab?.mode === "debug") onDisableInspectorDebug(); else if (tab) onCloseInspectorTab(tab.id); else if (event) closeInspector(event.id); }}><X size={14} aria-hidden="true" /></button>
+                  </div>;
+                })}
+              </nav>
+            </div>
+          ) : null}
+          <div className="unified-inspector-width-resize" onPointerDown={event=>{event.preventDefault();const x=event.clientX,width=dockRef.current?.getBoundingClientRect().width??inspectorSize.width;const move=(next:PointerEvent)=>onInspectorResize({...inspectorSize,width:Math.min(1100,Math.max(360,width+x-next.clientX))});const end=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",end);};window.addEventListener("pointermove",move);window.addEventListener("pointerup",end,{once:true});}} />
           {hasInspectorTabs ? (
-            <div className="inspector-stack-tools">
-              {renderGroupMenu("stack")}
-              <button
+            <div className="inspector-stack-tools inspector-window-tools" role="toolbar" aria-label={locale === "es" ? "Vista del inspector" : "Inspector view"}>
+              {!fullscreen ? renderGroupMenu("stack") : null}
+              {!fullscreen ? <button
                 type="button"
                 className="inspector-maximize-button"
-                title={inspectorMaximized ? ui("Restore inspector") : ui("Expand inspector")}
+                title={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
+                aria-label={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
+                aria-pressed={inspectorMaximized}
+                disabled={fullscreen}
                 onClick={onToggleInspectorMaximized}
               >
                 {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
+              </button> : null}
+              <button type="button" className="inspector-maximize-button" aria-label={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} title={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} aria-pressed={fullscreen} onClick={() => onFullscreenChange(!fullscreen)}>{fullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}</button>
             </div>
           ) : null}
           <div className="event-inspector-cards" role="list">
-          {inspectorTabs.map((tab, index) => {
+          {stack.map((target, index) => {
+            if (target.kind === "inspector") {
+            const tab = inspectorTabs.find(tab => tab.id === target.id)!;
             const expanded = expandedInspectorTabId === tab.id;
+            if (fullscreen && !expanded) return null;
             const TabIcon = inspectorTabIcon(tab);
             return (
               <section
@@ -5697,34 +5114,40 @@ function EventAuthoringDock({
                 role="listitem"
                 data-inspector-kind={tab.selection.type}
                 data-active={expanded || undefined}
-                style={{ "--stack-index": index + openEvents.length + 1, "--inspector-card-height": `${inspectorCardHeight(tab.id)}px` } as CSSProperties}
+                data-tab-key={`inspector:${tab.id}`}
+                style={{ order: stack.findIndex(target => target.kind === "inspector" && target.id === tab.id), "--stack-index": index + openEvents.length + 1, "--inspector-card-height": `${inspectorCardHeight(tab.id)}px` } as CSSProperties}
               >
                 {expanded ? <div className="event-inspector-card-resize-border" onPointerDown={(event) => resizeInspectorCard(event, tab.id)} title="Drag top border to resize" /> : null}
                 <div className="event-editor-header">
-                  <button type="button" className={`event-minimized-title${tab.id.startsWith("routeGate:") ? " route-gate-titleless" : ""}`} title={tab.id.startsWith("routeGate:") ? undefined : tab.title} onClick={() => toggleInspectorTab(tab.id)}>
-                    <strong><TabIcon className="event-header-icon" size={14} /><span className="event-header-copy"><span className="event-header-name">{tab.title}</span></span></strong>
-                  </button>
-                  <div className="event-editor-actions">
-                    <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
-                      <Crosshair size={14} />
+                  <div className="event-header-title event-inspector-node-title">
+                    <button type="button" className={`event-minimized-title${tab.id.startsWith("routeGate:") ? " route-gate-titleless" : ""}`} title={tab.id.startsWith("routeGate:") ? undefined : tab.title} onClick={() => { if (!fullscreen) toggleInspectorTab(tab.id); }}>
+                      <MinimizedInspectorTabTitle title={inspectorTargetTitle(project,tab.selection,locale)} kind={inspectorTargetKind(project,tab.selection,locale)} Icon={TabIcon} />
                     </button>
+                    {expanded && tab.selection.type === "node" ? <NarrativeNameEditor project={project} nodeId={tab.selection.id} onMutation={onNameMutation}/> : null}
+                  </div>
+                  <div className="event-editor-actions">
+                    {tab.mode !== "play" ? <button type="button" className="inspector-locate-button" title={ui("Locate on canvas")} aria-label={ui("Locate on canvas")} onClick={() => onLocateInspectorTab(tab.selection)}>
+                      <Crosshair size={14} />
+                    </button> : null}
                     <button type="button" title={expanded ? ui("Minimize inspector") : ui("Expand inspector")} onClick={() => toggleInspectorTab(tab.id)}>{expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
                     {tab.mode === "debug" ? (
                       <button type="button" title="Disable Inspector Debug" onClick={onDisableInspectorDebug}><Power size={14} /></button>
                     ) : <button type="button" title={ui("Close inspector")} onClick={() => onCloseInspectorTab(tab.id)} onContextMenu={(e) => openInspectorTabCloseMenu(e, tab.id)}><X size={14} /></button>}
                   </div>
                 </div>
-                {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
+                {expanded ? <div className="event-inspector-body"><div className="event-inspector-body-scroll">{tab.mode === "debug" ? <DebugInspector project={project} nodes={nodes} selection={tab.selection} /> : isValidElement(children) && children.type !== Fragment ? cloneElement(children as ReactElement<{ selection?: Selection }>, { selection: tab.selection }) : children}</div></div> : null}
               </section>
             );
-          })}
-          {openEvents.map((event, index) => {
+            }
+            const event = openEvents.find(event => event.id === target.id)!;
             const isExpanded = eventInspector.expandedEventId === event.id;
+            if (fullscreen && !isExpanded) return null;
             const isDraftEvent = eventDraft?.eventId === event.id;
             const cardEvent =
               isExpanded && isDraftEvent
                 ? (eventDraft?.draftEvent ?? event)
                 : event;
+            const eventKind = inspectorTargetKind(project, { type: "node", id: cardEvent.id }, locale);
             return (
               <section
                 className={`event-editor-panel event-inspector-card ${isExpanded ? "expanded" : "minimized"}`}
@@ -5733,7 +5156,8 @@ function EventAuthoringDock({
                 role="listitem"
                 data-inspector-kind="event"
                 data-active={isExpanded || undefined}
-                style={{ "--stack-index": index + inspectorTabs.length + 1, "--inspector-card-height": `${inspectorCardHeight(`event:${event.id}`)}px` } as CSSProperties}
+                data-tab-key={`event:${event.id}`}
+                style={{ order: stack.findIndex(target => target.kind === "event" && target.id === event.id), "--stack-index": index + inspectorTabs.length + 1, "--inspector-card-height": `${inspectorCardHeight(`event:${event.id}`)}px` } as CSSProperties}
               >
                 {isExpanded ? <div className="event-inspector-card-resize-border" onPointerDown={(pointerEvent) => resizeInspectorCard(pointerEvent, `event:${event.id}`)} title="Drag top border to resize" /> : null}
                 <div className="event-editor-header">
@@ -5745,12 +5169,15 @@ function EventAuthoringDock({
                           size={15}
                           aria-hidden="true"
                         />
-                        <span className="event-header-copy">
-                          <span className="event-header-name">
-                            {cardEvent.name || "Untitled event"}
+                        <span className="event-header-copy event-header-inline">
+                          <span className="event-header-name" title={cardEvent.name}>
+                            {cardEvent.name || (locale === "es" ? "Evento sin nombre" : "Untitled event")}
                           </span>
+                          <span className="event-header-separator" aria-hidden="true">·</span>
+                          <span className="event-header-kind">{eventKind}</span>
                         </span>
                       </strong>
+                      <NarrativeNameEditor project={project} nodeId={cardEvent.id} onMutation={onNameMutation}/>
                     </div>
                   ) : (
                     <button
@@ -5811,9 +5238,11 @@ function EventAuthoringDock({
               </section>
             );
           })}
+          {fullscreen && !eventInspector.expandedEventId && !expandedInspectorTabId ? <div className="inspector-centered-empty">{locale === "es" ? "Elige un inspector a la izquierda." : "Choose an inspector on the left."}</div> : null}
         </div>
       </div>
       </div>
+      </InspectorIndexHost.Provider>
       {tabContextMenu ? (
         <div
           ref={tabContextMenuRef}
@@ -5962,6 +5391,14 @@ function Inspector({
   canvasLayerMode,
   onCanvasLayerModeChange,
   requestedLogicTab,
+  requestedSection,
+  onSectionChange,
+  onAuthoringMutation,
+  onSelectAuthoringNode,
+  onHighlightAuthoringNode,
+  highlightedAuthoringNodeId,
+  onOpenAuthoringSection,
+  onOpenReference,
   embedded = false,
   manualDirty = false,
   onSaveManual,
@@ -5977,6 +5414,7 @@ function Inspector({
   onUpdateDialogue,
   onUpdateDialogueBeat,
   onUpdateEventDialogueBeat,
+  onImportSceneImage,
   onUpdateScriptBlock,
   onUpdateLocalizedText,
   onDeleteDialogueBeat,
@@ -6026,6 +5464,14 @@ function Inspector({
   canvasLayerMode: CanvasLayerMode;
   onCanvasLayerModeChange: (mode: CanvasLayerMode) => void;
   requestedLogicTab?: { selectionKey: string; part: "conditions" | "consequences" };
+  requestedSection?: { selectionKey: string; section: string; focusId?: string; requestId?: number };
+  onSectionChange?: (selectionKey: string, section: string) => void;
+  onAuthoringMutation: (mutate: (current: BranchingProject) => BranchingProject) => void | Promise<void>;
+  onSelectAuthoringNode: (nodeId: string) => void;
+  onHighlightAuthoringNode?: (nodeId: string) => void;
+  highlightedAuthoringNodeId?: string;
+  onOpenAuthoringSection?: (nodeId: string, section: string) => void;
+  onOpenReference?: (selection: Selection) => void;
   embedded?: boolean;
   manualDirty?: boolean;
   onSaveManual?: () => void;
@@ -6054,6 +5500,7 @@ function Inspector({
     updates: Partial<DialogueBeat>,
   ) => void;
   onUpdateEventDialogueBeat: (eventId: string, beatId: string, updates: Partial<DialogueBeat>) => void;
+  onImportSceneImage?: (eventId: string, dialogueId: string | undefined, beatId: string) => void;
   onUpdateScriptBlock: (
     scriptId: string,
     blockId: string,
@@ -6120,51 +5567,80 @@ function Inspector({
   onDeleteSelection: (selection: Selection) => void;
   onOpenRule: (id: string) => void;
 }) {
-  const c = inspectorUiCopy(useInterfaceLocale());
-  const [transitionInspectorTab, setTransitionInspectorTab] = useState<
-    "route" | "conditions" | "consequences"
-  >("route");
+  const interfaceLocale = useInterfaceLocale();
+  const c = inspectorUiCopy(interfaceLocale);
   const [routeGateRouteId, setRouteGateRouteId] = useState<string>();
-  const [routeGateInspectorTab, setRouteGateInspectorTab] = useState<
-    "conditions" | "consequences"
-  >("conditions");
   const [objectInspectorTab, setObjectInspectorTab] = useState("overview");
+  const selectionKey = selection ? inspectorSelectionKey(selection) : "";
+  const changeInspectorSection = (requestedSection: string) => {
+    let section = requestedSection === "consequences" ? "conditions" : requestedSection;
+    const modules = selection?.type === "node" ? narrativeInspectorModules(project, selection.id) : undefined;
+    if (modules && !modules.some(module => module.id === section)) {
+      if (section === "choices") section = modules.find(module => module.id === "narrativeDecision")?.id ?? modules.find(module => module.id === "narrativeSequence")?.id ?? modules.find(module => module.id === "path")?.id ?? section;
+    }
+    setObjectInspectorTab(section);
+    if (modules) {
+      const preferences = resolveInspectorModulePreferences(modules, readInspectorModulePreferences(project.projectId, selectionKey));
+      saveInspectorModulePreferences(project.projectId, selectionKey, { visible: [...new Set([...preferences.visible, section])], active: section });
+    }
+    if (selectionKey) onSectionChange?.(selectionKey, section);
+  };
   const [inspectorLocale, setInspectorLocale] = useState(project.localizationCatalog?.primaryLocale ?? "und");
   const [metadataSectionCollapsed, setMetadataSectionCollapsed] = useState(true);
-  const selectedNode =
-    selection?.type === "node"
-      ? nodes.find((node) => node.id === selection.id)
-      : undefined;
-  const selectedEdge =
-    selection?.type === "edge"
-      ? edges.find((edgeItem) => edgeItem.id === selection.id)
-      : undefined;
+  const selectedNode = useMemo(() => {
+    if (selection?.type !== "node") return undefined;
+    const visible = nodes.find(node => node.id === selection.id);
+    if (visible) return visible;
+    if (selection.id.startsWith("route-gate:")) {
+      const owner = project.events.filter(event=>selection.id.startsWith(`route-gate:${event.id}:`)).sort((a,b)=>b.id.length-a.id.length)[0];
+      const sourceId = owner ? selection.id.slice(`route-gate:${owner.id}:`.length) : selection.id.slice("route-gate:".length);
+      const event = owner ?? project.events.find(event=>event.transitions?.some(route=>route.from===sourceId));
+      if (event?.transitions?.some(route=>route.from===sourceId)) return {id:selection.id,type:"story",position:{x:0,y:0},data:{kind:"routeGate",title:"Routes",storyObjectId:selection.id,badges:[],details:{eventId:event.id,routeSourceId:sourceId}}} as StoryCanvasNode;
+    }
+    for (const owner of project.events) {
+      const ref = narrativeNodeReferences(project, owner.id).find(item => item.id === selection.id);
+      if (!ref) continue;
+      const decision = owner.decisions?.find(item => item.id === (ref.kind === "decision" ? ref.elementId : ref.decisionId));
+      const kind = ref.kind === "speech" ? "speechBeat" : ref.kind === "direction" ? "directionBeat" : ref.kind;
+      return { id:ref.id,type:"story",position:{x:0,y:0},data:{kind,title:ref.label,storyObjectId:ref.elementId,badges:[],details:{eventId:owner.id,dialogueId:ref.dialogueId,decision,decisionId:ref.decisionId,outcome:decision?.outcomes.find(item=>item.id===ref.elementId),dialogue:owner.dialogues?.find(item=>item.id===ref.elementId),beat:ref.beat}} } as StoryCanvasNode;
+    }
+    return undefined;
+  }, [selection, nodes, project]);
+  const selectedEdge = useMemo(() => {
+    if (selection?.type !== "edge") return undefined;
+    const visibleEdge = edges.find((edgeItem) => edgeItem.id === selection.id);
+    if (visibleEdge) return visibleEdge;
+    if (!selection.id.startsWith("edge:transition:")) return undefined;
+    const transitionId = selection.id.slice("edge:transition:".length);
+    const transition = project.events.flatMap(event => event.transitions ?? [])
+      .find(item => item.id === transitionId);
+    if (!transition) return undefined;
+    return {
+      id: selection.id,
+      source: transition.from,
+      target: transition.to,
+      data: {
+        kind: "transition",
+        label: transition.label ?? "",
+        routeRole: transition.role,
+        conditions: transition.logic?.when ?? transition.conditions,
+        consequences: transition.logic?.then ?? transition.consequences,
+      },
+    } as StoryCanvasEdge;
+  }, [selection, edges, project]);
   const selectedRouteGateNode =
     selectedNode?.data.kind === "routeGate"
       ? selectedNode
       : selection?.type === "node"
         ? nodes.find((node) => node.id === selection.id && node.data.kind === "routeGate")
         : undefined;
-  const suppressRouteEdgeInspector = Boolean(
-    selectedEdge && (
-      selectedEdge.data?.kind === "transition" ||
-      selectedEdge.data?.kind === "boundary" ||
-      selectedEdge.id.startsWith("edge:entry:")
-    ),
-  );
   useEffect(() => {
-    if (canvasLayerMode !== "logic" || !requestedLogicTab || !selection) return;
-    const selectionKey = `${selection.type}:${selection.id}`;
+    if (!requestedLogicTab || !selection) return;
+    const selectionKey = inspectorSelectionKey(selection);
     if (selectionKey !== requestedLogicTab.selectionKey) return;
-    if (selection.type === "edge") setTransitionInspectorTab(requestedLogicTab.part);
-    if (selection.type === "node") setObjectInspectorTab(requestedLogicTab.part);
-  }, [canvasLayerMode, requestedLogicTab, selection]);
-
-  useEffect(() => {
-    if (canvasLayerMode === "logic") return;
-    setTransitionInspectorTab("route");
-    setObjectInspectorTab((current) => current === "conditions" || current === "consequences" ? "overview" : current);
-  }, [canvasLayerMode]);
+    const routeInspector = selection.type === "edge" || selectedNode?.data.kind === "routeGate";
+    setObjectInspectorTab(requestedLogicTab.part === "consequences" ? routeInspector ? "connections" : "conditions" : requestedLogicTab.part);
+  }, [requestedLogicTab, selection]);
   const selectedCanon =
     selection?.type === "canon"
       ? project.canonRefs.find((canonRef) => canonRef.id === selection.id)
@@ -6328,7 +5804,7 @@ function Inspector({
             : project.events.find((eventNode) =>
                 eventNode.transitions?.some((transition) => transition.from === sourceId),
               )?.id;
-          const routes = project.events
+          const routes = project.events.filter(event=>!eventId || event.id===eventId)
             .flatMap((eventNode) => eventNode.transitions ?? [])
             .filter((transition) => transition.from === sourceId)
             .sort((left, right) => {
@@ -6363,14 +5839,14 @@ function Inspector({
           "Nested output"
       : undefined;
   useEffect(() => {
-    setTransitionInspectorTab("route");
-  }, [selectedTransition?.id]);
-  useEffect(() => {
     if (!selectedRouteGateContext?.routes.length) {
       setRouteGateRouteId(undefined);
       return;
     }
-    const preferredRouteId = routeGateRouteId ?? selectedTransition?.id;
+    const requestedRouteId = requestedSection?.selectionKey === selectionKey && requestedSection.focusId
+      ? requestedSection.focusId
+      : undefined;
+    const preferredRouteId = requestedRouteId ?? routeGateRouteId ?? selectedTransition?.id;
     if (!selectedRouteGateContext.routes.some((route) => route.id === preferredRouteId)) {
       setRouteGateRouteId(selectedRouteGateContext.routes[0].id);
       return;
@@ -6378,15 +5854,44 @@ function Inspector({
     if (routeGateRouteId !== preferredRouteId) {
       setRouteGateRouteId(preferredRouteId);
     }
-  }, [routeGateRouteId, selectedRouteGateContext?.sourceId, selectedRouteGateRouteIds, selectedTransition?.id]);
+  }, [routeGateRouteId, requestedSection?.focusId, requestedSection?.requestId, requestedSection?.selectionKey, selectionKey, selectedRouteGateContext?.sourceId, selectedRouteGateRouteIds, selectedTransition?.id]);
   useEffect(() => {
     if (selection?.type === "edge" && selectedTransition && selectedRouteGateContext) {
       setRouteGateRouteId(selectedTransition.id);
     }
   }, [selection?.id, selection?.type, selectedRouteGateContext?.sourceId, selectedTransition?.id]);
   useEffect(() => {
-    setObjectInspectorTab("overview");
-  }, [selection?.type, selection?.id]);
+    const isBeat = selectedNode?.data.kind === "speechBeat" || selectedNode?.data.kind === "directionBeat";
+    const modules = selection?.type === "node" ? narrativeInspectorModules(project, selection.id) : undefined;
+    const saved = modules ? readInspectorModulePreferences(project.projectId, selectionKey)?.active : undefined;
+    const matchingRequest = requestedSection?.selectionKey === selectionKey ? requestedSection : undefined;
+    const requested = matchingRequest?.requestId ? matchingRequest.section : saved ?? matchingRequest?.section;
+    let part = requested === "write" ? "path" : requested === "logic" ? "conditions" : requested === "consequences" ? "conditions" : requested;
+    if (isBeat && (!part || part === "overview" || part === "path")) part = "content";
+    if (selectedNode?.data.kind === "dialogue" && (part === "path" || part === "content")) part = "narrativeSequence";
+    if (selectedNode?.data.kind === "decision" && (part === "path" || part === "content" || part === "choices")) part = "narrativeDecision";
+    if (selectedNode?.data.kind === "event" && part === "choices") part = "path";
+    if (selectedNode?.data.kind === "dialogue" && part === "choices") part = "narrativeSequence";
+    if (selectedNode?.data.kind === "outcome" && (part === "path" || part === "choices")) part = "content";
+    if (selection?.type === "entityInstance" && (!part || part === "overview")) part = "copies";
+    const kind = selectedNode?.data.kind ?? (event ? "event" : undefined);
+    const allowed = modules ? modules.map(module => module.id) : selection?.type === "edge" || kind === "routeGate" ? ["connections","conditions","interactions"]
+      : selection?.type === "narrativeAction" || selection?.type === "narrativeRule" ? ["overview","conditions","connections"]
+      : selection?.type === "entityInstance" ? ["copies","connections"]
+      : selection?.type === "canon" || selection?.type === "explorerEntity" ? ["overview","uses","copies","connections"]
+      : isBeat ? ["content","connections","conditions"]
+      : kind === "decision" ? ["narrativeDecision","connections","conditions"]
+      : kind === "outcome" ? ["overview","content","connections","conditions"]
+      : kind === "dialogue" ? ["overview","narrativeSequence","connections","conditions"]
+      : kind === "event" ? ["overview","path","connections","conditions"] : ["overview"];
+    if (part === "route") part = "connections";
+    if (!part || !allowed.includes(part)) part=allowed[0];
+    setObjectInspectorTab(part);
+    if (modules) {
+      const preferences = resolveInspectorModulePreferences(modules, readInspectorModulePreferences(project.projectId, selectionKey));
+      saveInspectorModulePreferences(project.projectId, selectionKey, { visible: [...new Set([...preferences.visible, part])], active: part });
+    }
+  }, [project.projectId, selectionKey, selectedNode?.data.kind, event?.id, requestedSection?.selectionKey, requestedSection?.section, requestedSection?.requestId]);
   const selectedDialogueBeatContext =
     (selectedNode?.data.kind === "speechBeat" || selectedNode?.data.kind === "directionBeat") &&
     typeof selectedNode.data.details?.eventId === "string"
@@ -6429,6 +5934,18 @@ function Inspector({
   const selectedBeatEvent = selectedDialogueBeatContext
     ? findEvent(project, selectedDialogueBeatContext.eventId)
     : undefined;
+  const selectedBeatImageAssets = selectedDialogueBeatContext
+    ? imageAssetsForLocation(
+        project,
+        selectedDialogueBeatContext.beat.locationRef ?? selectedBeatEvent?.locationRef,
+      )
+    : [];
+  const updateSelectedDialogueBeat = (updates: Partial<DialogueBeat>) => {
+    if (!selectedDialogueBeatContext) return;
+    const { eventId, dialogueId, beat } = selectedDialogueBeatContext;
+    if (dialogueId) onUpdateDialogueBeat(eventId, dialogueId, beat.id, updates);
+    else onUpdateEventDialogueBeat(eventId, beat.id, updates);
+  };
   const selectedBeatPresentEntityRefs = selectedBeatEvent?.presentEntityRefs ?? selectedBeatEvent?.canonRefs ?? [];
   const selectedDialogueEvent = selectedDialogueContext
     ? findEvent(project, selectedDialogueContext.eventId)
@@ -6466,8 +5983,8 @@ function Inspector({
       };
     if (selectedDialogueBeatContext)
       return {
-        label: selectedDialogueBeatContext.block.content || (selectedDialogueBeatContext.beat.kind === "speech" ? "Speech beat" : "Direction beat"),
-        kind: selectedDialogueBeatContext.beat.kind === "speech" ? "Speech Beat" : "Direction Beat",
+        label: selectedDialogueBeatContext.block.content || (selectedDialogueBeatContext.beat.kind === "speech" ? "Dialogue" : "Stage direction"),
+        kind: selectedDialogueBeatContext.beat.kind === "speech" ? "Dialogue" : "Stage direction",
         Icon: MessageSquare,
       };
     if (selectedDialogueContext?.dialogue)
@@ -6475,14 +5992,14 @@ function Inspector({
         label:
           selectedDialogueContext.dialogue.title ||
           selectedDialogueContext.dialogue.text.content ||
-          "Untitled dialogue",
-        kind: "Dialogue",
+          "Untitled conversation",
+        kind: "Conversation",
         Icon: MessageSquare,
       };
     if (selectedOutcomeContext?.outcome)
       return {
-        label: selectedOutcomeContext.outcome.name ?? "Untitled outcome",
-        kind: "Outcome",
+        label: selectedOutcomeContext.outcome.name ?? "Untitled option",
+        kind: "Option",
         Icon: Split,
       };
     if (selectedRouteGateContext)
@@ -6541,10 +6058,15 @@ function Inspector({
     return { label: "Inspector", kind: "Project", Icon: Database };
   })();
   const InspectorIdentityIcon = inspectorIdentity.Icon;
+  const narrativeIdentityKind = selection?.type === "node" ? inspectorTargetKind(project, selection, interfaceLocale) : undefined;
+  const interactionSelection = selection?.type === 'node' && /^(interaction|barrier):/.test(selection.id) ? inspectorDocumentIndex(project).node(selection.id) : undefined;
+  const authoringEventId = interactionSelection?.eventId ?? (['interaction','barrier'].includes(selectedNode?.data.kind ?? '') && typeof selectedNode?.data.details?.eventId === 'string' ? selectedNode.data.details.eventId : undefined) ?? event?.id ?? selectedDecisionContext?.eventId ?? selectedDialogueBeatContext?.eventId ?? selectedDialogueContext?.eventId ?? selectedOutcomeContext?.eventId;
+  const authoringDialogueId = selectedDialogueContext?.dialogue?.id ?? selectedDialogueBeatContext?.dialogueId ?? selectedDecisionContext?.decision?.dialogueId;
+
 
   return (
     <aside className={`canvas-inspector ${embedded ? "embedded" : ""}`}>
-      {!embedded && !selectedRouteGateContext && !suppressRouteEdgeInspector ? (
+      {!embedded && !selectedRouteGateContext ? (
         <div className="inspector-header inspector-object-header">
           <div className="inspector-object-identity">
             <span className="inspector-object-icon" aria-hidden="true">
@@ -6552,7 +6074,8 @@ function Inspector({
             </span>
             <div>
               <strong title={inspectorIdentity.label}>
-                {inspectorIdentity.label}
+                <span className="inspector-identity-name">{inspectorIdentity.label}</span>
+                {narrativeIdentityKind ? <><span className="inspector-identity-separator" aria-hidden="true"> · </span><span className="inspector-identity-kind">{narrativeIdentityKind}</span></> : null}
                 {manualDirty ? (
                   <span
                     className="inspector-dirty-star"
@@ -6563,7 +6086,7 @@ function Inspector({
                   </span>
                 ) : null}
               </strong>
-              <span>{inspectorIdentity.kind}</span>
+              {!narrativeIdentityKind ? <span>{({ Event: "Evento", Decision: "Decisión", Conversation: "Conversación", Dialogue: "Diálogo", "Stage direction": "Acotación", Option: "Opción" } as Record<string, string>)[interfaceLocale === "es" ? inspectorIdentity.kind : ""] ?? inspectorIdentity.kind}</span> : null}
             </div>
           </div>
           {onSaveManual ? (
@@ -6583,7 +6106,36 @@ function Inspector({
         </div>
       ) : null}
 
+      {embedded && onSaveManual ? <div className="inspector-manual-save">
+        <span role="status">{manualDirty ? (interfaceLocale === "es" ? "Cambios pendientes" : "Unsaved inspector changes") : (interfaceLocale === "es" ? "Guardado" : "Saved")}</span>
+        <button type="button" className="inspector-save-button" title={interfaceLocale === "es" ? "Guardar cambios del inspector (Ctrl+S)" : "Save inspector changes (Ctrl+S)"} onClick={onSaveManual} disabled={!manualDirty}>{interfaceLocale === "es" ? "Guardar" : "Save"}</button>
+      </div> : null}
+      <div className="inspector-fixed-navigation">
+        {interactionSelection ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: 'overview', label: 'Overview' }, { id: 'connections', label: 'Connections' }]} /> : null}
+        {selection?.type === "narrativeAction" || selection?.type === "narrativeRule" ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "conditions", label: "Conditions" }, { id: "connections", label: "Connections" }]} /> : null}
+        {selection?.type === "entityInstance" ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab === "overview" ? "copies" : objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "copies", label: interfaceLocale === "es" ? "Copia" : "Copy" }, { id: "connections", label: "Connections" }]} /> : null}
+        {selectedCanon || selectedExplorerEntity ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "uses", label: interfaceLocale === "es" ? "Usos en la historia" : "Uses in story" }, { id: "copies", label: interfaceLocale === "es" ? "Copias" : "Copies" }, { id: "connections", label: "Connections" }]} /> : null}
+        {event ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Event" }, { id: "path", label: "Conversation" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+        {selectedDecisionContext?.decision ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "narrativeDecision", label: "Narrative" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+        {selectedDialogueBeatContext ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "content", label: "Content" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+        {selectedDialogueContext?.dialogue ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "narrativeSequence", label: "Conversation" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+        {selectedOutcomeContext?.outcome ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "content", label: "Content" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+      </div>
       <div className="inspector-scroll">
+        {interactionSelection && selection?.type === 'node' && objectInspectorTab === 'connections' ? <RouteInspector project={project} eventId={interactionSelection.eventId} sourceId={selection.id} section={objectInspectorTab} onSectionChange={changeInspectorSection} onMutation={onAuthoringMutation} onOpen={(id, section) => onOpenAuthoringSection?.(id, section ?? 'overview')} /> : null}
+
+        {selection?.type === "narrativeAction" || selection?.type === "narrativeRule" ? <>
+          <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} />
+        </> : null}
+        {selection?.type === "entityInstance" ? <>
+
+          <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} />
+        </> : null}
+        {selectedCanon || selectedExplorerEntity ? <>
+
+          {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
+        </> : null}
+
         {sequence ? (
           <section className="inspector-section">
             <h2>Sequence</h2>
@@ -6740,248 +6292,72 @@ function Inspector({
 
         {event ? (
           <>
-            <InspectorContentTabs value={objectInspectorTab} onChange={setObjectInspectorTab} tabs={[{ id: "overview", label: "Overview" }, { id: "path", label: "Path" }, { id: "connections", label: "Connections" }, ...(canvasLayerMode === "logic" ? [{ id: "conditions", label: "Conditions" }, { id: "consequences", label: "Consequences" }] : []), { id: "choices", label: "Choices" }]} />
+
             {objectInspectorTab === "overview" ? <>
-            <section className="inspector-section">
-              <div className="event-inspector-overview-preview">
-                <EventInspectorTabPreview project={project} event={event} />
-              </div>
-              <h2>{c.overview}</h2>
-              <label className="field-label">
-                {c.description}
-                <textarea
-                  rows={3}
-                  value={event.description ?? ""}
-                  onChange={(inputEvent) =>
-                    onUpdateEvent(event.id, {
-                      description: inputEvent.target.value || undefined,
-                    })
-                  }
-                />
-              </label>
-              <label className="field-label">
-                {c.cover}
-                <select
+            <section className="inspector-section inspector-overview">
+              <div className="inspector-event-hero">
+                <div className="inspector-event-cover">
+
+                <InspectorSelect presentation="cover" label={c.cover} icon={<ImagePlus size={16} aria-hidden="true" />}
                   value={event.coverImage?.assetId ?? ""}
-                  onChange={(inputEvent) => {
-                    const assetId = inputEvent.target.value;
-                    onUpdateEvent(event.id, {
-                      coverImage: assetId
-                        ? {
-                            id: event.coverImage?.id ?? `event-cover:${crypto.randomUUID()}`,
-                            assetId,
-                          }
-                        : undefined,
-                    });
-                  }}
-                >
-                  <option value="">{c.noCover}</option>
-                  {(project.assets ?? [])
-                    .filter((asset) => asset.kind === "image")
-                    .map((asset) => (
-                      <option key={asset.id} value={asset.id}>
-                        {asset.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label className="field-label">
-                {c.category}
-                <select
-                  value={event.type}
-                  onChange={(inputEvent) =>
-                    onUpdateEvent(event.id, { type: inputEvent.target.value })
-                  }
-                >
-                  {eventCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.label}
-                      {category.terminal ? " (terminal)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </section>
-            </> : null}
-            {objectInspectorTab === "path" ? (
-              <section className="inspector-section">
-                <h2>Path</h2>
-                <EvpathEditor sourceOnly project={project} eventId={event.id} onApply={onApplyEvpath} />
-              </section>
-            ) : null}
-            {objectInspectorTab === "connections" ? <>
-            <section className="inspector-section">
-              <h2>Connections</h2>
-              <ReferencePicker
-                label="Branch"
-                options={eventBranches.map((branch) => ({
-                  id: branch.id,
-                  label: branch.title,
-                  detail: branch.description,
-                }))}
-                value={event.branchRef ? [event.branchRef] : []}
-                onChange={(ids) =>
-                  onUpdateEvent(event.id, { branchRef: ids[0] ?? null })
-                }
-              />
-              <ReferencePicker
-                label="Script"
-                options={project.scripts.map((script) => ({
-                  id: script.id,
-                  label: script.entrySection ?? script.sourcePath ?? script.id,
-                  detail: script.format,
-                }))}
-                value={event.script?.id ? [event.script.id] : []}
-                onChange={(ids) =>
-                  onUpdateEvent(event.id, {
-                    script: project.scripts.find((script) => script.id === ids[0]),
-                  })
-                }
-              />
-              <ReferencePicker
-                label="Connected events"
-                multiple
-                options={project.events
-                  .filter((candidate) => candidate.id !== event.id)
-                  .map((candidate) => ({ id: candidate.id, label: candidate.name }))}
-                value={outgoingTransitions.map((transition) => transition.to)}
-                onChange={(ids) => {
-                  const currentIds = new Set(outgoingTransitions.map((item) => item.to));
-                  const removed = outgoingTransitions.filter((item) => !ids.includes(item.to));
-                  if (
-                    removed.some(
-                      (item) =>
-                        item.conditions ||
-                        (item.consequences?.length ?? 0) > 0 ||
-                        item.label ||
-                        item.function,
-                    ) &&
-                    !window.confirm("Removing this event connection will also remove its configured transition. Continue?")
-                  ) {
-                    return;
-                  }
-                  const additions = ids
-                    .filter((id) => !currentIds.has(id))
-                    .map((to) => ({
-                      id: `transition:${event.id}:${to}`,
-                      from: event.id,
-                      to,
-                      source: "graph" as const,
-                    }));
-                  onUpdateEvent(event.id, {
-                    transitions: [
-                      ...outgoingTransitions.filter((item) => ids.includes(item.to)),
-                      ...additions,
-                    ],
-                  });
-                }}
-              />
-            </section>
-
-            <CanonRefsPicker
-              title="Canon context"
-              value={event.canonRefs}
-              canonRefs={project.canonRefs}
-              onChange={(canonRefs) => onUpdateEvent(event.id, { canonRefs })}
-            />
-            <CanonRefsPicker
-              title="Entities present in event"
-              value={event.presentEntityRefs ?? event.canonRefs}
-              canonRefs={project.canonRefs.filter(canonRef => canonRefIsEntityPresentable(project, propertiesConfig, canonRef))}
-              onChange={(presentEntityRefs) => onUpdateEvent(event.id, { presentEntityRefs })}
-            />
-            <CanonContextList
-              refs={event.canonRefs}
-              canonRefs={project.canonRefs}
-              onSelectCanon={onSelectCanon}
-              onSuggestEdit={(canonRefId) =>
-                onCreateCanonSuggestion(canonRefId, { eventId: event.id })
-              }
-            />
-            </> : null}
-            {objectInspectorTab === "conditions" ? (
-            <BasicConditionEditor
-              project={project}
-              value={event.availability}
-              contextEntityIds={event.presentEntityRefs ?? event.canonRefs}
-              canonRefs={canonRefIds}
-              dataObjects={dataObjects}
-              grantableOptions={grantableOptionsList}
-              onChange={(availability) =>
-                onUpdateEvent(event.id, { availability })
-              }
-            />
-            ) : null}
-            {objectInspectorTab === "consequences" ? (
-            <LogicMomentEditor project={project} draftId={event.id} hideWhen value={event.logic} onChange={logic=>onUpdateEvent(event.id,{logic})}/>
-
-            ) : null}
-            {objectInspectorTab === "choices" ? <>
-            <section className="inspector-section">
-              <h2>Decisions</h2>
-              <div className="stack-list">
-                {(event.decisions ?? []).map((decision) => (
-                  <div className="mini-card" key={decision.id}>
-                    <strong>{decision.name}</strong>
-                    <span>
-                      {decision.type} - {decision.outcomes.length} outcomes
-                    </span>
-                    <div className="inspector-actions">
-                      <button
-                        type="button"
-                        onClick={() => onCreateOutcome(event.id, decision.id)}
-                      >
-                        Add Outcome
-                      </button>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => onDeleteDecision(event.id, decision.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
+                  options={[
+                    { value: "", label: c.noCover, icon: <X size={16} aria-hidden="true" />, menuLabel: event.coverImage ? (interfaceLocale === "es" ? "Quitar portada" : "Remove cover") : c.noCover },
+                    ...(project.assets ?? []).filter(asset => asset.kind === "image").map(asset => ({ value: asset.id, label: asset.name, imageUrl: universeAssetUrl(project, asset.path) })),
+                  ]}
+                  onChange={assetId => onUpdateEvent(event.id, { coverImage: assetId
+                    ? { id: event.coverImage?.id ?? `event-cover:${crypto.randomUUID()}`, assetId }
+                    : undefined })} />
+                </div>
+                <div className="inspector-event-details">
+                  <div className="inspector-event-description">
+                    <h2 className="inspector-group-title">{c.description}</h2>
+                    <AuthoringTextField projectId={project.projectId} elementId={event.id} field="description" label={c.description}
+                      value={event.description ?? ""} multiline rows={4}
+                      placeholder={interfaceLocale === "es" ? "¿Qué ocurre en este evento?" : "What happens in this event?"}
+                      onCommit={description => onUpdateEvent(event.id, { description: description || undefined })} />
                   </div>
-                ))}
-                {(event.decisions ?? []).length === 0 ? (
-                  <span className="empty-line">No decisions yet.</span>
-                ) : null}
+                  <div className="inspector-event-metadata">
+                <InspectorSelect label={c.category} icon={<Tag size={16} aria-hidden="true" />} value={event.type}
+                  options={eventCategories.map(category => ({ value: category.id, label: category.label, detail: category.terminal ? (interfaceLocale === "es" ? "Evento terminal" : "Terminal event") : undefined }))}
+                  onChange={type => onUpdateEvent(event.id, { type })} />
+                <InspectorSelect label={interfaceLocale === "es" ? "Rama de la historia" : "Story branch"} icon={<GitBranch size={16} aria-hidden="true" />}
+                  value={event.branchRef ?? ""}
+                  options={[{ value: "", label: interfaceLocale === "es" ? "Sin rama" : "No branch" }, ...eventBranches.map(branch => ({ value: branch.id, label: branch.title }))]}
+                  onChange={branchRef => onUpdateEvent(event.id, { branchRef: branchRef || null })} />
+                  </div>
+                </div>
               </div>
-              <div className="inspector-actions">
-                <button
-                  type="button"
-                  onClick={() => onCreateDecision(event.id)}
-                >
-                  Add Decision
-                </button>
-              </div>
-            </section>
-            <LogicSection
-              availability={event.availability}
-              consequences={event.consequences}
-            />
-            <section className="inspector-section">
-              <div className="inspector-actions">
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() =>
-                    onDeleteSelection({ type: "node", id: event.id })
-                  }
-                >
-                  Delete
-                </button>
-              </div>
+              <EventInspectorStatistics event={event} />
             </section>
             </> : null}
+            {objectInspectorTab === "connections" ? <div className="inspector-connections">
+              <section className="inspector-connection-group" aria-label={interfaceLocale === "es" ? "Recorrido" : "Story flow"}>
+                <h2>{interfaceLocale === "es" ? "Recorrido" : "Story flow"}</h2>
+              <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} />
+              </section>
+              <section className="inspector-connection-group" aria-label={interfaceLocale === "es" ? "Vínculos con el mundo" : "World links"}>
+                <h2>{interfaceLocale === "es" ? "Vínculos con el mundo" : "World links"}</h2>
+                <InspectorWorldLinks grouped title={interfaceLocale === "es" ? "Elementos presentes" : "Present elements"}
+                  value={event.presentEntityRefs ?? event.canonRefs}
+                  canonRefs={project.canonRefs} propertiesConfig={propertiesConfig} onSelect={onSelectCanon}
+                  availableRefs={project.canonRefs.filter(canonRef => canonRefIsEntityPresentable(project, propertiesConfig, canonRef))}
+                  onChange={(presentEntityRefs) => onUpdateEvent(event.id, { presentEntityRefs: presentEntityRefs ?? [] })} />
+                <InspectorWorldLinks title={interfaceLocale === "es" ? "Referencias del mundo" : "World references"}
+                  value={event.canonRefs} canonRefs={project.canonRefs}
+                  propertiesConfig={propertiesConfig} onSelect={onSelectCanon}
+                  onChange={(canonRefs) => onUpdateEvent(event.id, { canonRefs })} />
+              </section>
+
+            </div> : null}
+
+            {["path", "narrativeDecision", "choices", "conditions"].includes(objectInspectorTab) ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
         {selectedDecisionContext?.decision ? (
           <>
-            <InspectorContentTabs value={objectInspectorTab} onChange={setObjectInspectorTab} tabs={[{ id: "overview", label: "Overview" }, { id: "choices", label: "Choices" }, ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : [])]} />
-            <section className="inspector-section">
-              <h2>Decision</h2>
+
+            {objectInspectorTab === "overview" ? <section className="inspector-section">
               {objectInspectorTab === "overview" ? <>
               <label className="field-label">
                 Type
@@ -7013,26 +6389,6 @@ function Inspector({
                     )
                   }
                 />
-              </label>
-              <label className="field-label">
-                Option presentation
-                <select
-                  value={selectedDecisionContext.decision!.optionStyle === "iconOnly" ? "iconOnly" : "visibleText"}
-                  onChange={(inputEvent) =>
-                    onUpdateDecision(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                      {
-                        optionStyle: inputEvent.target.value as
-                          | "visibleText"
-                          | "iconOnly",
-                      },
-                    )
-                  }
-                >
-                  <option value="visibleText">TEXT</option>
-                  <option value="iconOnly">ICON</option>
-                </select>
               </label>
               <label className="field-label">
                 When unavailable
@@ -7078,215 +6434,69 @@ function Inspector({
                   : "available"}
               </p>
               </> : null}
-              {objectInspectorTab === "choices" ? <>
-              <p className="inspector-connection-hint">
-                All options share this decision's input. Each option has its own output port (A, B, C…).
-              </p>
-              <div className="stack-list" aria-label="Decision option conditions">
-                {selectedDecisionContext.decision.outcomes.map((outcome, index) => (
-                  <div className="mini-card" key={outcome.id}>
-                    <strong>Option {String.fromCharCode(65 + index)}</strong>
-                    <label className="field-label compact-field">
-                      Visible text
-                      <input
-                        value={outcome.visibleText ?? outcome.name}
-                        onChange={(inputEvent) =>
-                          onUpdateOutcome(
-                            selectedDecisionContext.eventId,
-                            selectedDecisionContext.decision!.id,
-                            outcome.id,
-                            { visibleText: inputEvent.target.value },
-                          )
-                        }
-                      />
-                    </label>
-                    <span>
-                      {outcome.availability
-                        ? outcome.unavailableBehavior === "hidden"
-                          ? "Conditional · hidden when unavailable"
-                          : "Conditional · shown locked"
-                        : "Always available"}
-                    </span>
-                    {outcome.lockText?.content ? <small>Lock text: {outcome.lockText.content}</small> : null}
-                  </div>
-                ))}
-              </div>
-              <div className="inspector-actions">
-                <button
-                  type="button"
-                  onClick={() =>
-                    onCreateOutcome(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                    )
-                  }
-                >
-                  Add Outcome
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() =>
-                    onDeleteDecision(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                    )
-                  }
-                >
-                  Delete
-                </button>
-              </div>
-              </> : null}
-            </section>
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDecisionContext.decision.id} value={selectedDecisionContext.decision.logic} onChange={logic=>onUpdateDecision(selectedDecisionContext.eventId,selectedDecisionContext.decision!.id,{logic})}/> : null}
+            </section> : null}
+            {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
         {selectedDialogueBeatContext ? (
           <>
-            <InspectorContentTabs value={objectInspectorTab} onChange={setObjectInspectorTab} tabs={[{ id: "overview", label: "Content" }, ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : [])]} />
-            {objectInspectorTab === "overview" ? (
+
+            {objectInspectorTab === "content" ? (
             <section className="inspector-section">
-              <h2>{selectedDialogueBeatContext.beat.kind === "speech" ? "Speech Beat" : "Direction Beat"}</h2>
+              <ConversationEditor key={JSON.stringify([project.projectId, selectedDialogueBeatContext.eventId, selectedDialogueBeatContext.dialogueId, selectedDialogueBeatContext.beat.id])} focusedLine project={project} eventId={selectedDialogueBeatContext.eventId} dialogueId={selectedDialogueBeatContext.dialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} propertiesConfig={propertiesConfig} onMutation={onAuthoringMutation} onHighlight={onHighlightAuthoringNode ?? onSelectAuthoringNode} onOpenSection={onOpenAuthoringSection} />
               {selectedDialogueBeatContext.beat.kind === "speech" ? (
-                <>
-                  <CanonEntityRefPicker
-                    value={selectedDialogueBeatContext.block.characterRef ?? selectedDialogueBeatContext.block.speakerRef}
-                    canonRefs={project.canonRefs}
-                    presentEntityRefs={selectedBeatPresentEntityRefs}
-                    onChange={(characterRef) => {
-                      onUpdateScriptBlock(
-                        selectedDialogueBeatContext.beat.blockRef.scriptId,
-                        selectedDialogueBeatContext.beat.blockRef.blockId,
-                        { characterRef, characterVariantId: undefined },
-                      );
-                      if (characterRef && selectedBeatEvent && !selectedBeatPresentEntityRefs.includes(characterRef)) {
-                        onUpdateEvent(selectedBeatEvent.id, {
-                          presentEntityRefs: [...selectedBeatPresentEntityRefs, characterRef],
-                        });
-                      }
-                    }}
+                <label className="field-label dialogue-beat-director-note">
+                  {interfaceLocale === "es" ? "Nota de dirección" : "Direction note"}
+                  <DialogueBeatDirectionNote
+                    value={selectedDialogueBeatContext.beat.directorNote ?? ""}
+                    onCommit={(value) => updateSelectedDialogueBeat({ directorNote: value || undefined })}
                   />
-                  {(() => {
-                    const characterRef = selectedDialogueBeatContext.block.characterRef ?? selectedDialogueBeatContext.block.speakerRef;
-                    const canonRef = project.canonRefs.find((ref) => ref.id === characterRef);
-                    const variants = canonRef ? canonVariantsForRef(canonRef) : [];
-                    return canonRef && variants.length > 1 ? (
-                      <label className="field-label">
-                        Character variant
-                        <select
-                          value={resolveCanonVariantId(canonRef, selectedDialogueBeatContext.block.characterVariantId)}
-                          onChange={(event) =>
-                            onUpdateScriptBlock(
-                              selectedDialogueBeatContext.beat.blockRef.scriptId,
-                              selectedDialogueBeatContext.beat.blockRef.blockId,
-                              { characterVariantId: event.target.value === "base" ? undefined : event.target.value },
-                            )
-                          }
-                        >
-                          {variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}
-                        </select>
-                      </label>
-                    ) : null;
-                  })()}
-                  {(selectedDialogueBeatContext.block.characterRef ?? selectedDialogueBeatContext.block.speakerRef) &&
-                  !selectedBeatPresentEntityRefs.includes(selectedDialogueBeatContext.block.characterRef ?? selectedDialogueBeatContext.block.speakerRef ?? "") ? (
-                    <p className="warning-text">This speaker is not present in the event yet. Choose it from the search results to add it automatically.</p>
-                  ) : null}
-                </>
+                </label>
               ) : null}
-              <div className="dialogue-text-editor">
-                <div className="dialogue-text-header">
-                  <strong>{selectedDialogueBeatContext.beat.kind === "speech" ? "Dialogue text" : "Stage direction"}</strong>
-                  <div className="locale-selector-pills">
-                    {normalizeLocaleList(project.localizationCatalog?.primaryLocale ?? "und", project.localizationCatalog?.locales ?? []).map((locale) => (
-                      <button
-                        key={locale}
-                        type="button"
-                        className={`locale-pill ${inspectorLocale === locale ? "active" : ""}`}
-                        onClick={() => setInspectorLocale(locale)}
-                        title={localeDisplayName(locale, localeNames)}
+              {selectedDialogueBeatContext.beat.kind === "speech" ? (
+                <details className="metadata-section dialogue-beat-image-section" open={!metadataSectionCollapsed} onToggle={(event) => setMetadataSectionCollapsed(!(event.currentTarget as HTMLDetailsElement).open)}>
+                  <summary>
+                    {metadataSectionCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    {interfaceLocale === "es" ? "Imagen del diálogo" : "Dialogue image"}
+                    {selectedDialogueBeatContext.beat.sceneImage ? <span className="dialogue-beat-image-name">{project.assets?.find((asset) => asset.id === selectedDialogueBeatContext.beat.sceneImage?.assetId)?.name}</span> : null}
+                  </summary>
+                  <div className="metadata-content">
+                    <label className="field-label">
+                      {interfaceLocale === "es" ? "Imagen" : "Image"}
+                      <select
+                        value={selectedDialogueBeatContext.beat.sceneImage?.assetId ?? ""}
+                        onChange={(event) => {
+                          const assetId = event.target.value || undefined;
+                          updateSelectedDialogueBeat({
+                            sceneImage: assetId
+                              ? { id: selectedDialogueBeatContext.beat.sceneImage?.id ?? `scene-image:${crypto.randomUUID()}`, assetId }
+                              : undefined,
+                          });
+                        }}
                       >
-                        {locale === project.localizationCatalog?.primaryLocale ? "★ " : ""}{locale.split("-")[0].toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <textarea
-                  rows={7}
-                  value={blockValues(project, selectedDialogueBeatContext.beat.blockRef.scriptId, selectedDialogueBeatContext.block, project.localizationCatalog?.primaryLocale ?? "und")[inspectorLocale] ?? ""}
-                  onChange={(event) =>
-                    onUpdateLocalizedText(
-                      selectedDialogueBeatContext.block.textKey ?? scriptBlockTextKey(selectedDialogueBeatContext.beat.blockRef.scriptId, selectedDialogueBeatContext.beat.blockRef.blockId),
-                      inspectorLocale,
-                      event.target.value,
-                    )
-                  }
-                  placeholder={`Enter ${selectedDialogueBeatContext.beat.kind === "speech" ? "dialogue" : "stage direction"} text...`}
-                />
-              </div>
-              
-              <details className="metadata-section" open={!metadataSectionCollapsed} onToggle={(e) => setMetadataSectionCollapsed(!(e.target as HTMLDetailsElement).open)}>
-                <summary>
-                  {metadataSectionCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
-                  Metadata
-                </summary>
-                <div className="metadata-content">
-                  <label className="field-label">
-                    Director note
-                    <textarea
-                      rows={3}
-                      value={selectedDialogueBeatContext.beat.directorNote ?? ""}
-                      onChange={(event) =>
-                        selectedDialogueBeatContext.dialogueId
-                          ? onUpdateDialogueBeat(
-                              selectedDialogueBeatContext.eventId,
-                              selectedDialogueBeatContext.dialogueId,
-                              selectedDialogueBeatContext.beat.id,
-                              { directorNote: event.target.value || undefined }
-                            )
-                          : onUpdateEventDialogueBeat(
-                              selectedDialogueBeatContext.eventId,
-                              selectedDialogueBeatContext.beat.id,
-                              { directorNote: event.target.value || undefined }
-                            )
-                      }
-                      placeholder="Add a note for direction, mood, timing…"
-                    />
-                  </label>
-                  {selectedDialogueBeatContext.beat.sceneImage ? (
-                    <div className="field-label">
-                      <strong>Scene image</strong>
-                      <div className="scene-image-info">
-                        <span>{project.assets?.find((asset) => asset.id === selectedDialogueBeatContext.beat.sceneImage?.assetId)?.name ?? "Attached"}</span>
-                        <button
-                          type="button"
-                          className="danger-text"
-                          onClick={() =>
-                            selectedDialogueBeatContext.dialogueId
-                              ? onUpdateDialogueBeat(
-                                  selectedDialogueBeatContext.eventId,
-                                  selectedDialogueBeatContext.dialogueId,
-                                  selectedDialogueBeatContext.beat.id,
-                                  { sceneImage: undefined }
-                                )
-                              : onUpdateEventDialogueBeat(
-                                  selectedDialogueBeatContext.eventId,
-                                  selectedDialogueBeatContext.beat.id,
-                                  { sceneImage: undefined }
-                                )
-                          }
-                        >
-                          Remove
+                        <option value="">{interfaceLocale === "es" ? "Sin imagen" : "No image"}</option>
+                        {selectedBeatImageAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+                      </select>
+                    </label>
+                    <div className="dialogue-beat-image-actions">
+                      {onImportSceneImage ? (
+                        <button type="button" onClick={() => onImportSceneImage(selectedDialogueBeatContext.eventId, selectedDialogueBeatContext.dialogueId, selectedDialogueBeatContext.beat.id)}>
+                          {interfaceLocale === "es" ? "Importar imagen…" : "Import image…"}
                         </button>
-                      </div>
+                      ) : null}
+                      {selectedDialogueBeatContext.beat.sceneImage ? (
+                        <button type="button" className="danger-text" onClick={() => updateSelectedDialogueBeat({ sceneImage: undefined })}>
+                          {interfaceLocale === "es" ? "Quitar imagen" : "Remove image"}
+                        </button>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              </details>
+                  </div>
+                </details>
+              ) : null}
 
               <label className="field-label">
-                Location override
+                {interfaceLocale === "es" ? "Lugar" : "Location"}
                 <select
                   value={selectedDialogueBeatContext.beat.locationRef ?? ""}
                   onChange={(input) => {
@@ -7298,7 +6508,7 @@ function Inspector({
                     }
                   }}
                 >
-                  <option value="">Use event location</option>
+                  <option value="">{interfaceLocale === "es" ? "Usar lugar del evento" : "Use event location"}</option>
                   {locationOptionsList.map((option) => (
                     <option key={`${option.source}:${option.id}`} value={option.id}>
                       {option.label} · {option.typeId}
@@ -7307,25 +6517,9 @@ function Inspector({
                 </select>
               </label>
 
-              <button
-                type="button"
-                className="danger"
-                onClick={() => selectedDialogueBeatContext.dialogueId
-                  ? onDeleteDialogueBeat(
-                    selectedDialogueBeatContext.eventId,
-                    selectedDialogueBeatContext.dialogueId,
-                    selectedDialogueBeatContext.beat.id,
-                  )
-                  : onDeleteEventDialogueBeat(
-                    selectedDialogueBeatContext.eventId,
-                    selectedDialogueBeatContext.beat.id,
-                  )}
-              >
-                Delete beat
-              </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDialogueBeatContext.beat.id} value={selectedDialogueBeatContext.beat.logic} onChange={logic=>selectedDialogueBeatContext.dialogueId?onUpdateDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.dialogueId,selectedDialogueBeatContext.beat.id,{logic}):onUpdateEventDialogueBeat(selectedDialogueBeatContext.eventId,selectedDialogueBeatContext.beat.id,{logic})}/> : null}
+            {objectInspectorTab !== "content" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
@@ -7381,15 +6575,7 @@ function Inspector({
 
         {selectedDialogueContext?.dialogue ? (
           <>
-            <InspectorContentTabs
-              value={objectInspectorTab}
-              onChange={setObjectInspectorTab}
-              tabs={[
-                { id: "overview", label: "Overview" },
-                { id: "narrativeSequence", label: "Narrative Sequence" },
-                ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : []),
-              ]}
-            />
+
             {objectInspectorTab === "overview" ? (
             <section className="inspector-section">
               <h2>Dialogue</h2>
@@ -7408,53 +6594,13 @@ function Inspector({
                   }
                 />
               </label>
-              <label className="field-label">
-                Description
-                <textarea
-                  value={selectedDialogueContext.dialogue.text.content}
-                  rows={5}
-                  onChange={(inputEvent) =>
-                    onUpdateDialogue(
-                      selectedDialogueContext.eventId,
-                      selectedDialogueContext.dialogue!.id,
-                      {
-                        text: {
-                          ...selectedDialogueContext.dialogue!.text,
-                          content: inputEvent.target.value,
-                        },
-                      },
-                    )
-                  }
-                />
-              </label>
               <p className="inspector-connection-hint">
                 Double-click this node to open the full dialogue canvas.
               </p>
             </section>
             ) : null}
-            {objectInspectorTab === "narrativeSequence" ? (
-              <section className="inspector-section">
-                <h2>Narrative Sequence</h2>
-                {selectedDialogueEvent ? (
-                  <>
-                    <p className="inspector-connection-hint">
-                      {selectedDialogueSequence
-                        ? `${selectedDialogueSequence.name} · ${selectedDialogueEvent.name}`
-                        : selectedDialogueEvent.name}
-                      {" · EVPATH"}
-                    </p>
-                    <EvpathEditor sourceOnly
-                      project={project}
-                      eventId={selectedDialogueEvent.id}
-                      onApply={onApplyEvpath}
-                    />
-                  </>
-                ) : (
-                  <span className="empty-line">No containing narrative sequence found.</span>
-                )}
-              </section>
-            ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedDialogueContext.dialogue.id} value={selectedDialogueContext.dialogue.logic} onChange={logic=>onUpdateDialogue(selectedDialogueContext.eventId,selectedDialogueContext.dialogue!.id,{logic})}/> : null}
+
+            {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
@@ -7486,26 +6632,10 @@ function Inspector({
 
         {selectedOutcomeContext?.outcome ? (
           <>
-            <InspectorContentTabs value={objectInspectorTab} onChange={setObjectInspectorTab} tabs={[{ id: "overview", label: "Overview" }, ...(canvasLayerMode === "logic" ? [{ id: "logic", label: "Logic" }] : [])]} />
+
             {objectInspectorTab === "overview" ? (
             <section className="inspector-section">
               <h2>Outcome</h2>
-              <label className="field-label">
-                Visible text
-                <input
-                  value={selectedOutcomeContext.outcome!.visibleText ?? selectedOutcomeContext.outcome!.name}
-                  onChange={(inputEvent) =>
-                    onUpdateOutcome(
-                      selectedOutcomeContext.eventId,
-                      selectedOutcomeContext.decisionId,
-                      selectedOutcomeContext.outcome!.id,
-                      {
-                        visibleText: inputEvent.target.value,
-                      },
-                    )
-                  }
-                />
-              </label>
               <label className="field-label">
                 Description
                 <textarea
@@ -7538,51 +6668,6 @@ function Inspector({
                   }
                 />
               </label>
-              <label className="field-label">
-                When unavailable
-                <select
-                  value={selectedOutcomeContext.outcome.unavailableBehavior ?? "locked"}
-                  onChange={(inputEvent) =>
-                    onUpdateOutcome(
-                      selectedOutcomeContext.eventId,
-                      selectedOutcomeContext.decisionId,
-                      selectedOutcomeContext.outcome!.id,
-                      { unavailableBehavior: inputEvent.target.value as "locked" | "hidden" },
-                    )
-                  }
-                >
-                  <option value="locked">Show locked</option>
-                  <option value="hidden">Hide choice</option>
-                </select>
-              </label>
-              {selectedOutcomeContext.outcome.unavailableBehavior !== "hidden" ? (
-                <label className="field-label">
-                  Public lock text
-                  <input
-                    value={selectedOutcomeContext.outcome!.lockText?.content ?? ""}
-                    placeholder="Optional — avoids revealing the real requirement"
-                    onChange={(inputEvent) =>
-                      onUpdateOutcome(
-                        selectedOutcomeContext.eventId,
-                        selectedOutcomeContext.decisionId,
-                        selectedOutcomeContext.outcome!.id,
-                        {
-                          lockText: inputEvent.target.value
-                            ? { format: "plain", content: inputEvent.target.value }
-                            : undefined,
-                        },
-                      )
-                    }
-                  />
-                </label>
-              ) : null}
-              <p className="inspector-connection-hint">
-                Preview: {selectedOutcomeContext.outcome.availability
-                  ? selectedOutcomeContext.outcome.unavailableBehavior === "hidden"
-                    ? "conditionally hidden"
-                    : "conditionally locked"
-                  : "available"}
-              </p>
               <CanonRefsPicker
                 title="Required Canon Refs"
                 value={selectedOutcomeContext.outcome!.requiredCanonRefs}
@@ -7613,16 +6698,26 @@ function Inspector({
               </button>
             </section>
             ) : null}
-            {objectInspectorTab === "logic" ? <LogicMomentEditor project={project} draftId={selectedOutcomeContext.outcome.id} value={selectedOutcomeContext.outcome.logic} onChange={logic=>onUpdateOutcome(selectedOutcomeContext.eventId,selectedOutcomeContext.decisionId,selectedOutcomeContext.outcome!.id,{logic})}/> : null}
+
+            {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
+        {authoringEventId && selection?.type === "node" && (objectInspectorTab === "interactions" || interactionSelection && objectInspectorTab === "overview") ? <div className="unified-authoring-inspector inspector-uniform-content inspector-interactions" data-inspector-section="interactions">
+          <InspectorPanel title={interfaceLocale === "es" ? "Interacción" : "Interaction"}>
+            <InteractionsEditor key={JSON.stringify([project.projectId, authoringEventId, selection.id])} project={project} eventId={authoringEventId} ownerNodeId={selection.id} dialogueId={interactionSelection?.dialogueId ?? authoringDialogueId} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} />
+          </InspectorPanel>
+        </div> : null}
+
         {selectedNode &&
+        !interactionSelection &&
         !sequence &&
         !branch &&
         !event &&
         !selectedDecisionContext?.decision &&
         !selectedDialogueContext?.dialogue &&
+        !selectedDialogueBeatContext &&
+        !selectedDialogueStartContext &&
         !selectedOutcomeContext?.outcome &&
         !selectedRouteGateContext &&
         !selectedMissingRefContext ? (
@@ -7644,282 +6739,11 @@ function Inspector({
           </section>
         ) : null}
 
-        {selectedRouteGateContext && canvasLayerMode === "logic" ? (
-          <section className="inspector-section route-gate-inspector">
-            {!embedded ? <div className="route-gate-inspector-actions">
-              <button type="button" title="Close inspector" aria-label="Close inspector" onClick={onClose}>×</button>
-            </div> : null}
-            {!selectedRouteGateContext.routes.length ? (
-              <div className="route-condition-card fallback">
-                <p className="inspector-connection-hint">
-                  This Conditions node has no routes yet. Pick a destination to create the first one, or draw a new edge from it on the canvas.
-                </p>
-                {selectedRouteGateContext.eventId ? (
-                  <label className="field-label">
-                    Add destination
-                    <select
-                      value=""
-                      onChange={(event) => {
-                        const targetId = event.target.value;
-                        const eventId = selectedRouteGateContext.eventId;
-                        if (targetId && eventId) {
-                          onCreateScriptTransition?.(eventId, selectedRouteGateContext.sourceId, targetId);
-                        }
-                      }}
-                    >
-                      <option value="">Select a destination…</option>
-                      {nodes
-                        .filter(
-                          (node) =>
-                            node.id !== selectedRouteGateContext.sourceId &&
-                            node.data.kind !== "routeGate",
-                        )
-                        .map((node) => (
-                          <option key={node.id} value={node.id}>
-                            {node.data.title}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                ) : null}
-              </div>
-            ) : null}
-            {selectedRouteGateContext.routes.length ? <>
-              <nav className="route-gate-route-tabs" aria-label="Logic Gate routes">
-                {selectedRouteGateContext.routes.map((route, index) => {
-                  const isFallback = route.mode === "fallback";
-                  return <button
-                    key={route.id}
-                    type="button"
-                    className={selectedRouteGateRoute?.id === route.id ? "active" : ""}
-                    onClick={() => setRouteGateRouteId(route.id)}
-                  >
-                    {isFallback ? "ELSE" : `IF ${index + 1}`}
-                  </button>;
-                })}
-              </nav>
-              {selectedRouteGateRoute ? (() => {
-                const route = selectedRouteGateRoute;
-                const index = selectedRouteGateContext.routes.findIndex((item) => item.id === route.id);
-                const isFallback = route.mode === "fallback";
-                return <div className={`route-gate-route-editor${isFallback ? " fallback" : ""}`}>
-                  <div className="route-condition-header route-gate-route-settings">
-                    <div className="route-condition-header-fields">
-                      <label className="field-label">
-                        Mode
-                        <select
-                          value={route.mode ?? "conditional"}
-                          onChange={(event) => onUpdateTransition(route.id, {
-                            mode: event.target.value as "conditional" | "fallback",
-                          })}
-                        >
-                          <option value="conditional">If / else-if</option>
-                          <option value="fallback">Else fallback</option>
-                        </select>
-                      </label>
-                      <label className="field-label">
-                        Destination
-                        <select value={route.to} onChange={(event) => onUpdateTransition(route.id, { to: event.target.value })}>
-                          {nodes
-                            .filter((node) => node.id !== selectedRouteGateContext.sourceId && node.data.kind !== "routeGate")
-                            .map((node) => <option key={node.id} value={node.id}>{node.data.title}</option>)}
-                        </select>
-                      </label>
-                      {!isFallback ? <label className="field-label">
-                        Order
-                        <input
-                          type="number"
-                          min={1}
-                          value={(route.order ?? index) + 1}
-                          onChange={(event) => onUpdateTransition(route.id, {
-                            order: Math.max(0, Number(event.target.value) - 1),
-                          })}
-                        />
-                      </label> : null}
-                    </div>
-                    <button
-                      type="button"
-                      className="icon-only danger"
-                      title="Delete route"
-                      aria-label="Delete route"
-                      onClick={() => onDeleteTransition(route.id)}
-                    ><Trash2 size={14} /></button>
-                  </div>
-                  <InspectorContentTabs
-                    value={routeGateInspectorTab}
-                    onChange={(tab) => setRouteGateInspectorTab(tab as "conditions" | "consequences")}
-                    tabs={[
-                      { id: "conditions", label: "Conditions" },
-                      { id: "consequences", label: "Consequences" },
-                    ]}
-                  />
-                  {routeGateInspectorTab === "conditions" ? (
-                    !isFallback ? <BasicConditionEditor
-                      project={project}
-                      label="WHEN"
-                      value={route.conditions}
-                      canonRefs={canonRefIds}
-                      dataObjects={dataObjects}
-                      grantableOptions={grantableOptionsList}
-                      compact
-                      onChange={(conditions) => onUpdateTransition(route.id, { conditions })}
-                    /> : <p className="route-gate-fallback-copy">Runs when no preceding IF route matches.</p>
-                  ) : <LogicMomentEditor project={project} draftId={route.id} hideWhen value={route.logic} onChange={logic=>onUpdateTransition(route.id,{logic,conditions:logic.when,consequences:logic.then})}/>}
-                </div>;
-              })() : null}
-            </> : null}
-          </section>
-        ) : null}
+        {selectedRouteGateContext?.eventId || selectedTransitionOwner ? <RouteInspector project={project} eventId={selectedTransitionOwner?.id ?? selectedRouteGateContext!.eventId!} sourceId={selectedRouteGateContext?.sourceId ?? selectedTransition?.from} routeId={selectedRouteGateRoute?.id ?? selectedTransition?.id} section={objectInspectorTab} onSectionChange={changeInspectorSection} onMutation={onAuthoringMutation} onOpen={(id,section)=>onOpenAuthoringSection?.(id,section ?? "overview")} /> : null}
+        {selectedEdge && !selectedTransition && !selectedRouteGateContext ? <section className="inspector-section"><h2>{interfaceLocale === "es" ? "Conexión" : "Connection"}</h2><p>{nodes.find(node=>node.id===selectedEdge.source)?.data.title ?? selectedEdge.source} → {nodes.find(node=>node.id===selectedEdge.target)?.data.title ?? selectedEdge.target}</p><LogicSection availability={selectedEdge.data?.conditions} consequences={selectedEdge.data?.consequences} /></section> : null}
+        {(selection?.type === "node" && !selectedNode && !sequence && !branch && !event) || (selection?.type === "edge" && !selectedEdge) || (selection?.type === "canon" && !selectedCanon) || (selection?.type === "explorerEntity" && !selectedExplorerEntity) || (selection?.type === "explorerType" && !selectedExplorerType) || (selection?.type === "explorerProperty" && !selectedExplorerProperty) ? <section className="inspector-section" role="status"><h2>{interfaceLocale === "es" ? "Referencia desaparecida" : "Missing reference"}</h2><p>{selection.id}</p></section> : null}
 
-        {selectedEdge && !selectedRouteGateContext && !suppressRouteEdgeInspector ? (
-          <>
-            {selectedTransition && canvasLayerMode === "logic" ? (
-              <nav className="inspector-subtabs" aria-label="Transition inspector sections">
-                <button type="button" className={transitionInspectorTab === "route" ? "active" : ""} onClick={() => setTransitionInspectorTab("route")}>Route</button>
-                <button type="button" className={transitionInspectorTab === "conditions" ? "active" : ""} onClick={() => setTransitionInspectorTab("conditions")}>Conditions</button>
-                <button type="button" className={transitionInspectorTab === "consequences" ? "active" : ""} onClick={() => setTransitionInspectorTab("consequences")}>Consequences</button>
-              </nav>
-            ) : null}
-            {!selectedTransition || transitionInspectorTab === "route" ? (
-            <section className="inspector-section">
-              <h2>
-                {selectedTransition && isParentCanvas
-                  ? "Connection"
-                  : selectedEdge.data?.label ?? selectedEdge.label ?? "Edge"}
-              </h2>
-              <label className="field-label">
-                Label
-                <input
-                  value={String(
-                    selectedEdge.data?.customLabel ??
-                      (selectedTransition ? selectedTransition.label : selectedEdge.data?.label ?? selectedEdge.label) ??
-                      "",
-                  )}
-                  onChange={(event) =>
-                    onUpdateEdgeLabel(selectedEdge.id, event.target.value)
-                  }
-                />
-              </label>
-              <dl>
-                <div>
-                  <dt>Kind</dt>
-                  <dd>{selectedEdge.data?.kind ?? "edge"}</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>{selectedTransitionOwner?.name ?? selectedEdge.source}</dd>
-                </div>
-                <div>
-                  <dt>Target</dt>
-                  <dd>{selectedTransitionTarget?.name ?? selectedEdge.target}</dd>
-                </div>
-                {selectedTransition && isParentCanvas ? (
-                  <div>
-                    <dt>Output</dt>
-                    <dd>{selectedTransitionOutput ?? "Event output"}</dd>
-                  </div>
-                ) : null}
-              </dl>
-              {selectedTransition ? (
-                <>
-                  <div className="logic-grid">
-                    <label className="field-label">
-                      Resolution
-                      <select
-                        value={selectedTransition.mode ?? "conditional"}
-                        onChange={(event) =>
-                          onUpdateTransition(selectedTransition.id, {
-                            mode: event.target.value as "conditional" | "fallback",
-                          })
-                        }
-                      >
-                        <option value="conditional">If / else-if</option>
-                        <option value="fallback">Else fallback</option>
-                      </select>
-                    </label>
-                    <label className="field-label">
-                      Evaluation order
-                      <input
-                        type="number"
-                        min={1}
-                        value={(selectedTransition.order ?? 0) + 1}
-                        disabled={selectedTransition.mode === "fallback"}
-                        onChange={(event) =>
-                          onUpdateTransition(selectedTransition.id, {
-                            order: Math.max(0, Number(event.target.value) - 1),
-                          })
-                        }
-                      />
-                    </label>
-                  </div>
-                  <label className="field-label">
-                    Target Event
-                    <select
-                      value={selectedTransition.to}
-                      onChange={(event) =>
-                        onUpdateTransition(selectedTransition.id, {
-                          to: event.target.value,
-                        })
-                      }
-                    >
-                      {project.events.map((eventNode) => (
-                        <option key={eventNode.id} value={eventNode.id}>
-                          {eventNode.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
-              ) : null}
-              {selectedTransition ? (
-                <div className="inspector-actions">
-                  <button
-                    type="button"
-                    className="danger"
-                    onClick={() => onDeleteTransition(selectedTransition.id)}
-                  >
-                    Delete Connection
-                  </button>
-                </div>
-              ) : null}
-            </section>
-            ) : null}
-            {selectedTransition && transitionInspectorTab === "conditions" ? (
-              <>
-                {selectedTransition.mode !== "fallback" ? (
-                  <TransitionConditionEditor
-                    project={project}
-                    value={selectedTransition.conditions}
-                    canonRefs={canonRefIds}
-                    dataObjects={dataObjects}
-                    grantableOptions={grantableOptionsList}
-                    onChange={(conditions) =>
-                      onUpdateTransition(selectedTransition.id, { conditions })
-                    }
-                  />
-                ) : (
-                  <section className="inspector-section">
-                    <h2>Fallback</h2>
-                    <p className="inspector-connection-hint">
-                      This route is evaluated last when no conditional transition matches.
-                    </p>
-                  </section>
-                )}
-              </>
-            ) : null}
-            {selectedTransition && transitionInspectorTab === "consequences" ? (
-              <LogicMomentEditor project={project} draftId={selectedTransition.id} hideWhen value={selectedTransition.logic} onChange={logic=>onUpdateTransition(selectedTransition.id,{logic,conditions:logic.when,consequences:logic.then})}/>
-            ) : null}
-            {!selectedTransition ? (
-              <LogicSection
-                availability={selectedEdge.data?.conditions}
-                consequences={selectedEdge.data?.consequences}
-              />
-            ) : null}
-          </>
-        ) : null}
-
-        {selectedCanon ? (
+        {selectedCanon && objectInspectorTab === "overview" ? (
           <section className="inspector-section">
             <h2>{selectedCanon.label ?? selectedCanon.kind ?? "Canon"}</h2>
             <div className="inspector-tag-list" aria-label="Canon classification">
@@ -8066,7 +6890,7 @@ function Inspector({
           </section>
         ) : null}
 
-        {selectedExplorerEntity ? (
+        {selectedExplorerEntity && objectInspectorTab === "overview" ? (
           <section className="inspector-section">
             <h2>Local Entity</h2>
             <label className="field-label">
@@ -8421,7 +7245,7 @@ function Inspector({
                 ? "Configure PathBranching capabilities for this canon property."
                 : "Configure how this local property participates in PathBranching."}
             </p>
-            
+
             {/* Capabilities as Cards */}
             <div className="logic-property-capabilities">
               <div className="logic-property-editor-subheading"><strong>Capabilities</strong><span>Configure behavior</span></div>
@@ -8902,9 +7726,9 @@ type CanvasContextMenu = {
   contextNodeId?: string;
 };
 
-const CANVAS_CLICK_SEQUENCE_WINDOW_MS = 360;
 const DIRECTED_NODE_OPEN_DELAY_MS = 750;
 const NESTED_EDGE_INSPECTOR_OPEN_DELAY_MS = 640;
+const SUBCANVAS_DOUBLE_CLICK_DELAY_MS = 500;
 
 type CanvasDialogueMember = {
   eventId: string;
@@ -9004,16 +7828,17 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
   const warnings = findings.filter((finding) => finding.severity === "warning").length;
   const status = errors ? "error" : warnings ? "warning" : "clean";
   const label = findings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!open) return;
     function pointer(event: PointerEvent) { if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false); }
     function key(event: KeyboardEvent) { if (event.key === "Escape") { setOpen(false); trigger.current?.focus(); } }
     document.addEventListener("pointerdown", pointer); document.addEventListener("keydown", key);
     return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); };
   }, [open]);
-  return <div className="canvas-findings-anchor" ref={wrapperRef}>
+  return <div data-onboarding-target="pathbranching.validation" className="canvas-findings-anchor" ref={wrapperRef}>
     <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={() => setOpen((current) => !current)} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
       {status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+      <span className="pb-validation-label">{locale === "es" ? "Validar" : "Validate"}</span>
       {findings.length ? <span className="canvas-findings-count">{findings.length}</span> : null}
     </button>
     {open ? <div className="canvas-findings-popup" role="region" aria-label={locale === "es" ? "Hallazgos de validación" : "Validation findings"}>
@@ -9035,20 +7860,172 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
   </div>;
 }
 
+function useBreadcrumbLongPress(onInspect: () => void) {
+  const timerRef = useRef<number | undefined>(undefined);
+  const pointerStartRef = useRef<{ x: number; y: number } | undefined>(undefined);
+  const triggeredRef = useRef(false);
+  const clearTimer = () => {
+    if (timerRef.current !== undefined) window.clearTimeout(timerRef.current);
+    timerRef.current = undefined;
+    pointerStartRef.current = undefined;
+  };
+  return {
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0 || event.isPrimary === false) return;
+      clearTimer();
+      triggeredRef.current = false;
+      pointerStartRef.current = { x: event.clientX, y: event.clientY };
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = undefined;
+        pointerStartRef.current = undefined;
+        triggeredRef.current = true;
+        onInspect();
+      }, 520);
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLElement>) => {
+      const start = pointerStartRef.current;
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 9) clearTimer();
+    },
+    onPointerUp: () => {
+      clearTimer();
+      if (triggeredRef.current) window.setTimeout(() => { triggeredRef.current = false; }, 0);
+    },
+    onPointerCancel: clearTimer,
+    onPointerLeave: () => { if (!triggeredRef.current) clearTimer(); },
+    consumeClick: (event: ReactMouseEvent<HTMLElement>, action: () => void) => {
+      if (triggeredRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        triggeredRef.current = false;
+        return;
+      }
+      action();
+    },
+    consumeContextMenu: () => triggeredRef.current,
+  };
+}
+
+function BreadcrumbStorySelector({
+  stories,
+  value,
+  onChange,
+  onInspect,
+  es,
+}: {
+  stories: Array<{ id: string; name: string }>;
+  value: string;
+  onChange: (id: string) => void;
+  onInspect: () => void;
+  es: boolean;
+}) {
+  const selectRef = useRef<HTMLSelectElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const longPress = useBreadcrumbLongPress(onInspect);
+  const openMenu = (point?: { x: number; y: number }) => {
+    const rect = selectRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = point?.x ?? rect.left;
+      const y = point?.y ?? rect.bottom + 6;
+      setMenuPosition({
+        left: Math.max(8, Math.min(x, window.innerWidth - 198)),
+        top: Math.max(8, Math.min(y, window.innerHeight - 72)),
+      });
+    }
+    setMenuOpen(true);
+  };
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    const close = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [menuOpen]);
+  return <span className="breadcrumb-crumb breadcrumb-story-crumb">
+    <select
+      ref={selectRef}
+      className="canvas-story-selector"
+      aria-label={es ? "Historia activa" : "Active story"}
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
+      value={value}
+      onChange={event => onChange(event.target.value)}
+      onPointerDown={longPress.onPointerDown}
+      onPointerMove={longPress.onPointerMove}
+      onPointerUp={longPress.onPointerUp}
+      onPointerCancel={longPress.onPointerCancel}
+      onPointerLeave={longPress.onPointerLeave}
+      onClick={event => longPress.consumeClick(event, () => {})}
+      onContextMenu={event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!longPress.consumeContextMenu()) openMenu({ x: event.clientX, y: event.clientY });
+      }}
+      onKeyDown={event => {
+        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+          event.preventDefault();
+          openMenu();
+        }
+      }}
+    >
+      {stories.map(story => <option key={story.id} value={story.id}>{story.name}</option>)}
+    </select>
+    {menuOpen ? createPortal(<div
+      ref={menuRef}
+      className="breadcrumb-inspector-menu"
+      style={menuPosition}
+      role="menu"
+      aria-label={es ? "Opciones de la historia" : "Story options"}
+      onContextMenu={event => event.preventDefault()}
+      onKeyDown={event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenuOpen(false); selectRef.current?.focus({ preventScroll: true }); }
+        if (event.key === "Tab") setMenuOpen(false);
+      }}
+    ><button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onInspect(); }}>{es ? "Abrir inspector" : "Open inspector"}</button></div>, document.querySelector<HTMLElement>(".pathbranching-app") ?? document.body) : null}
+  </span>;
+}
+
 function BreadcrumbCrumb({
   crumb,
   index,
   isLast,
   infoBadges,
   onNavigate,
+  onInspect,
 }: {
   crumb: { scope: CanvasScope; label: string };
   index: number;
   isLast: boolean;
   infoBadges: string[];
   onNavigate: () => void;
+  onInspect: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const longPress = useBreadcrumbLongPress(onInspect);
+  const openMenu = (point?: { x: number; y: number }) => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const x = point?.x ?? rect.left;
+      const y = point?.y ?? rect.bottom + 6;
+      setMenuPosition({ left: Math.max(8, Math.min(x, window.innerWidth - 198)), top: Math.max(8, Math.min(y, window.innerHeight - 72)) });
+    }
+    setHoverPosition(undefined);
+    setMenuOpen(true);
+  };
+  const es = useInterfaceLocale() === "es";
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const close = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false); };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [menuOpen]);
   const [hoverPosition, setHoverPosition] = useState<{
     left: number;
     top: number;
@@ -9060,7 +8037,21 @@ function BreadcrumbCrumb({
         ref={buttonRef}
         type="button"
         className={isLast ? "active" : ""}
-        onClick={onNavigate}
+        aria-current={isLast ? "page" : undefined}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
+        onPointerLeave={longPress.onPointerLeave}
+        onClick={event => longPress.consumeClick(event, onNavigate)}
+        onContextMenu={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!longPress.consumeContextMenu()) openMenu({ x: event.clientX, y: event.clientY });
+        }}
+        onKeyDown={event => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); openMenu(); } }}
         onMouseEnter={() => {
           const rect = buttonRef.current?.getBoundingClientRect();
           if (rect) setHoverPosition({ left: rect.left, top: rect.bottom + 6 });
@@ -9070,6 +8061,10 @@ function BreadcrumbCrumb({
         {index === 0 ? <Home size={14} /> : <GitBranch size={14} />}
         <span>{crumb.label}</span>
       </button>
+      {menuOpen ? createPortal(<div ref={menuRef} className="breadcrumb-inspector-menu" style={menuPosition} role="menu" aria-label={es ? "Opciones del breadcrumb" : "Breadcrumb options"} onContextMenu={event => event.preventDefault()} onKeyDown={event => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenuOpen(false); buttonRef.current?.focus(); }
+        if (event.key === "Tab") setMenuOpen(false);
+       }}><button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onInspect(); }}>{es ? "Abrir inspector" : "Open inspector"}</button></div>, document.querySelector<HTMLElement>(".pathbranching-app") ?? document.body) : null}
       {hoverPosition && infoBadges.length ? (
         <div
           className="breadcrumb-hover-popup"
@@ -9087,12 +8082,16 @@ function BreadcrumbCrumb({
 }
 
 function StoryCanvas({
+  contextTab, contextFocus, onContextTabChange, onContextFocusChange,
+  stories, activeStoryId, onStoryChange,
+  storyTestActive, inspectorRequest, inspectorSections, inspectorSize, onInspectorResize, inspectorStackOrder, onInspectorStackOrderChange, onInspectorSectionChange, onAuthoringMutation, onOpenInspectorSection, onPinInspectorTarget, onUnpinInspectorTarget, onCollapseInspector, inspectorDebugContent,
   project,
   authoringWorkspace,
   storyTestControls,
   storyTestWorkspace,
+  storyTestPlayTab,
+  onOpenStoryPlay,
   testingActive = false,
-  onToggleAuthoring,
   propertiesConfig,
   files,
   nodes,
@@ -9170,8 +8169,11 @@ function StoryCanvas({
   onUpdateTransition,
   onCreateBoundaryRoute,
   onCreateBoundaryRouteEvent,
+  onCreateDialogueBoundaryRoute,
   onCreateBoundaryEnd,
   onDeleteBoundaryEnd,
+  onDiscardPendingBoundaryPort,
+  onBoundarySelectionChange,
   onWorkspaceBoundsChange,
   onArrangeScopeNodes,
   onDeleteTransition,
@@ -9233,11 +8235,33 @@ function StoryCanvas({
   onOpenRule,
 }: {
   project: BranchingProject;
+  stories: Array<{ id: string; name: string }>;
+  activeStoryId?: string;
+  onStoryChange: (id: string) => void;
+  storyTestActive:boolean;
+  inspectorRequest?: InspectorRequest;
+  inspectorSections: Record<string,string>;
+  inspectorSize: InspectorSize;
+  inspectorStackOrder: string[];
+  onInspectorStackOrderChange: (order: string[]) => void;
+  onInspectorResize:(size:InspectorSize)=>void;
+  onInspectorSectionChange:(key:string,section:string)=>void;
+  onAuthoringMutation:(mutate:(project:BranchingProject)=>BranchingProject)=>void|Promise<void>;
+  onOpenInspectorSection:(target:Selection,section?:string,focusId?:string)=>void;
+  onPinInspectorTarget:(target:Selection)=>void;
+  onUnpinInspectorTarget:(target:Selection)=>void;
+  onCollapseInspector:()=>void;
+  inspectorDebugContent?:ReactNode;
   authoringWorkspace?: ReactNode;
   storyTestControls?: ReactNode;
   storyTestWorkspace?: ReactNode;
+  storyTestPlayTab?: ReactNode;
+  onOpenStoryPlay: () => void;
+  contextTab: "edit" | "test";
+  contextFocus: boolean;
+  onContextTabChange: (value: "edit" | "test") => void;
+  onContextFocusChange: (value: boolean) => void;
   testingActive?: boolean;
-  onToggleAuthoring?: () => void;
   propertiesConfig?: Record<string, unknown>;
   files: PathBranchingFileItem[];
   nodes: StoryCanvasNode[];
@@ -9362,10 +8386,13 @@ function StoryCanvas({
     transitionId: string,
     updates: Partial<Transition>,
   ) => void;
-  onCreateBoundaryRoute: (eventId: string, targetEventId: string) => void;
-  onCreateBoundaryRouteEvent: (eventId: string) => void;
-  onCreateBoundaryEnd: (eventId: string) => void;
-  onDeleteBoundaryEnd: (eventId: string, slotId: string) => void;
+  onCreateBoundaryRoute: (eventId: string, targetEventId: string, direction: "input" | "output", slotId?: string) => void;
+  onCreateBoundaryRouteEvent: (eventId: string, direction: "input" | "output", slotId?: string) => void;
+  onCreateDialogueBoundaryRoute: (eventId: string, dialogueId: string, direction: "input" | "output", targetId: string, slotId: string) => void;
+  onCreateBoundaryEnd: (eventId: string, direction: "input" | "output", position: { x: number; y: number }, dialogueId?: string) => void;
+  onDeleteBoundaryEnd: (eventId: string, direction: "input" | "output", slotId: string, dialogueId?: string) => void;
+  onDiscardPendingBoundaryPort: (preserveNodeId?: string) => void;
+  onBoundarySelectionChange: (selectedNodeIds: string[]) => void;
   onWorkspaceBoundsChange: (
     scope: Extract<CanvasScope, { kind: "event" | "dialogue" }>,
     bounds: SubcanvasWorkspaceBounds,
@@ -9457,20 +8484,49 @@ function StoryCanvas({
   const canvasUiLocale = useInterfaceLocale();
   const ui = authoringUiCopy(canvasUiLocale);
   const shellRef = useRef<HTMLElement | null>(null);
+  const canvasToolRowRef = useRef<HTMLDivElement | null>(null);
+  const [canvasToolRowHeight, setCanvasToolRowHeight] = useState(38);
+  const lastCanvasSelection = useRef(selection);
+  const [activePinKey, setActivePinKey] = useState<string>();
+  // Conversation focus highlights a canvas row without navigating away from its owner inspector.
+  const [conversationHighlightedNodeId, setConversationHighlightedNodeId] = useState<string>();
+  useEffect(() => { setConversationHighlightedNodeId(undefined); }, [selection?.type, selection?.id, project.projectId, project.storyId, activeScope?.kind, activeScope?.id]);
+  useEffect(() => {
+    if (selection && inspectorSelectionKey(selection) === activePinKey) return;
+    setActivePinKey(undefined);
+    if (selection) lastCanvasSelection.current = selection;
+  }, [selection, activePinKey]);
+  // Keep the dock mounted while any ordinary inspector remains open. Closing
+  // the final event card must not hide unrelated inspector tabs beside it.
+  const contextVisible = eventInspector.open || inspectorTabs.length > 0 || storyTestActive;
+  useEffect(() => {
+    const element = canvasToolRowRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setCanvasToolRowHeight(entry.borderBoxSize[0]?.blockSize ?? element.getBoundingClientRect().height));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(()=>{if(storyTestActive)onContextTabChange("test");},[storyTestActive]);
+  useEffect(()=>{if(!storyTestActive && contextTab === "test")onContextTabChange("edit");},[storyTestActive,contextTab]);
+  useEffect(()=>{if(inspectorRequest?.requestId)onContextTabChange("edit");},[inspectorRequest?.requestId]);
   const [logicFocus, setLogicFocus] = useState<{
     selectionKey: string;
     part: "conditions" | "consequences";
   }>();
-  const pendingNodeClickRef = useRef<{
-    nodeId: string;
-    timer?: number;
-  } | undefined>(undefined);
   const pendingEdgeClickRef = useRef<{
     edgeId: string;
     timer?: number;
   } | undefined>(undefined);
   const connectionGestureRef = useRef(false);
   const suppressNodeInspectorUntilRef = useRef(0);
+  const pendingSubcanvasInspectorRef = useRef<{ nodeId: string; timer: number } | undefined>(undefined);
+  const clearPendingSubcanvasInspector = useCallback(() => {
+    const pending = pendingSubcanvasInspectorRef.current;
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    pendingSubcanvasInspectorRef.current = undefined;
+  }, []);
+  useEffect(() => () => clearPendingSubcanvasInspector(), [clearPendingSubcanvasInspector]);
   const directedNodeHoldRef = useRef<{
     nodeId: string;
     timer: number;
@@ -9485,7 +8541,7 @@ function StoryCanvas({
   const contextMenuWasOpenRef = useRef(false);
   const [editingEdgeId, setEditingEdgeId] = useState<string>();
   const [draggingEvent, setDraggingEvent] = useState(false);
-  const [directedNodeOpening, setDirectedNodeOpening] = useState(true);
+  const [directedNodeOpening, setDirectedNodeOpening] = useState(false);
   const [canvasToolsOpen, setCanvasToolsOpen] = useState(false);
   const canvasToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [canvasToolsPosition, setCanvasToolsPosition] = useState({ left: 0, top: 0 });
@@ -9534,14 +8590,6 @@ function StoryCanvas({
     setCanvasLocale((current) => canvasLocaleOptions.includes(current) ? current : primaryLocale);
   }, [canvasLocaleOptions, primaryLocale]);
 
-  const clearPendingNodeClick = useCallback(() => {
-    const pending = pendingNodeClickRef.current;
-    if (pending?.timer !== undefined) {
-      window.clearTimeout(pending.timer);
-    }
-    pendingNodeClickRef.current = undefined;
-  }, []);
-
   const clearPendingEdgeClick = useCallback(() => {
     const pending = pendingEdgeClickRef.current;
     if (pending?.timer !== undefined) {
@@ -9558,11 +8606,10 @@ function StoryCanvas({
 
   useEffect(() => {
     return () => {
-      clearPendingNodeClick();
       clearPendingEdgeClick();
       clearDirectedNodeHold();
     };
-  }, [clearDirectedNodeHold, clearPendingNodeClick, clearPendingEdgeClick]);
+  }, [clearDirectedNodeHold, clearPendingEdgeClick]);
 
   const inspectorNodeStates = useMemo(() => {
     const states = new Map<string, "open" | "expanded">();
@@ -9590,20 +8637,26 @@ function StoryCanvas({
     },
     [onUpdateEdgeLabel],
   );
-  const graph = useMemo(
+  const [returnConnectorWidths, setReturnConnectorWidths] = useState<Record<string, number>>({});
+  const measureReturnConnector = useCallback((edgeId: string, width: number) => {
+    setReturnConnectorWidths(current => current[edgeId] === width ? current : { ...current, [edgeId]: width });
+  }, []);
+  const returnConnectors = useMemo(() => {
+    const connectors = canvasReturnConnectors(nodes, edges);
+    connectors.forEach(connector => { connector.width = returnConnectorWidths[connector.edgeId]; });
+    return connectors;
+  }, [nodes, edges, returnConnectorWidths]);
+  const cachePresentedNodes = useMemo(() => createCanvasPresentationCache<StoryCanvasNode>(), []);
+  const cachePresentedEdges = useMemo(() => createCanvasPresentationCache<StoryCanvasEdge>(), []);
+  const projectedGraph = useMemo(
     () => ({
       nodes: nodes.map((node) => ({
         ...node,
+        selected: conversationHighlightedNodeId ? node.id === conversationHighlightedNodeId : node.selected,
         data: {
           ...node.data,
-          onOpenLogicPart: canvasLayerMode === "logic"
-            ? (part: "conditions" | "consequences") => {
-                const nodeSelection = { type: "node" as const, id: node.id };
-                setLogicFocus({ selectionKey: `node:${node.id}`, part });
-                onCanvasSelect(nodeSelection);
-                onOpenCanvasInspector(nodeSelection);
-              }
-            : undefined,
+          onOpenInspectorSection:(section:string,target?:Selection,focusId?:string)=>onOpenInspectorSection(target ?? {type:"node",id:node.id},section,focusId),
+          onOpenLogicPart:(part:"conditions"|"consequences")=>onOpenInspectorSection({type:"node",id:node.id},part),
           inspectorState: inspectorNodeStates.get(node.id),
           details: {
             ...node.data.details,
@@ -9749,16 +8802,115 @@ function StoryCanvas({
             endAdder:
               node.data.kind === "endAdder" &&
               typeof node.data.details?.eventId === "string"
-                ? { onAdd: () => onCreateBoundaryEnd(node.data.details?.eventId as string) }
+                ? {
+                    onAdd: (direction: "input" | "output", position: { x: number; y: number }, dialogueId?: string) =>
+                      onCreateBoundaryEnd(node.data.details?.eventId as string, direction, position, dialogueId),
+                  }
                 : undefined,
             routeEditor:
+            activeScope?.kind === "dialogue" &&
+            node.data.kind === "boundary" &&
+            (node.data.details?.direction === "input" || node.data.details?.direction === "output") &&
+            typeof node.data.details?.eventId === "string" &&
+            typeof node.data.details?.dialogueId === "string" &&
+            (typeof node.data.details?.slotId === "string" || typeof node.data.details?.transitionId === "string")
+              ? (() => {
+                  const eventId = node.data.details!.eventId as string;
+                  const dialogueId = node.data.details!.dialogueId as string;
+                  const direction = node.data.details!.direction as "input" | "output";
+                  const slotId = typeof node.data.details!.slotId === "string"
+                    ? node.data.details!.slotId as string
+                    : undefined;
+                  const transitionId = typeof node.data.details!.transitionId === "string"
+                    ? node.data.details!.transitionId as string
+                    : undefined;
+                  const event = project.events.find((candidate) => candidate.id === eventId);
+                  const dialogue = event?.dialogues?.find((candidate) => candidate.id === dialogueId);
+                  const route = transitionId
+                    ? event?.transitions?.find((candidate) => candidate.id === transitionId)
+                    : undefined;
+                  if (!event || !dialogue || (transitionId && !route) || (!transitionId && !slotId)) return undefined;
+                  const returnToDialogue = {
+                    id: `dialogue:${eventId}:${dialogueId}`,
+                    label: `${canvasUiLocale === "es" ? "Volver a esta conversación" : "Return to this conversation"} · ${dialogue.title}`,
+                  };
+                  const siblingDialogues = (event.dialogues ?? [])
+                    .filter((dialogue) => dialogue.id !== dialogueId)
+                    .map((dialogue) => ({
+                      id: `dialogue:${eventId}:${dialogue.id}`,
+                      label: `${dialogue.title} · ${canvasUiLocale === "es" ? "Conversación" : "Conversation"}`,
+                    }));
+                  const childEventIds = new Set([
+                    ...(event.childEventIds ?? []),
+                    ...project.events.filter((candidate) => candidate.parentEventId === eventId).map((child) => child.id),
+                  ]);
+                  const incomingFromEvents = project.events
+                    .filter((sourceEvent) => sourceEvent.id !== eventId && !childEventIds.has(sourceEvent.id))
+                    .flatMap((sourceEvent) => (sourceEvent.transitions ?? [])
+                      .filter((transition) => transition.to === eventId)
+                      .map((transition) => ({
+                        id: `boundary:${eventId}:input:${transition.id}`,
+                        label: `${sourceEvent.name} · ${canvasUiLocale === "es" ? "Entrada" : "Entry"}`,
+                      })));
+                  const incomingFromSequences = project.sequences
+                    .filter((sequence) => sequence.entryEventId === eventId)
+                    .map((sequence) => ({
+                      id: `boundary:${eventId}:input:sequence-entry:${sequence.id}`,
+                      label: `${sequence.name || (canvasUiLocale === "es" ? "Historia" : "Story")} · ${canvasUiLocale === "es" ? "Entrada" : "Entry"}`,
+                    }));
+                  const inputSlots = (project.canvas?.scopes?.[`event:${eventId}`]?.entrySlots ?? [])
+                    .map((slotId) => ({
+                      id: `boundary:${eventId}:input:${slotId}`,
+                      label: `${canvasUiLocale === "es" ? "Nueva entrada" : "New entry"} · ${slotId}`,
+                    }));
+                  const incomingTargets = [...incomingFromEvents, ...incomingFromSequences, ...inputSlots];
+                  const entryTargets = incomingTargets.length
+                    ? incomingTargets
+                    : [{
+                        id: `boundary:${eventId}:input:entry`,
+                        label: `${canvasUiLocale === "es" ? "Entrada del evento" : "Event entry"} · ${event.name}`,
+                      }];
+                  const childEvents = project.events
+                    .filter((candidate) => childEventIds.has(candidate.id))
+                    .map((child) => ({
+                      id: child.id,
+                      label: `${child.name} · ${canvasUiLocale === "es" ? "Subevento" : "Subevent"}`,
+                    }));
+                  const targets = direction === "input"
+                    ? [...siblingDialogues, ...entryTargets]
+                    : [returnToDialogue, ...siblingDialogues, ...childEvents];
+                  const selectedTargetId = route
+                    ? direction === "output" ? route.to : route.from
+                    : undefined;
+                  if (transitionId && !targets.some((target) => target.id === selectedTargetId)) return undefined;
+                  return {
+                    direction,
+                    selectedTargetId,
+                    targets,
+                    onTargetChange: (targetId: string) => {
+                      if (transitionId) {
+                        onUpdateTransition(transitionId, direction === "input" ? { from: targetId } : { to: targetId });
+                      } else if (slotId) {
+                        onCreateDialogueBoundaryRoute(eventId, dialogueId, direction, targetId, slotId);
+                      }
+                    },
+                    onDeleteEnd: transitionId
+                      ? () => onDeleteTransition(transitionId)
+                      : slotId
+                        ? () => onDeleteBoundaryEnd(eventId, direction, slotId, dialogueId)
+                        : undefined,
+                  };
+                })()
+              :
             activeScope?.kind === "event" &&
             node.data.kind === "boundary" &&
-            node.data.details?.direction === "output" &&
+            (node.data.details?.direction === "output" ||
+              (node.data.details?.direction === "input" && typeof node.data.details?.slotId === "string")) &&
             node.data.details?.restart !== true &&
             typeof node.data.details?.eventId === "string"
               ? (() => {
                   const eventId = node.data.details.eventId;
+                  const direction = node.data.details?.direction === "input" ? "input" as const : "output" as const;
                   const transitionId = typeof node.data.details?.transitionId === "string"
                     ? node.data.details.transitionId
                     : undefined;
@@ -9769,9 +8921,10 @@ function StoryCanvas({
                     ? node.data.details.targetEventId
                     : undefined;
                   return {
+                    direction,
                     selectedTargetId,
                     targets: project.events
-                      .filter((event) => event.id !== eventId)
+                      .filter((event) => event.id !== eventId && !(direction === "input" && event.parentEventId === eventId))
                       .map((event) => {
                         const branch = event.branchRef
                           ? project.branches.find((candidate) => candidate.id === event.branchRef)
@@ -9785,13 +8938,13 @@ function StoryCanvas({
                       if (transitionId) {
                         onUpdateTransition(transitionId, { to: targetEventId });
                       } else {
-                        onCreateBoundaryRoute(eventId, targetEventId);
+                        onCreateBoundaryRoute(eventId, targetEventId, direction, slotId);
                       }
                     },
-                    onCreateTarget: () => onCreateBoundaryRouteEvent(eventId),
+                    onCreateTarget: () => onCreateBoundaryRouteEvent(eventId, direction, slotId),
                     onDeleteEnd:
-                      !transitionId && slotId && slotId !== "exit"
-                        ? () => onDeleteBoundaryEnd(eventId, slotId)
+                      !transitionId && slotId && (direction === "input" || slotId !== "exit")
+                        ? () => onDeleteBoundaryEnd(eventId, direction, slotId)
                         : undefined,
                   };
                 })()
@@ -9830,10 +8983,6 @@ function StoryCanvas({
                   const presentEntityRefs = beatEvent?.presentEntityRefs ?? beatEvent?.canonRefs ?? [];
                   const currentCharacterRef = block?.characterRef ?? block?.speakerRef;
                   const currentCanonRef = project.canonRefs.find((canonRef) => canonRef.id === currentCharacterRef);
-                  const activeScopeKey = activeScope && activeScope.kind !== "sequence" ? canvasScopeKey(activeScope) : undefined;
-                  const auxiliaryPanels = activeScopeKey
-                    ? project.canvas?.scopes?.[activeScopeKey]?.nodes?.[node.id]?.auxiliaryPanels
-                    : project.canvas?.nodes?.[node.id]?.auxiliaryPanels;
                   const activeText = block
                     ? blockValues(project, blockRef.scriptId, block, primaryLocale)[canvasLocale] ?? ""
                     : "";
@@ -9890,15 +9039,6 @@ function StoryCanvas({
                   );
                   return {
                     values: block ? blockValues(project, blockRef.scriptId, block, primaryLocale) : {},
-                    directorNote: beat.directorNote ?? "",
-                    sceneImage: (() => {
-                      const attachment = beat.sceneImage;
-                      const asset = attachment ? project.assets?.find((candidate) => candidate.id === attachment.assetId && candidate.kind === "image") : undefined;
-                      return attachment && asset ? { ...attachment, name: asset.name, url: universeAssetUrl(project, asset.path) } : undefined;
-                    })(),
-                    imageAssets: imageAssetsForLocation(project, beat.locationRef ?? beatEvent?.locationRef),
-                    directorNoteOpen: auxiliaryPanels?.directorNote ?? false,
-                    sceneImageOpen: auxiliaryPanels?.sceneImage ?? false,
                     primaryLocale,
                     activeLocale: canvasLocale,
                     languages: normalizeLocaleList(primaryLocale, locales),
@@ -9925,36 +9065,6 @@ function StoryCanvas({
                     presentEntityIds: presentEntityRefs,
                     speakerOptions,
                     onTextUpdate: (locale: string, value: string) => onUpdateLocalizedText(textKey, locale, value),
-                    onDirectorNoteUpdate: (value: string) => {
-                      const dialogueId = typeof node.data.details?.dialogueId === "string"
-                        ? node.data.details.dialogueId
-                        : undefined;
-                      if (dialogueId) {
-                        onUpdateDialogueBeat(beatEventId!, dialogueId, beat.id, { directorNote: value });
-                      } else if (beatEventId) {
-                        onUpdateEventDialogueBeat(beatEventId, beat.id, { directorNote: value });
-                      }
-                    },
-                    onSceneImageUpdate: (assetId?: string) => {
-                      const dialogueId = typeof node.data.details?.dialogueId === "string"
-                        ? node.data.details.dialogueId
-                        : undefined;
-                      const sceneImage = assetId
-                        ? { id: beat.sceneImage?.id ?? `scene-image:${crypto.randomUUID()}`, assetId }
-                        : undefined;
-                      if (dialogueId) {
-                        onUpdateDialogueBeat(beatEventId!, dialogueId, beat.id, { sceneImage });
-                      } else if (beatEventId) {
-                        onUpdateEventDialogueBeat(beatEventId, beat.id, { sceneImage });
-                      }
-                    },
-                    onImportSceneImage: () => {
-                      const dialogueId = typeof node.data.details?.dialogueId === "string"
-                        ? node.data.details.dialogueId
-                        : undefined;
-                      if (beatEventId) onImportSceneImage(beatEventId, dialogueId, beat.id);
-                    },
-                    onAuxiliaryPanelChange: (panel: "directorNote" | "sceneImage", open: boolean) => onAuxiliaryPanelChange(node.id, panel, open),
                     onCharacterUpdate: (characterRef?: string) => {
                       onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, { characterRef, characterVariantId: undefined });
                       if (characterRef && characterRef !== UNKNOWN_SPEAKER_REF && beatEvent && !presentEntityRefs.includes(characterRef)) {
@@ -10015,6 +9125,12 @@ function StoryCanvas({
           type: editable ? "editable" : edgeItem.type,
           data: {
             ...edgeData,
+            returnRoute: returnConnectors.has(edgeItem.id) || edgeData.returnRoute === true,
+            returnConnector: returnConnectors.get(edgeItem.id),
+            onMeasureReturnConnector: (width: number) => {
+              const connector = returnConnectors.get(edgeItem.id);
+              if (connector) measureReturnConnector(connector.edgeId, width);
+            },
             connectionPadding: canvasBackground.connectionPadding,
             customLabel:
               edgeData.kind === "entry" ? customLabel ?? "" : customLabel,
@@ -10024,21 +9140,29 @@ function StoryCanvas({
               ? (label: string) => commitEdgeLabel(edgeItem.id, label)
               : undefined,
             onCancelLabel: editable ? () => setEditingEdgeId(undefined) : undefined,
-            // Route configuration belongs to the Gate. Edges remain
-            // selectable only as deletion targets, never as inspector entry
-            // points.
-            onOpenLogicPart: undefined,
+            onOpenInspectorSection: (section: string, target?: Selection, focusId?: string) => {
+              const routeGateId = typeof edgeData.routeGateId === "string" ? edgeData.routeGateId : undefined;
+              const routeId = routeGateId && edgeItem.id.startsWith("edge:transition:") ? edgeItem.id.slice("edge:transition:".length) : undefined;
+              onOpenInspectorSection(target ?? (routeGateId ? { type: "node", id: routeGateId } : { type: "edge", id: edgeItem.id }), section, focusId ?? routeId);
+            },
+            onOpenLogicPart: (part: "conditions" | "consequences") => {
+              const routeGateId = typeof edgeData.routeGateId === "string" ? edgeData.routeGateId : undefined;
+              const routeId = routeGateId && edgeItem.id.startsWith("edge:transition:") ? edgeItem.id.slice("edge:transition:".length) : undefined;
+              onOpenInspectorSection(routeGateId ? { type: "node", id: routeGateId } : { type: "edge", id: edgeItem.id }, part, routeId);
+            },
           },
         };
       }),
     }),
-    [activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateLocalSpeaker, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig],
+    [measureReturnConnector, returnConnectors, conversationHighlightedNodeId, onOpenInspectorSection, activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onBoundarySelectionChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateLocalSpeaker, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onDiscardPendingBoundaryPort, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig],
   );
+  const graph = { nodes: cachePresentedNodes(projectedGraph.nodes), edges: cachePresentedEdges(projectedGraph.edges) };
+  const documentIndex = useMemo(() => inspectorDocumentIndex(project), [project]);
   const activeEventScope =
     activeScope?.kind === "event"
-      ? project.events.find((event) => event.id === activeScope.id)
+      ? documentIndex.events.get(activeScope.id)
       : activeScope?.kind === "dialogue"
-        ? project.events.find((event) => event.id === activeScope.eventId)
+        ? documentIndex.events.get(activeScope.eventId)
         : undefined;
   const activeDialogueScope = activeScope?.kind === "dialogue" ? activeScope : undefined;
 
@@ -10170,20 +9294,146 @@ function StoryCanvas({
     canvasBackground.gridSize,
   ];
   const backgroundColor = `color-mix(in srgb, var(--wn-border) ${Math.round(canvasBackground.opacity * 100)}%, transparent)`;
+  const dotOpacity = canvasBackground.dotOpacity ?? canvasBackground.opacity;
   const inspectorProject = useMemo(
     () =>
-      eventDraft
+      eventDraft?.dirty
         ? applyEventDraftToProject(project, eventDraft)
-        : (manualInspectorDraft?.project ?? project),
-    [eventDraft, manualInspectorDraft?.project, project],
+        : manualInspectorDraft?.dirty ? mergeManualInspectorDraft(project, manualInspectorDraft) : project,
+    [eventDraft, manualInspectorDraft, project],
   );
-  const inspectorEventId =
-    eventInspector.expandedEventId ?? eventInspector.openEventIds[0];
-  const inspectorSelection = inspectorEventId
-    ? { type: "node" as const, id: inspectorEventId }
-    : selection;
+  const inspectorSelection = selection ?? (activeScope ? {type:"node" as const,id:activeScope.id} : {type:"story" as const,id:project.storyId ?? project.projectId});
+  const inspectorPins:Selection[] = [...eventInspector.openEventIds.map(id=>({type:"node" as const,id})),...inspectorTabs.map(tab=>tab.selection)].filter((target,index,all)=>all.findIndex(item=>inspectorSelectionKey(item)===inspectorSelectionKey(target))===index);
+  const buildInspectorGraph = useCallback((target: Selection, targetProject: BranchingProject) => {
+    if (target.type !== "node" && target.type !== "edge") return { nodes, edges };
+    if ((target.type === "node" ? nodes : edges).some(item => item.id === target.id)) return { nodes, edges };
+    const index = inspectorDocumentIndex(targetProject);
+    const option = index.node(target.id);
+    const gateId = target.id.startsWith("edge:route-gate:") ? target.id.slice("edge:route-gate:".length) : target.id;
+    const gateOwner = gateId.startsWith("route-gate:") ? index.gateOwner(gateId) : undefined;
+    const edgeOwner = target.type === "edge" ? index.edgeOwners.get(target.id) : undefined;
+    const owner = option?.eventId ?? gateOwner ?? edgeOwner ?? ownerEventIdFromCanvasSelection(targetProject, target);
+    const routeTarget = target.type === "edge" || gateId.startsWith("route-gate:");
+    const ownerDialogues = owner && routeTarget ? index.events.get(owner)?.dialogues ?? [] : [];
+    const contexts: CanvasScope[] = owner
+      ? [
+          { kind: "event", id: owner },
+          ...(routeTarget
+            ? ownerDialogues.map(dialogue => ({ kind: "dialogue" as const, id: dialogue.id, eventId: owner }))
+            : option?.dialogueId ? [{ kind: "dialogue" as const, id: option.dialogueId, eventId: owner }] : []),
+        ]
+      : targetProject.sequences.map(sequence => ({ kind: "sequence" as const, id: sequence.id }));
+    const models = contexts.map(scope => buildStoryCanvasModel(targetProject, { scope, canvasLayerMode, interfaceLocale: canvasUiLocale }));
+    return { nodes: [...nodes, ...models.flatMap(model => model.nodes)], edges: [...edges, ...models.flatMap(model => model.edges)] };
+  }, [nodes, edges, canvasLayerMode, canvasUiLocale]);
+  const inspectorGraph = useMemo(
+    () => buildInspectorGraph(inspectorSelection, inspectorProject),
+    [buildInspectorGraph, inspectorSelection?.id, inspectorSelection?.type, inspectorProject],
+  );
+  const rememberedModule = inspectorSelection.type === "node" && narrativeInspectorModules(project, inspectorSelection.id) ? readInspectorModulePreferences(project.projectId, inspectorSelectionKey(inspectorSelection))?.active : undefined;
+  const rememberedInspectorRequest = inspectorRequest?.selectionKey === inspectorSelectionKey(inspectorSelection) ? inspectorRequest : { selectionKey:inspectorSelectionKey(inspectorSelection),section:rememberedModule ?? inspectorSections[`${project.storyId ?? project.projectId}|${inspectorSelectionKey(inspectorSelection)}`] ?? "overview" };
   const inspectorShowsManualSave =
     manualInspectorEnabled && Boolean(manualInspectorDraftKey(inspectorSelection));
+  const closeInspectorTarget = (target: Selection) => {
+    if (target.type === "node" && eventInspector.openEventIds.includes(target.id)) {
+      onCloseEventInspectorEvent(target.id);
+      return;
+    }
+    const tab = inspectorTabs.find(item => inspectorSelectionKey(item.selection) === inspectorSelectionKey(target));
+    if (tab) {
+      onCloseInspectorTab(tab.id);
+      return;
+    }
+    onSelect(undefined);
+  };
+  const renderInspector = (target: Selection, targetGraph: { nodes: StoryCanvasNode[]; edges: StoryCanvasEdge[] }, onClose: () => void) => {
+    const targetKey = inspectorSelectionKey(target);
+    const targetModule = target.type === "node" && narrativeInspectorModules(project, target.id)
+      ? readInspectorModulePreferences(project.projectId, targetKey)?.active
+      : undefined;
+    const targetRequest = targetKey === inspectorSelectionKey(inspectorSelection)
+      ? rememberedInspectorRequest
+      : {
+          selectionKey: targetKey,
+          section: targetModule ?? inspectorSections[`${project.storyId ?? project.projectId}|${targetKey}`] ?? "overview",
+        };
+    const isCurrentSelection = targetKey === inspectorSelectionKey(inspectorSelection);
+    const openInspectorTarget = (nextTarget: Selection, section?: string, focusId?: string) => onOpenInspectorSection(nextTarget, section, focusId);
+    return <Inspector
+      project={inspectorProject}
+      localeNames={localeNames}
+      scope={activeScope}
+      propertiesConfig={propertiesConfig}
+      nodes={targetGraph.nodes}
+      edges={targetGraph.edges}
+      files={files}
+      selection={target}
+      findings={findings}
+      exportOpen={exportOpen}
+      exportPreviewMode={exportPreviewMode}
+      canvasLayerMode={canvasLayerMode}
+      onCanvasLayerModeChange={onCanvasLayerModeChange}
+      requestedLogicTab={logicFocus}
+      requestedSection={targetRequest}
+      onSectionChange={onInspectorSectionChange}
+      onAuthoringMutation={onAuthoringMutation}
+      onSelectAuthoringNode={id => openInspectorTarget({ type: id.startsWith("edge:") ? "edge" : "node", id })}
+      onHighlightAuthoringNode={setConversationHighlightedNodeId}
+      highlightedAuthoringNodeId={conversationHighlightedNodeId}
+      onOpenAuthoringSection={(id, section) => openInspectorTarget({ type: id.startsWith("edge:") ? "edge" : "node", id }, section)}
+      onOpenReference={openInspectorTarget}
+      embedded
+      manualDirty={isCurrentSelection ? manualInspectorDraft?.dirty : false}
+      onSaveManual={isCurrentSelection && inspectorShowsManualSave ? onSaveManualInspector : undefined}
+      onExportPreviewModeChange={onExportPreviewModeChange}
+      onClose={onClose}
+      onUpdateSequence={onUpdateSequence}
+      onUpdateBranch={onUpdateBranch}
+      onCreateEventInBranch={onCreateEventInBranch}
+      onUpdateEvent={onUpdateEvent}
+      onApplyEvpath={onApplyEvpath}
+      onCreateDecision={onCreateDecision}
+      onUpdateDecision={onUpdateDecision}
+      onUpdateDialogue={onUpdateDialogue}
+      onUpdateDialogueBeat={onUpdateDialogueBeat}
+      onUpdateEventDialogueBeat={onUpdateEventDialogueBeat}
+      onImportSceneImage={onImportSceneImage}
+      onUpdateScriptBlock={onUpdateScriptBlock}
+      onUpdateLocalizedText={onUpdateLocalizedText}
+      onDeleteDialogueBeat={onDeleteDialogueBeat}
+      onDeleteEventDialogueBeat={onDeleteEventDialogueBeat}
+      onDeleteDecision={onDeleteDecision}
+      onDeleteDialogue={onDeleteDialogue}
+      onCreateOutcome={onCreateOutcome}
+      onUpdateOutcome={onUpdateOutcome}
+      onDeleteOutcome={onDeleteOutcome}
+      onUpdateTransition={onUpdateTransition}
+      onDeleteTransition={onDeleteTransition}
+      onCreateScriptTransition={onCreateScriptTransition}
+      onCreateCanonSuggestion={onCreateCanonSuggestion}
+      onUpdateCanonSuggestion={onUpdateCanonSuggestion}
+      onDeleteCanonSuggestion={onDeleteCanonSuggestion}
+      onUpdateDataObject={onUpdateDataObject}
+      onDeleteDataObject={onDeleteDataObject}
+      onSelectCanon={id => openInspectorTarget({ type: "canon", id })}
+      onSelectSuggestion={id => openInspectorTarget({ type: "canonSuggestion", id })}
+      onEditCanonRef={onEditCanonRef}
+      onCreateCanonWorkingCopy={onCreateCanonWorkingCopy}
+      onSaveCanonWorkingCopy={onSaveCanonWorkingCopy}
+      onExportCanonChangeSet={onExportCanonChangeSet}
+      onApplyCanonWorkingCopy={onApplyCanonWorkingCopy}
+      onUpdateLocalExplorerEntity={onUpdateLocalExplorerEntity}
+      onPublishLocalExplorerEntity={onPublishLocalExplorerEntity}
+      onUpdateLocalExplorerType={onUpdateLocalExplorerType}
+      onUpdateLocalExplorerProperty={onUpdateLocalExplorerProperty}
+      onUpdateLogicPropertyOverride={onUpdateLogicPropertyOverride}
+      onUpdateLogicTypeOverride={onUpdateLogicTypeOverride}
+      onUpdateCharacterCategories={onUpdateCharacterCategories}
+      onUpdateEdgeLabel={onUpdateEdgeLabel}
+      onDeleteSelection={onDeleteSelection}
+      onOpenRule={onOpenRule}
+    />;
+  };
   const fitViewNodesRef = useRef<StoryCanvasNode[]>([]);
   fitViewNodesRef.current = graph.nodes.filter((node) => {
     if (activeScope?.kind === "sequence") return true;
@@ -10271,10 +9521,17 @@ function StoryCanvas({
 
   const locateInspectorSelection = useCallback(
     (nextSelection: Selection) => {
-      if (nextSelection.type !== "node") {
-        onSelect(nextSelection);
+      if (nextSelection.type === "edge") {
+        const routeId = nextSelection.id.replace(/^edge:transition:/, "");
+        const owner = project.events.find(event => event.transitions?.some(route => route.id === routeId));
+        if (owner && !graph.edges.some(edge => edge.id === nextSelection.id)) onNavigateScope({ kind: "event", id: owner.id }, nextSelection);
+        else onSelect(nextSelection);
+        const edge = graph.edges.find(item => item.id === nextSelection.id);
+        const source = graph.nodes.find(node => node.id === edge?.source);
+        if (source) reactFlowInstance?.setCenter(source.position.x + canvasNodeSize(source).width / 2, source.position.y + canvasNodeSize(source).height / 2, { duration: 220 });
         return;
       }
+      if (nextSelection.type !== "node") { onSelect(nextSelection); return; }
       const ownerEventId = eventIdFromSelection(project, graph.nodes, nextSelection)
         ?? ownerEventIdFromCanvasSelection(project, nextSelection);
       const target = graph.nodes.find((node) => node.id === nextSelection.id);
@@ -10301,7 +9558,7 @@ function StoryCanvas({
         );
       });
     },
-    [graph.nodes, onNavigateScope, onSelect, project, reactFlowInstance],
+    [graph.nodes, graph.edges, onNavigateScope, onSelect, project, reactFlowInstance],
   );
 
   const closeExplorerInspectorTabsAbove = useCallback(
@@ -10426,7 +9683,6 @@ function StoryCanvas({
     (event: ReactMouseEvent, node: StoryCanvasNode) => {
       event.preventDefault();
       event.stopPropagation();
-      clearPendingNodeClick();
       if (node.data.kind === "workspace") return;
       contextMenuFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
         ? document.activeElement
@@ -10462,7 +9718,7 @@ function StoryCanvas({
         contextNodeId: node.id,
       });
     },
-    [clearPendingNodeClick, nodes, onNodesChange],
+    [nodes, onNodesChange],
   );
 
   const openConnectionCreateMenu = useCallback<OnConnectEnd>(
@@ -10516,18 +9772,16 @@ function StoryCanvas({
     // endpoint. Keep the suppression through the trailing click event too.
     suppressNodeInspectorUntilRef.current = Date.now() + 500;
     clearDirectedNodeHold();
-    clearPendingNodeClick();
-  }, [clearDirectedNodeHold, clearPendingNodeClick]);
+  }, [clearDirectedNodeHold]);
 
   const finishConnectionGesture = useCallback<OnConnectEnd>(
     (event, connectionState) => {
       connectionGestureRef.current = false;
       suppressNodeInspectorUntilRef.current = Date.now() + 500;
       clearDirectedNodeHold();
-      clearPendingNodeClick();
       openConnectionCreateMenu(event, connectionState);
     },
-    [clearDirectedNodeHold, clearPendingNodeClick, openConnectionCreateMenu],
+    [clearDirectedNodeHold, openConnectionCreateMenu],
   );
 
   const eventTypeOptions: EventCategoryDefinition[] =
@@ -10616,7 +9870,6 @@ function StoryCanvas({
       ) {
         return;
       }
-      clearPendingNodeClick();
       clearDirectedNodeHold();
       const nodeSelection = { type: "node" as const, id: node.id };
       const timer = window.setTimeout(() => {
@@ -10626,7 +9879,7 @@ function StoryCanvas({
       }, DIRECTED_NODE_OPEN_DELAY_MS);
       directedNodeHoldRef.current = { nodeId: node.id, timer };
     },
-    [clearDirectedNodeHold, clearPendingNodeClick, directedNodeOpening, onOpenCanvasInspector],
+    [clearDirectedNodeHold, directedNodeOpening, onOpenCanvasInspector],
   );
   const nodeForPointerTarget = useCallback(
     (target: EventTarget | null) => {
@@ -10657,31 +9910,29 @@ function StoryCanvas({
     };
   }, [clearDirectedNodeHold, directedNodeOpening, nodeForPointerTarget, startDirectedNodeHold]);
 
-  const actionNode = selection?.type === "node" ? nodes.find((node) => node.id === selection.id) : undefined;
-  const contextSelection: Selection | undefined = selection ?? (activeScope ? { type: "node", id: activeScope.id } : undefined);
-  const contextLabel = actionNode?.data.title ?? (selection?.type === "node" ? project.events.find((event) => event.id === selection.id)?.name : undefined) ?? breadcrumbs.at(-1)?.label ?? project.name;
-  const canEnterSelection = Boolean(actionNode && ["event", "dialogue"].includes(actionNode.data.kind));
+  const contextSelection: Selection | undefined = conversationHighlightedNodeId
+    ? { type: "node", id: conversationHighlightedNodeId }
+    : selection ?? (activeScope ? { type: "node", id: activeScope.id } : undefined);
   return (
     <main
-      className={`canvas-shell canvas-layer-${canvasLayerMode} ${activeScope?.kind === "event" || activeScope?.kind === "dialogue" ? "nested-scope" : ""} ${draggingEvent ? "dragging-event" : ""}`}
+      style={{"--inspector-width": `${inspectorSize.width}px`, "--inspector-height": `${(inspectorSize.height ?? 440) + 44}px`, "--canvas-toolbar-bottom": `${52 + canvasToolRowHeight + 8}px`} as CSSProperties}
+      className={`canvas-shell pb-canvas-layout${contextVisible ? " context-visible" : ""}${eventInspector.open ? " has-unified-inspector" : ""}${contextTab === "test" ? " inspector-show-test" : ""}${inspectorMaximized ? " inspector-enlarged" : ""}${contextFocus ? " context-focus" : ""} context-floating canvas-layer-${canvasLayerMode} ${activeScope?.kind === "event" || activeScope?.kind === "dialogue" ? "nested-scope" : ""} ${draggingEvent ? "dragging-event" : ""}`}
       ref={shellRef}
       tabIndex={-1}
+      onKeyDownCapture={(event) => { if (contextFocus && event.key === "Escape" && event.target instanceof Element && !event.target.closest('[role="dialog"],[role="menu"],.event-inspector-group-menu.open')) { event.preventDefault(); event.stopPropagation(); onContextFocusChange(false); } }}
     >
-      {showStatusMessages && message ? (
-        <div className="canvas-message">{message}</div>
-      ) : null}
+      <div className="pb-canvas-stage">
 
-      <div className="canvas-selection-actions" role="group" aria-label={ui.inspector}>
-        <strong title={String(contextLabel)}>{String(contextLabel)}</strong>
-        <button type="button" disabled={!contextSelection} onClick={() => { if (contextSelection) onOpenCanvasInspector(contextSelection); }}><Eye size={13} />{ui.inspect}</button>
-        {onToggleAuthoring ? <button type="button" onClick={onToggleAuthoring}><Pencil size={13} />{canvasUiLocale === "es" ? "Escribir historia" : "Write story"}</button> : null}
-        {canEnterSelection ? <button type="button" onClick={() => { if (actionNode) openNodeCanvas(actionNode); }}><FolderOpen size={13} />{ui.enter}</button> : null}
-      </div>
-      {authoringWorkspace}
-      {storyTestWorkspace}
+
       <div className="canvas-modebar">
-        <div className="canvas-breadcrumb" aria-label="Canvas path">
-          <span className="canvas-breadcrumb-story" title={project.name}>{project.name}</span>
+        <CanvasBreadcrumbScroller ariaLabel={canvasUiLocale === "es" ? "Ruta del canvas" : "Canvas path"} es={canvasUiLocale === "es"}>
+          <BreadcrumbStorySelector
+            stories={stories}
+            value={activeStoryId ?? project.storyId ?? stories[0]?.id ?? project.projectId}
+            onChange={onStoryChange}
+            onInspect={() => onOpenInspectorSection({ type: "story", id: activeStoryId ?? project.storyId ?? stories[0]?.id ?? project.projectId })}
+            es={canvasUiLocale === "es"}
+          />
           {breadcrumbs.map((crumb, index) => {
             const last = index === breadcrumbs.length - 1;
             const crumbEvent =
@@ -10711,6 +9962,7 @@ function StoryCanvas({
                 index={index}
                 isLast={last}
                 infoBadges={infoBadges}
+                onInspect={() => onOpenInspectorSection({ type: "node", id: crumb.scope.kind === "dialogue" ? `dialogue:${crumb.scope.eventId}:${crumb.scope.id}` : crumb.scope.id })}
                 onNavigate={() =>
                   onNavigateScope(crumb.scope, {
                     type: "node",
@@ -10720,8 +9972,9 @@ function StoryCanvas({
               />
             );
           })}
-        </div>
+        </CanvasBreadcrumbScroller>
       </div>
+      <div data-onboarding-target="pathbranching.canvas" className="pb-canvas-tool-row" ref={canvasToolRowRef}>
       <div className="canvas-layer-switch" role="toolbar" aria-label={ui.canvasLayer}>
         <button
           type="button"
@@ -10732,7 +9985,6 @@ function StoryCanvas({
         >
           <Eye size={13} aria-hidden="true" /> {ui.visual}
         </button>
-        {storyTestControls}
         <button
           type="button"
           aria-pressed={canvasLayerMode === "logic"}
@@ -10743,6 +9995,13 @@ function StoryCanvas({
           <GitBranch size={13} aria-hidden="true" /> {ui.logic}
         </button>
       </div>
+      <div data-onboarding-target="pathbranching.preview" className="pb-canvas-primary-actions" role="toolbar" aria-label={canvasUiLocale === "es" ? "Acciones de historia" : "Story actions"}>
+        {storyTestControls}
+        {storyTestActive && contextTab !== "test" ? <button type="button" onClick={onOpenStoryPlay}><Play size={14} aria-hidden="true" />{canvasUiLocale === "es" ? "Abrir Play Mode" : "Open Play Mode"}</button> : null}
+      </div>
+      </div>
+      <div className="pb-canvas-locale-tools">
+      <CanvasFindingsButton findings={findings} project={project} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
       <div className="canvas-locale-control">
         <button
           type="button"
@@ -10771,6 +10030,8 @@ function StoryCanvas({
         </div> : null}
       </div>
 
+      </div>
+
       <ReactFlowProvider>
         <ReactFlow
           nodes={graph.nodes}
@@ -10786,9 +10047,12 @@ function StoryCanvas({
           panOnDrag={[1]}
           onConnectEnd={finishConnectionGesture}
           onInit={setReactFlowInstance}
+          onSelectionChange={({ nodes: selectedNodes }) =>
+            onBoundarySelectionChange(selectedNodes.map((node) => node.id))
+          }
           onNodeDrag={(_, node) => {
             clearDirectedNodeHold();
-            clearPendingNodeClick();
+            clearPendingSubcanvasInspector();
             draggedNodeRef.current = true;
             setDraggingEvent(node.data.kind === "event");
           }}
@@ -10800,6 +10064,8 @@ function StoryCanvas({
             }, 0);
           }}
           onNodeClick={(event, node) => {
+            clearPendingSubcanvasInspector();
+            onDiscardPendingBoundaryPort(node.id);
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
             if (node.data.kind === "workspace") return;
@@ -10810,32 +10076,45 @@ function StoryCanvas({
             const clickCount = Math.max(event.detail || 1, 1);
             clearDirectedNodeHold();
             if (clickCount === 2) {
-              clearPendingNodeClick();
-              // Double-click on a speech beat no longer enters the event script mode.
+              // A double-click enters the subcanvas without leaving behind an
+              // inspector opened by the first click.
               if (node.data.kind !== "speechBeat") {
                 openNodeCanvas(node);
               }
               return;
             }
             if (clickCount > 2) {
-              clearPendingNodeClick();
+              return;
+            }
+            const conversationLine = eventInspector.open && contextTab === "edit" && inspectorSelection.type === "node"
+              ? conversationLineForCanvasSelection(project, inspectorSelection.id, rememberedInspectorRequest.section, node.id)
+              : undefined;
+            if (conversationLine) {
+              setConversationHighlightedNodeId(conversationLine);
               return;
             }
             if (directedNodeOpening) {
-              clearPendingNodeClick();
               onCanvasSelect(nodeSelection);
               return;
             }
-            clearPendingNodeClick();
-            onCanvasSelect(nodeSelection);
-            const timer = window.setTimeout(() => {
-              onOpenCanvasInspector(nodeSelection);
-              pendingNodeClickRef.current = undefined;
-            }, CANVAS_CLICK_SEQUENCE_WINDOW_MS);
-            pendingNodeClickRef.current = { nodeId: node.id, timer };
+            if (node.data.kind === "event" || node.data.kind === "dialogue" || node.data.kind === "directionBeat") {
+              const timer = window.setTimeout(() => {
+                if (pendingSubcanvasInspectorRef.current?.nodeId !== node.id) return;
+                pendingSubcanvasInspectorRef.current = undefined;
+                onOpenCanvasInspector(nodeSelection);
+              }, SUBCANVAS_DOUBLE_CLICK_DELAY_MS);
+              pendingSubcanvasInspectorRef.current = { nodeId: node.id, timer };
+              return;
+            }
+            onOpenCanvasInspector(nodeSelection);
           }}
-          onNodeContextMenu={openSelectionContextMenu}
+          onNodeContextMenu={(event, node) => {
+            clearPendingSubcanvasInspector();
+            openSelectionContextMenu(event, node);
+          }}
           onEdgeClick={(event, edgeItem) => {
+            clearPendingSubcanvasInspector();
+            onDiscardPendingBoundaryPort();
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
             clearPendingEdgeClick();
@@ -10846,23 +10125,26 @@ function StoryCanvas({
               edgeItem.id.startsWith("edge:entry:");
             if (!removable) return;
             event.stopPropagation();
-            // Do not route through onOpenCanvasInspector: this selection is
-            // solely a keyboard target for Delete / Backspace.
-            onCanvasSelect({ type: "edge", id: edgeItem.id });
+            setActivePinKey(undefined);
+            const routeGateId = typeof edgeItem.data?.routeGateId === "string" ? edgeItem.data.routeGateId : undefined;
+            if (routeGateId && edgeItem.id.startsWith("edge:transition:")) {
+              const routeId = edgeItem.id.slice("edge:transition:".length);
+              const target = { type: "node" as const, id: routeGateId };
+              lastCanvasSelection.current = target;
+              onOpenInspectorSection(target, "connections", routeId);
+              return;
+            }
+            lastCanvasSelection.current = { type: "edge", id: edgeItem.id };
+            onOpenCanvasInspector(lastCanvasSelection.current);
           }}
           onEdgeContextMenu={openEdgeContextMenu}
           onPaneClick={() => {
+            clearPendingSubcanvasInspector();
+            onDiscardPendingBoundaryPort();
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
-            clearPendingNodeClick();
             clearPendingEdgeClick();
-            if (
-              collapseInspectorTabOnCanvasClick &&
-              eventInspector.expandedEventId
-            ) {
-              onCollapseEventInspectorEvent(eventInspector.expandedEventId);
-              onCanvasSelect(undefined);
-            }
+            if (collapseInspectorTabOnCanvasClick && eventInspector.open) onCollapseInspector();
           }}
           onPaneContextMenu={openContextMenu}
           defaultViewport={project.canvas?.viewport}
@@ -10913,12 +10195,6 @@ function StoryCanvas({
             </Panel>
           ) : null}
           <Controls position="bottom-left">
-            <CanvasFindingsButton
-              findings={findings}
-              project={project}
-              onLocateFinding={locateFinding}
-              onFixFinding={fixFinding}
-            />
             <div className="canvas-tools-anchor">
               <button
                 type="button"
@@ -10965,7 +10241,7 @@ function StoryCanvas({
                     {minimapOpen ? <Eye size={14} /> : <EyeOff size={14} />}
                   </button>
                 </div>,
-                document.body,
+                shellRef.current?.closest(".pathbranching-app") ?? document.body,
                 )
               ) : null}
             </div>
@@ -10984,8 +10260,8 @@ function StoryCanvas({
               id="dots"
               variant={BackgroundVariant.Dots}
               gap={canvasBackground.gridSize}
-              size={1.2}
-              color={backgroundColor}
+              size={1.5}
+              color={`color-mix(in srgb, var(--ef-star-guide) ${Math.round(dotOpacity * 100)}%, transparent)`}
             />
           ) : null}
         </ReactFlow>
@@ -11141,22 +10417,22 @@ function StoryCanvas({
                         {activeEventScope ? (
                           <>
                             <button type="button" onClick={() => connectNarrativeNode("dialogueStart", "dialogueStart")}>
-                              Dialogue Trigger
+                              {canvasUiLocale === "es" ? "Inicio de conversación" : "Conversation start"}
                             </button>
                             <button type="button" onClick={() => connectNarrativeNode("speechBeat", "speechBeat")}>
-                              Dialogue
+                              {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
                             </button>
                           </>
                         ) : null}
                         <button type="button" onClick={() => connectNarrativeNode("decision", "decision")}>
-                          Decision
+                          {canvasUiLocale === "es" ? "Decisión" : "Decision"}
                         </button>
                         <button type="button" onClick={() => connectNarrativeNode("directionBeat", "directionBeat")}>
-                          Director Direction
+                          {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
                         </button>
                         <hr />
                         <button type="button" onClick={() => connectNarrativeNode("dialogue", "dialogue")}>
-                          Dialogue Group
+                          {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
                         </button>
                       </>
                     );
@@ -11188,7 +10464,7 @@ function StoryCanvas({
             </>
           ) : activeDialogueScope ? (
             <>
-              <span className="canvas-menu-label">Create inside dialogue</span>
+              <span className="canvas-menu-label">{canvasUiLocale === "es" ? "Crear dentro de la conversación" : "Create inside conversation"}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -11204,7 +10480,7 @@ function StoryCanvas({
                   setContextMenu(undefined);
                 }}
               >
-                Speech Beat
+                {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
               </button>
               <button
                 type="button"
@@ -11221,7 +10497,7 @@ function StoryCanvas({
                   setContextMenu(undefined);
                 }}
               >
-                Director Direction
+                {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
               </button>
               <button
                 type="button"
@@ -11237,7 +10513,7 @@ function StoryCanvas({
                   setContextMenu(undefined);
                 }}
               >
-                Decision
+                {canvasUiLocale === "es" ? "Decisión" : "Decision"}
               </button>
             </>
           ) : (
@@ -11275,7 +10551,7 @@ function StoryCanvas({
                       setContextMenu(undefined);
                     }}
                   >
-                    Dialogue Trigger
+                    {canvasUiLocale === "es" ? "Inicio de conversación" : "Conversation start"}
                   </button>
                   <button
                     type="button"
@@ -11291,7 +10567,7 @@ function StoryCanvas({
                       setContextMenu(undefined);
                     }}
                     >
-                      Dialogue
+                      {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
                     </button>
                   <button
                     type="button"
@@ -11307,7 +10583,7 @@ function StoryCanvas({
                       setContextMenu(undefined);
                     }}
                   >
-                    Decision
+                    {canvasUiLocale === "es" ? "Decisión" : "Decision"}
                   </button>
                     <button
                       type="button"
@@ -11323,7 +10599,7 @@ function StoryCanvas({
                         setContextMenu(undefined);
                       }}
                     >
-                      Director Direction
+                      {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
                     </button>
                     <hr style={{ margin: "8px 0", borderColor: "var(--color-border)" }} />
                     <EventTypeMenuButton
@@ -11352,7 +10628,7 @@ function StoryCanvas({
                       setContextMenu(undefined);
                     }}
                   >
-                    Dialogue Group
+                    {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
                   </button>
                 </>
               ) : (
@@ -11377,106 +10653,27 @@ function StoryCanvas({
         />
       ) : null}
 
-      <EventAuthoringDock
-        project={inspectorProject}
-        nodes={nodes}
-        selection={selection}
-        eventDraft={eventDraft}
-        eventInspector={eventInspector}
-        tabGroups={eventInspectorTabGroups}
-        onOpenEvent={onOpenEventInspectorEvent}
-        onCollapseEvent={onCollapseEventInspectorEvent}
-        onCloseEvent={onCloseEventInspectorEvent}
-        onCloseAllEvents={onCloseAllEventInspectorEvents}
-        onCloseEventsAbove={onCloseEventInspectorEventsAbove}
-        onCloseEventsBelow={onCloseEventInspectorEventsBelow}
-        onCloseOtherEvents={onCloseOtherEventInspectorEvents}
-        onPruneEvents={onPruneEventInspectorEvents}
-        onSaveGroup={onSaveEventInspectorTabGroup}
-        onLoadGroup={onLoadEventInspectorTabGroup}
-        onDeleteGroup={onDeleteEventInspectorTabGroup}
-        onSelect={onSelect}
-        onLocateInspectorTab={locateInspectorSelection}
-        inspectorTabs={inspectorTabs}
-        expandedInspectorTabId={expandedInspectorTabId}
-        inspectorMaximized={inspectorMaximized}
-        onOpenInspectorTab={onOpenInspectorTab}
-        onCloseInspectorTab={onCloseInspectorTab}
-        onCloseAllInspectorTabs={onCloseAllInspectorTabs}
-        onCloseInspectorTabsAbove={closeExplorerInspectorTabsAbove}
-        onCloseInspectorTabsBelow={closeExplorerInspectorTabsBelow}
-        onCloseOtherInspectorTabs={closeOtherExplorerInspectorTabs}
-        onDisableInspectorDebug={onDisableInspectorDebug}
-        onToggleInspectorMaximized={onToggleInspectorMaximized}
-      >
-        <Inspector
-          project={inspectorProject}
-          localeNames={localeNames}
-          scope={activeScope}
-          propertiesConfig={propertiesConfig}
-          nodes={nodes}
-          edges={edges}
-          files={files}
-          selection={inspectorSelection}
-          findings={findings}
-          exportOpen={exportOpen}
-          exportPreviewMode={exportPreviewMode}
-          canvasLayerMode={canvasLayerMode}
-          onCanvasLayerModeChange={onCanvasLayerModeChange}
-          requestedLogicTab={logicFocus}
-          embedded
-          manualDirty={manualInspectorDraft?.dirty}
-          onSaveManual={
-            inspectorShowsManualSave ? onSaveManualInspector : undefined
-          }
-          onExportPreviewModeChange={onExportPreviewModeChange}
-          onClose={() => onSelect(undefined)}
-          onUpdateSequence={onUpdateSequence}
-          onUpdateBranch={onUpdateBranch}
-          onCreateEventInBranch={onCreateEventInBranch}
-          onUpdateEvent={onUpdateEvent}
-          onApplyEvpath={onApplyEvpath}
-          onCreateDecision={onCreateDecision}
-          onUpdateDecision={onUpdateDecision}
-          onUpdateDialogue={onUpdateDialogue}
-          onUpdateDialogueBeat={onUpdateDialogueBeat}
-          onUpdateEventDialogueBeat={onUpdateEventDialogueBeat}
-          onUpdateScriptBlock={onUpdateScriptBlock}
-          onUpdateLocalizedText={onUpdateLocalizedText}
-          onDeleteDialogueBeat={onDeleteDialogueBeat}
-          onDeleteEventDialogueBeat={onDeleteEventDialogueBeat}
-          onDeleteDecision={onDeleteDecision}
-          onDeleteDialogue={onDeleteDialogue}
-          onCreateOutcome={onCreateOutcome}
-          onUpdateOutcome={onUpdateOutcome}
-          onDeleteOutcome={onDeleteOutcome}
-          onUpdateTransition={onUpdateTransition}
-          onDeleteTransition={onDeleteTransition}
-          onCreateScriptTransition={onCreateScriptTransition}
-          onCreateCanonSuggestion={onCreateCanonSuggestion}
-          onUpdateCanonSuggestion={onUpdateCanonSuggestion}
-          onDeleteCanonSuggestion={onDeleteCanonSuggestion}
-          onUpdateDataObject={onUpdateDataObject}
-          onDeleteDataObject={onDeleteDataObject}
-          onSelectCanon={(id) => onSelect({ type: "canon", id })}
-          onSelectSuggestion={(id) => onSelect({ type: "canonSuggestion", id })}
-          onEditCanonRef={onEditCanonRef}
-          onCreateCanonWorkingCopy={onCreateCanonWorkingCopy}
-          onSaveCanonWorkingCopy={onSaveCanonWorkingCopy}
-          onExportCanonChangeSet={onExportCanonChangeSet}
-          onApplyCanonWorkingCopy={onApplyCanonWorkingCopy}
-          onUpdateLocalExplorerEntity={onUpdateLocalExplorerEntity}
-          onPublishLocalExplorerEntity={onPublishLocalExplorerEntity}
-          onUpdateLocalExplorerType={onUpdateLocalExplorerType}
-          onUpdateLocalExplorerProperty={onUpdateLocalExplorerProperty}
-          onUpdateLogicPropertyOverride={onUpdateLogicPropertyOverride}
-          onUpdateLogicTypeOverride={onUpdateLogicTypeOverride}
-          onUpdateCharacterCategories={onUpdateCharacterCategories}
-          onUpdateEdgeLabel={onUpdateEdgeLabel}
-          onDeleteSelection={onDeleteSelection}
-          onOpenRule={onOpenRule}
-        />
+      </div>
+      {contextFocus && contextVisible ? <div className="pb-inspector-backdrop" aria-hidden="true" /> : null}
+      <aside className="pb-context-surface" hidden={!contextVisible} aria-label={canvasUiLocale === "es" ? "Panel contextual" : "Context panel"}>
+        <div className="pb-context-edit" hidden={contextTab !== "edit"}>
+      <EventAuthoringDock onNameMutation={onAuthoringMutation} project={project} nodes={inspectorGraph.nodes} selection={inspectorSelection} eventDraft={eventDraft} eventInspector={eventInspector} tabGroups={eventInspectorTabGroups}
+        fullscreen={contextFocus} onFullscreenChange={onContextFocusChange}
+        inspectorTabs={inspectorTabs} expandedInspectorTabId={expandedInspectorTabId} inspectorMaximized={inspectorMaximized} inspectorSize={inspectorSize} onInspectorResize={onInspectorResize} onFold={onCollapseInspector} inspectorStackOrder={inspectorStackOrder} onInspectorStackOrderChange={onInspectorStackOrderChange}
+        onOpenEvent={id=>onOpenCanvasInspector({type:"node",id})} onCollapseEvent={onCollapseEventInspectorEvent} onCloseEvent={onCloseEventInspectorEvent} onCloseAllEvents={onCloseAllEventInspectorEvents} onCloseEventsAbove={onCloseEventInspectorEventsAbove} onCloseEventsBelow={onCloseEventInspectorEventsBelow} onCloseOtherEvents={onCloseOtherEventInspectorEvents} onPruneEvents={onPruneEventInspectorEvents}
+        onSaveGroup={onSaveEventInspectorTabGroup} onLoadGroup={onLoadEventInspectorTabGroup} onDeleteGroup={onDeleteEventInspectorTabGroup} onSelect={onSelect} onLocateInspectorTab={locateInspectorSelection}
+        onOpenInspectorTab={onOpenInspectorTab} onCloseInspectorTab={onCloseInspectorTab} onCloseAllInspectorTabs={onCloseAllInspectorTabs} onCloseInspectorTabsAbove={closeExplorerInspectorTabsAbove} onCloseInspectorTabsBelow={closeExplorerInspectorTabsBelow} onCloseOtherInspectorTabs={closeOtherExplorerInspectorTabs} onDisableInspectorDebug={onDisableInspectorDebug} onToggleInspectorMaximized={onToggleInspectorMaximized}>
+        {inspectorSelection.type === "storyDebug" ? inspectorDebugContent : inspectorSelection.type === "storyPlay" ? contextTab === "edit" ? storyTestPlayTab : null : renderInspector(inspectorSelection, inspectorGraph, () => closeInspectorTarget(inspectorSelection))}
       </EventAuthoringDock>
+        </div>
+        <div className="pb-context-test" hidden={contextTab !== "test"}>
+          <div className="pb-context-test-tools" role="toolbar" aria-label={canvasUiLocale === "es" ? "Vista de prueba" : "Test view"}>
+            {eventInspector.open ? <button type="button" onClick={onOpenStoryPlay}><Pencil size={15} />{canvasUiLocale === "es" ? "Volver al inspector" : "Back to inspector"}</button> : null}
+            <button type="button" aria-label={contextFocus ? canvasUiLocale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : canvasUiLocale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} title={contextFocus ? canvasUiLocale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : canvasUiLocale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} onClick={() => onContextFocusChange(!contextFocus)}>{contextFocus ? <Shrink size={15} /> : <Fullscreen size={15} />}</button>
+          </div>
+          {contextTab === "test" ? storyTestWorkspace : null}
+        </div>
+      </aside>
     </main>
   );
 }
@@ -11484,6 +10681,10 @@ function StoryCanvas({
 const STARTUP_LOADER_MIN_MS = 700;
 
 export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
+  return <ApplicationActivity.Provider value={suiteChrome?.active ?? true}><NotificationProvider host={suiteChrome?.notifications} source="PathBranching" active={suiteChrome?.active ?? true}><div className="pathbranching-app" data-ambient-background={suiteChrome?.suiteSettings?.ambientBackground ?? loadSettings().ambientBackground !== false} data-background-scene={normalizeBackgroundScene(suiteChrome?.suiteSettings?.backgroundScene ?? loadSettings().backgroundScene)} data-window-chrome={!suiteChrome && isTauriRuntime() ? "true" : undefined} data-theme={suiteChrome?.suiteSettings?.style ?? loadSettings().theme}><PathBranchingApp suiteChrome={suiteChrome} /></div></NotificationProvider></ApplicationActivity.Provider>;
+}
+
+function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const desktopRuntime = isTauriRuntime();
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   useEffect(() => {
@@ -11501,12 +10702,17 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const appShellRef = useRef<HTMLDivElement | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<PathBranchingSettingsSection>();
+  useEffect(() => suiteChrome?.registerSettingsOpener?.((section) => {
+    setSettingsInitialSection(section);
+    setShowSettings(true);
+  }), [suiteChrome?.registerSettingsOpener]);
   const [showFeedback, setShowFeedback] = useState(false);
   const [workspace, setWorkspace] = useState<PathBranchingWorkspace>();
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [showInteractionTutorial, setShowInteractionTutorial] = useState(
     () =>
-      window.localStorage.getItem(PATHBRANCHING_INTERACTION_TUTORIAL_KEY) !==
+      !suiteChrome?.learning && window.localStorage.getItem(PATHBRANCHING_INTERACTION_TUTORIAL_KEY) !==
       "dismissed",
   );
   const [project, setProject] = useState<BranchingProject>();
@@ -11515,6 +10721,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [fileState, setFileState] = useState<ProjectFileState>({
     dirty: false,
   });
+  const reportLearning = useLearningReporter(suiteChrome?.learning, fileState.universePath);
   const [saveInProgress, setSaveInProgress] = useState(false);
   const [saveError, setSaveError] = useState<string>();
   const [requestedPanel, setRequestedPanel] = useState<{ id?: WorkspacePanelId; revision: number }>();
@@ -11531,11 +10738,25 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [panelCollapsed, setPanelCollapsed] = useState<WorkspacePanelState>(
     DEFAULT_WORKSPACE_PANEL_COLLAPSED,
   );
+  const [explorerTab, setExplorerTab] = useState<ExplorerPanelId>("outline");
+  const [contextTab, setContextTab] = useState<"edit" | "test">("edit");
+  const [contextFocus, setContextFocus] = useState(false);
+  const playPreferredFullscreenRef = useRef(false);
+  const playDetachedPresentationRef = useRef<{ fullscreen: boolean; tabId: string } | undefined>(undefined);
+  const playRestoreOnOpenRef = useRef(false);
+  const playDetachedWindowActiveRef = useRef(false);
+  const playDetachingRef = useRef(false);
+  const playWasDetachedRef = useRef(false);
   const [focusedScriptBlock, setFocusedScriptBlock] = useState<{
     scriptId: string;
     blockId: string;
   }>();
-  const [eventScriptWorkspace, setEventScriptWorkspace] = useState<{ eventId: string; textKey?: string; tab?: string; entityId?: string; focusId?: string }>();
+  const [inspectorRequest, setInspectorRequest] = useState<InspectorRequest>();
+  const [inspectorSections, setInspectorSections] = useState<Record<string,string>>({});
+  const [inspectorSize, setInspectorSize] = useState<InspectorSize>({ width:420 });
+  const [inspectorStackOrder, setInspectorStackOrder] = useState<string[]>([]);
+  const openInspectorRef = useRef<(target:Selection,section?:string,focusId?:string)=>void>(()=>undefined);
+  const stopStoryTestRef = useRef<() => void>(() => undefined);
   const [testPosition, setTestPosition] = useState<string>();
   const [testVisited, setTestVisited] = useState<string[]>([]);
   const [selectedLogicRuleId, setSelectedLogicRuleId] = useState<string>();
@@ -11568,12 +10789,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   useEffect(() => {
     const configure = (event: Event) => {
       const detail = (event as CustomEvent<{ entityId?: string }>).detail;
-      setEventScriptWorkspace({ eventId: projectRef.current?.events[0]?.id ?? "", tab: "entities", entityId: detail?.entityId });
+      if (detail?.entityId) openInspectorRef.current({ type: projectRef.current?.canonRefs.some(ref=>ref.id===detail.entityId) ? "canon" : "explorerEntity", id: detail.entityId }, "uses");
     };
     window.addEventListener("pathbranching:configure-entity", configure);
     const locate = (event: Event) => {
       const detail = (event as CustomEvent<{ tab: string; id: string; entityId?: string }>).detail;
-      if (detail) setEventScriptWorkspace({ eventId: projectRef.current?.events[0]?.id ?? "", tab: detail.tab, entityId: detail.entityId, focusId: detail.id });
+      if (!detail) return;
+      const entityId = detail.entityId ?? detail.id;
+      const target:Selection = detail.tab === "actions" ? {type:"narrativeAction",id:detail.id} : detail.tab === "rules" ? {type:"narrativeRule",id:detail.id} : projectRef.current?.entityInstances?.some(copy=>copy.id===detail.id) ? {type:"entityInstance",id:detail.id} : {type:projectRef.current?.canonRefs.some(ref=>ref.id===entityId) ? "canon" : "explorerEntity",id:entityId};
+      openInspectorRef.current(target, detail.tab === "entities" ? "copies" : "overview", detail.id);
     };
     window.addEventListener("pathbranching:locate-authoring", locate);
     return () => { window.removeEventListener("pathbranching:configure-entity", configure); window.removeEventListener("pathbranching:locate-authoring", locate); };
@@ -11651,12 +10875,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   >(new Set());
   const [error, setError] = useState<string>();
   const [message, setMessage] = useState<string>();
+  useNotificationMessage(message, "info", { silent: !settings.showStatusMessages });
+  useNotificationMessage(error && error !== saveError ? error : undefined, "error");
+  useNotificationMessage(saveError, "error", { action: { label: uiLocale === "es" ? "Reintentar guardado" : "Retry save", run: () => persistProjectRef.current?.({ manual: true }) } });
   const [panelContextMenu, setPanelContextMenu] = useState<{
     x: number;
     y: number;
   }>();
   const panelContextMenuRef = useRef<HTMLDivElement | null>(null);
   const projectRef = useRef<BranchingProject | undefined>(undefined);
+  const pendingBoundaryPortRef = useRef<{
+    eventId: string;
+    dialogueId?: string;
+    direction: "input" | "output";
+    slotId: string;
+    nodeId: string;
+    selected: boolean;
+  } | undefined>(undefined);
   const canvasLayerModeRef = useRef<CanvasLayerMode>(canvasLayerMode);
   const workspaceRef = useRef<PathBranchingWorkspace | undefined>(undefined);
   const fileStateRef = useRef<ProjectFileState>({ dirty: false });
@@ -11664,6 +10899,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const canvasClipboardRef = useRef<CanvasClipboard | undefined>(undefined);
   const canvasPasteOffsetRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const switchDraftsRef = useRef(false);
+  switchDraftsRef.current = Boolean(recoverableDraftCount || eventDraft?.dirty || Object.values(manualInspectorDrafts).some((draft) => draft.dirty) || markdownTabs.some((tab) => tab.dirty) || pendingRecovery);
   const persistProjectRef = useRef<
     ((options?: { manual?: boolean }) => Promise<void>) | undefined
   >(undefined);
@@ -11723,7 +10960,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         modifiedMs?: number;
       } = {},
     ) => {
-      const normalizedProject = normalizeProject(nextProject);
+      const currentProject = projectRef.current;
+      const normalizedProject = currentProject && narrativeContentUnchanged(currentProject, nextProject)
+        ? nextProject : normalizeProject(nextProject);
       const normalizedScope = activeCanvasScope(normalizedProject);
       const model = buildStoryCanvasModel(normalizedProject, {
         nodeColors: settingsRef.current.nodeColors,
@@ -11857,6 +11096,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...savedSession.panelVisibility,
       });
       setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 }));
+      setExplorerTab(savedSession.explorerTab ?? (savedSession.panelCollapsed?.assets === false ? "assets" : savedSession.panelCollapsed?.logic === false ? "logic" : "outline"));
+      setContextTab(savedSession.contextTab ?? "edit");
+      setContextFocus(savedSession.contextFocus ?? false);
       const isFirstTutorialRun =
         !settingsRef.current.workspaceSessions?.[universePath];
       setPanelCollapsed(
@@ -11885,6 +11127,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setInspectorTabs(savedSession.inspectorTabs ?? []);
       setExpandedInspectorTabId(savedSession.inspectorExpandedTabId);
       setInspectorMaximized(savedSession.inspectorMaximized ?? false);
+      setInspectorSections(savedSession.inspectorSections ?? {});
+      setInspectorSize(savedSession.inspectorSize ?? {width:420});
+      setInspectorStackOrder(savedSession.inspectorStackOrder ?? []);
+      setInspectorRequest(undefined);
       setStoryOutlineTab(savedSession.storyOutlineTab ?? "sequence");
       const initialSelectionId =
         normalizedScope?.kind === "sequence"
@@ -12011,6 +11257,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
       try {
         await persistProjectRef.current?.();
+        for (const action of learningActionsForMutation(currentProject, mutationResult.project)) reportLearning(action, mutationResult.project.storyId ?? mutationResult.project.projectId);
         setMessage(mutationResult.message ?? `${label} saved.`);
         return true;
       } catch (commitError) {
@@ -12160,16 +11407,19 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (
       selection: ManualInspectorDraft["selection"],
       update: (project: BranchingProject) => BranchingProject,
+      integrationMappingIds: string[] = [],
     ) => {
       const key = manualInspectorDraftKey(selection);
       if (!key) return;
       setManualInspectorDrafts((current) => {
-        const base = current[key]?.project ?? projectRef.current;
-        if (!base) return current;
+        const latest = projectRef.current;
+        if (!latest) return current;
+        const base = current[key]?.dirty ? mergeManualInspectorDraft(latest, current[key]) : latest;
         const draft = {
           selection,
           project: update(base),
           dirty: true,
+          integrationMappingIds: [...new Set([...(current[key]?.integrationMappingIds ?? []), ...integrationMappingIds])],
         };
         setAuthoringDraft(authoringDraftKey(base.projectId, key, "inspector"), JSON.stringify(draft));
         return {
@@ -12506,7 +11756,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       const usages = entityUsages(currentProject, id);
       if (usages.length) {
         setError(`${uiLocaleRef.current === "es" ? "Resuelve los usos antes de eliminar esta entidad" : "Resolve references before deleting this entity"}: ${usages.map(usage => usage.path).join(", ")}`);
-        setEventScriptWorkspace({ eventId: currentProject.events[0]?.id ?? "", tab: "entities", entityId: id });
+        openInspectorRef.current({type:"explorerEntity",id},"uses");
         return;
       }
       if (!window.confirm(`Delete local entity \"${entity.name}\"?`)) return;
@@ -12863,14 +12113,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   );
 
   const confirmDiscardChanges = useCallback(async () => {
-    try {
-      if (fileStateRef.current.dirty) await persistProjectRef.current?.();
-      else await saveQueueRef.current.catch(() => undefined);
-      return true;
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-      return false;
-    }
+    return guardUniverseSwitch({
+      state: () => ({ hasDrafts: switchDraftsRef.current || Boolean(projectRef.current && authoringDraftEntries(projectRef.current.projectId).length), saveBlocked: Boolean(workspaceRef.current?.saveBlocked), hasPendingSave: fileStateRef.current.dirty }),
+      flush: async () => { if (fileStateRef.current.dirty) await persistProjectRef.current?.(); else await saveQueueRef.current; },
+      report: (reason, failure) => setError(reason === 'drafts'
+        ? uiLocaleRef.current === 'es' ? 'Resuelve el borrador de Conversación, el inspector o las pestañas de texto antes de cambiar de documento.' : 'Resolve pending Conversation, inspector or text-tab drafts before changing documents.'
+        : failure instanceof Error ? failure.message : reason === 'blocked' ? 'Saving is blocked. Review the loading issues.' : 'Changes are still pending. Wait for saving to finish.'),
+    });
   }, []);
 
   const setActiveSequence = useCallback(
@@ -12917,6 +12166,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           storyId,
         );
         applyWorkspace(opened.workspace, opened.path);
+        if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
           worldnotionBridge: {
@@ -12967,6 +12217,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             return;
           }
           applyWorkspace(opened.workspace, opened.path);
+          if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
           setSettings((current) => ({
             ...rememberRecentProject(current, opened.path),
             worldnotionBridge: {
@@ -13004,9 +12255,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   useEffect(() => {
     settingsRef.current = settings;
-    document.documentElement.dataset.theme = suiteChrome?.suiteSettings?.style ?? settings.theme;
+    if (!suiteChrome) document.documentElement.dataset.theme = settings.theme;
+    document.querySelector<HTMLElement>(".pathbranching-app")?.setAttribute("data-theme", suiteChrome?.suiteSettings?.style ?? settings.theme);
+    document.querySelector<HTMLElement>(".pathbranching-app")?.setAttribute("data-ambient-background", String(suiteChrome?.suiteSettings?.ambientBackground ?? settings.ambientBackground !== false));
+    document.querySelector<HTMLElement>(".pathbranching-app")?.setAttribute("data-background-scene", normalizeBackgroundScene(suiteChrome?.suiteSettings?.backgroundScene ?? settings.backgroundScene));
+    const fontRoot = document.querySelector<HTMLElement>(".pathbranching-app");
+    if (fontRoot) { if (suiteChrome?.suiteSettings) fontRoot.style.removeProperty("--ef-primary-font"); else fontRoot.style.setProperty("--ef-primary-font", ({sans:"Inter, system-ui, sans-serif",serif:"Georgia, serif",humanist:"Atkinson Hyperlegible, Trebuchet MS, sans-serif"}[settings.interfaceFont ?? "sans"])); }
     saveSettings({ ...settings, lastView: view });
-  }, [settings, suiteChrome?.suiteSettings?.style, view]);
+  }, [settings, suiteChrome?.suiteSettings?.style, suiteChrome?.suiteSettings?.ambientBackground, suiteChrome?.suiteSettings?.backgroundScene, view]);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -13040,6 +12296,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   useEffect(() => {
     if (!fileState.universePath || initialLoading) return;
     const session: PathBranchingWorkspaceSession = {
+      explorerTab, contextPresentation: "floating", contextTab, contextFocus,
       view,
       selection,
       canonOpen,
@@ -13054,7 +12311,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       eventInspectorTabGroups,
       inspectorTabs,
       inspectorExpandedTabId: expandedInspectorTabId,
+      inspectorStackOrder,
       inspectorMaximized,
+      inspectorSections,
+      inspectorSize,
       activeScope,
       canvasMode,
       canvasLayerMode,
@@ -13080,11 +12340,18 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       };
     });
   }, [
+    explorerTab, contextTab, contextFocus,
     activeMarkdownTabId,
     activeScope,
     canonOpen,
     canonWidth,
     canvasMode,
+    inspectorSections,
+    inspectorSize,
+    inspectorStackOrder,
+    inspectorTabs,
+    expandedInspectorTabId,
+    inspectorMaximized,
     canvasLayerMode,
     dataOpen,
     eventInspector,
@@ -13206,6 +12473,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
       applyWorkspace(opened.workspace, opened.path);
+      if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
       setSettings((current) => ({
         ...rememberRecentProject(current, opened.path),
         worldnotionBridge: {
@@ -13238,6 +12506,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     try {
       const opened = await openDemoUniverse();
       applyWorkspace(opened.workspace, opened.path);
+      if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
       setSettings((current) => ({
         ...current,
         worldnotionBridge: {
@@ -13265,6 +12534,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       .then((opened) => {
         if (disposed) return;
         applyWorkspace(opened.workspace, opened.path);
+        if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
           worldnotionBridge: {
@@ -13315,26 +12585,40 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     }
   }, []);
 
+  useEffect(() => {
+    if (!suiteChrome?.settingsHost || !fileState.universePath) return;
+    const root = fileState.universePath;
+    const refresh = (event: Event) => { if ((event as CustomEvent<{path:string}>).detail?.path !== root) return;
+      void readUniverseProfileSource(root).then(source => {
+        if (fileStateRef.current.universePath !== root) return;
+        const profile = source ? JSON.parse(source) as UniverseProfile : undefined;
+        setFileState(current => { if (current.universePath !== root) return current; const next={...current,universeProfile:profile}; fileStateRef.current=next; return next; });
+        setWorkspace(current => { if (!current || fileStateRef.current.universePath !== root) return current; const next={...current,universeProfile:profile}; workspaceRef.current=next; return next; });
+      }).catch(error => console.warn("Could not refresh universe profile.",error));
+    };
+    window.addEventListener("everend-forge:profile-saved",refresh); return () => window.removeEventListener("everend-forge:profile-saved",refresh);
+  }, [suiteChrome?.settingsHost !== undefined, fileState.universePath]);
   const saveUniverseProfile = useCallback(async (profile: UniverseProfile) => {
     const universePath = fileStateRef.current.universePath;
     if (!universePath) {
       throw new Error("Open a universe before saving its customization.");
     }
+    if (suiteChrome?.sharedUniversePath && universePath.replace(/\\/g, "/") !== suiteChrome.sharedUniversePath.replace(/\\/g, "/")) throw new Error("The selected universe is still loading.");
     const primaryLocale = canonicalLocale(profile.localization?.primaryLocale ?? machineLocale());
     const locales = normalizeLocaleList(
       profile.localization?.primaryLocale ?? machineLocale(),
       profile.localization?.locales ?? [],
     );
-    const normalizedProfile: UniverseProfile = {
-      ...fileStateRef.current.universeProfile,
+    const patch = {
       name: profile.name?.trim() || undefined,
       icon: profile.icon,
-      localization: {
+      ...(JSON.stringify(profile.localization) !== JSON.stringify(fileStateRef.current.universeProfile?.localization) ? { localization: {
         primaryLocale,
         locales,
         localeNames: normalizeLocaleNames(profile.localization?.localeNames, locales),
-      },
+      } } : {}),
     };
+    const normalizedProfile = mergeUniverseProfile(await readUniverseProfileSource(universePath), patch) as UniverseProfile;
     const result = await saveUniverseTextFile(
       universePath,
       ".everend/universe.json",
@@ -13359,7 +12643,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       updateProject(normalizeLocalizationCatalog(currentProject, normalizedProfile.localization!.primaryLocale));
     }
     setMessage("Universe customization saved.");
-  }, [updateProject]);
+    suiteChrome?.settingsHost?.profileSaved(universePath);
+  }, [updateProject, suiteChrome?.sharedUniversePath, suiteChrome?.settingsHost?.profileSaved]);
 
   const persistProject = useCallback((options: { manual?: boolean } = {}) => {
     const run = async () => {
@@ -13418,6 +12703,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
       setError(undefined);
       if (options.manual) {
+        if (isStillCurrentRevision) reportLearning("document-saved", currentProject.storyId ?? currentProject.projectId, currentFileState.universePath);
         setMessage(
           isStillCurrentRevision
             ? `Saved branching story in ${projectFileName(currentFileState.universePath)}.`
@@ -13448,8 +12734,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     persistProjectRef.current = persistProject;
   }, [persistProject]);
 
+  useEffect(() => suiteChrome?.registerUniverseSwitchGuard?.(() => guardUniverseSwitch({
+    state: () => ({ hasDrafts: switchDraftsRef.current || Boolean(projectRef.current && authoringDraftEntries(projectRef.current.projectId).length), saveBlocked: Boolean(workspaceRef.current?.saveBlocked), hasPendingSave: fileStateRef.current.dirty }),
+    flush: async () => { if (fileStateRef.current.dirty) await persistProjectRef.current?.(); else await saveQueueRef.current; },
+    report: (reason, failure) => {
+      const es = uiLocaleRef.current === "es";
+      const message = reason === "drafts" ? es ? "PathBranching: aplica o conserva los borradores pendientes en el inspector, el editor de texto o las pestañas Markdown antes de cambiar de universo." : "PathBranching: resolve pending drafts in the inspector, text editor or Markdown tabs before switching universe."
+        : reason === "blocked" ? es ? "PathBranching: el guardado está bloqueado. Revisa las causas de carga antes de cambiar de universo." : "PathBranching: saving is blocked. Review the loading issues before switching universe."
+        : reason === "pending" ? es ? "PathBranching: aún hay cambios pendientes. Espera a que finalice el guardado." : "PathBranching: changes are still pending. Wait for saving to finish."
+        : `${es ? "PathBranching: no se pudo guardar." : "PathBranching: saving failed."} ${failure instanceof Error ? failure.message : String(failure)}`;
+      setError(message);
+      // Also visible when another mounted application owns the active screen.
+      window.dispatchEvent(new CustomEvent("everend-forge:universe-switch-blocked", { detail: { app: "pathbranching", message } }));
+    },
+  })), [suiteChrome?.registerUniverseSwitchGuard]);
+
   useEffect(() => {
-    if (!isTauriRuntime() || (suiteChrome && !suiteChrome.active)) return;
+    if (!isTauriRuntime() || suiteChrome) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     let closing = false;
@@ -13461,8 +12762,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         event.preventDefault();
         void (async () => {
           try {
-            if (fileStateRef.current.dirty) await persistProjectRef.current?.();
-            else await saveQueueRef.current.catch(() => undefined);
+            if (!(await confirmDiscardChanges())) return;
             closing = true;
             await nativeWindow.close();
           } catch (failure) {
@@ -13474,15 +12774,22 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (disposed) unlisten();
     }).catch(() => undefined);
     return () => { disposed = true; unlisten?.(); };
-  }, [suiteChrome?.active]);
+  }, [suiteChrome, confirmDiscardChanges]);
 
-  const flushProjectAutosave = useCallback(() => {
-    void persistProjectRef.current?.().catch(() => undefined);
-  }, []);
+  const saveDocumentManually = useCallback(() => {
+    void saveActiveManualInspectorDraft().then(async (saved) => {
+      if (!saved) await persistProjectRef.current?.({ manual: true });
+      else {
+        const current = projectRef.current;
+        if (current) reportLearning("document-saved", current.storyId ?? current.projectId, fileStateRef.current.universePath);
+      }
+    }).catch(() => undefined);
+  }, [reportLearning, saveActiveManualInspectorDraft]);
 
   const openEventInspectorForEvent = useCallback((eventId: string) => {
     setExpandedInspectorTabId(undefined);
     setEventInspector((current) => openEventInspectorTab(current, eventId));
+    setSelection({ type: "node", id: eventId });
   }, []);
 
   const collapseEventInspectorForEvent = useCallback((eventId: string) => {
@@ -13491,124 +12798,174 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const pruneEventInspectorEvents = useCallback(
     (eventIds: readonly string[]) => {
-      setEventInspector((current) =>
-        pruneEventInspectorState(current, eventIds),
-      );
+      setEventInspector((current) => {
+        const next = pruneEventInspectorState(current, eventIds);
+        return current.open && inspectorTabs.length > 0 && !next.open
+          ? { ...next, open: true }
+          : next;
+      });
       setEventInspectorTabGroups((current) =>
         pruneEventInspectorTabGroups(current, eventIds),
       );
     },
-    [],
+    [inspectorTabs.length],
   );
 
   const requestCloseEventInspectorForEvent = useCallback(
     (eventId: string) => {
-      setEventInspector((current) =>
-        closeEventInspectorTab(current, eventId, {
-          selectNextOnClose: settings.inspectorTabCloseSelectsNext,
-        }),
-      );
+      const next = closeEventInspectorTab(eventInspector, eventId, {
+        selectNextOnClose: settings.inspectorTabCloseSelectsNext,
+      });
+      const closingActive = eventInspector.expandedEventId === eventId;
+      setEventInspector({
+        ...next,
+        open: next.open || Boolean(expandedInspectorTabId),
+      });
+      if (closingActive && next.expandedEventId) {
+        setExpandedInspectorTabId(undefined);
+        setSelection({ type: "node", id: next.expandedEventId });
+      }
       if (
         settings.inspectorTabCloseSelectsNext &&
-        eventInspector.expandedEventId === eventId &&
-        eventInspector.openEventIds.length === 1 &&
+        closingActive &&
+        !next.expandedEventId &&
         inspectorTabs.length > 0
       ) {
+        setEventInspector({ ...next, open: true, expandedEventId: undefined });
         setExpandedInspectorTabId(inspectorTabs[0].id);
         setSelection(inspectorTabs[0].selection);
       }
     },
     [
-      eventInspector.expandedEventId,
-      eventInspector.openEventIds.length,
+      eventInspector,
+      expandedInspectorTabId,
       inspectorTabs,
       settings.inspectorTabCloseSelectsNext,
     ],
   );
 
+  const prepareClosedStoryPlay = useCallback(() => {
+    if (!playDetachedPresentationRef.current && !playDetachingRef.current
+      && inspectorTabs.some(tab => tab.id === expandedInspectorTabId && tab.selection.type === "storyPlay")) {
+      playPreferredFullscreenRef.current = contextFocus;
+    }
+    playRestoreOnOpenRef.current = true;
+    playDetachedPresentationRef.current = undefined;
+    playDetachingRef.current = false;
+  }, [contextFocus, expandedInspectorTabId, inspectorTabs]);
+
   const closeAllInspectorTabs = useCallback(() => {
+    if (inspectorTabs.some(tab => tab.selection.type === "storyPlay")) {
+      prepareClosedStoryPlay();
+      stopStoryTestRef.current();
+    }
     setEventInspector((current) => closeAllEventInspectorTabs(current));
     setInspectorTabs((current) => current.filter((tab) => tab.mode === "debug"));
     setExpandedInspectorTabId(undefined);
-  }, []);
+    setSelection(current => current?.type === "storyPlay" ? undefined : current);
+  }, [inspectorTabs, prepareClosedStoryPlay]);
+
+  const applyEventInspectorClose = useCallback(
+    (next: EventInspectorState, preferredEventId: string) => {
+      const activeRemoved = Boolean(
+        eventInspector.expandedEventId &&
+        !next.openEventIds.includes(eventInspector.expandedEventId),
+      );
+      const expandedEventId = activeRemoved && next.openEventIds.includes(preferredEventId)
+        ? preferredEventId
+        : next.expandedEventId;
+      const activateEvent = Boolean(
+        expandedEventId && (activeRemoved || expandedEventId !== eventInspector.expandedEventId),
+      );
+      setEventInspector({
+        ...next,
+        open: next.open || Boolean(expandedInspectorTabId),
+        expandedEventId,
+      });
+      if (activateEvent && expandedEventId) {
+        setExpandedInspectorTabId(undefined);
+        setSelection({ type: "node", id: expandedEventId });
+      }
+    },
+    [eventInspector.expandedEventId, expandedInspectorTabId],
+  );
 
   const closeInspectorTabsAbove = useCallback(
     (eventId: string) => {
-      setEventInspector((current) =>
-        closeEventInspectorTabsAbove(current, eventId),
-      );
+      applyEventInspectorClose(closeEventInspectorTabsAbove(eventInspector, eventId), eventId);
     },
-    [eventInspector.openEventIds],
+    [applyEventInspectorClose, eventInspector],
   );
 
   const closeInspectorTabsBelow = useCallback(
     (eventId: string) => {
-      setEventInspector((current) =>
-        closeEventInspectorTabsBelow(current, eventId),
-      );
+      applyEventInspectorClose(closeEventInspectorTabsBelow(eventInspector, eventId), eventId);
     },
-    [eventInspector.openEventIds],
+    [applyEventInspectorClose, eventInspector],
   );
 
   const closeOtherInspectorTabs = useCallback(
     (eventId: string) => {
-      setEventInspector((current) =>
-        closeOtherEventInspectorTabs(current, eventId),
-      );
+      applyEventInspectorClose(closeOtherEventInspectorTabs(eventInspector, eventId), eventId);
     },
-    [],
+    [applyEventInspectorClose, eventInspector],
+  );
+
+  const applyExplorerInspectorClose = useCallback(
+    (nextTabs: InspectorTab[], preferredId: string) => {
+      const removedPlay = inspectorTabs.some(tab => tab.selection.type === "storyPlay" && !nextTabs.some(next => next.id === tab.id));
+      if (removedPlay) {
+        prepareClosedStoryPlay();
+        stopStoryTestRef.current();
+        setSelection(current => current?.type === "storyPlay" && !nextTabs.some(tab => inspectorSelectionKey(tab.selection) === inspectorSelectionKey(current)) ? undefined : current);
+      }
+      setInspectorTabs(nextTabs);
+      if (!expandedInspectorTabId || nextTabs.some(tab => tab.id === expandedInspectorTabId)) return;
+      const nextTab = nextTabs.find(tab => tab.id === preferredId);
+      setExpandedInspectorTabId(nextTab?.id);
+      if (nextTab) {
+        setEventInspector(current => ({ ...current, open: true, expandedEventId: undefined }));
+        setSelection(nextTab.selection);
+      }
+    },
+    [expandedInspectorTabId, inspectorTabs, prepareClosedStoryPlay],
   );
 
   const closeExplorerInspectorTabsAbove = useCallback(
     (id: string) => {
-      setInspectorTabs((current) => {
-        const index = current.findIndex((tab) => tab.id === id);
-        if (index <= 0) return current;
+        const index = inspectorTabs.findIndex((tab) => tab.id === id);
+        if (index <= 0) return;
         const removed = new Set(
-          current.slice(0, index).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
+          inspectorTabs.slice(0, index).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
         );
-        if (removed.size === 0) return current;
-        if (expandedInspectorTabId && removed.has(expandedInspectorTabId)) {
-          setExpandedInspectorTabId(id);
-        }
-        return current.filter((tab) => !removed.has(tab.id));
-      });
+        if (removed.size === 0) return;
+        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
     },
-    [expandedInspectorTabId],
+    [applyExplorerInspectorClose, inspectorTabs],
   );
 
   const closeExplorerInspectorTabsBelow = useCallback(
     (id: string) => {
-      setInspectorTabs((current) => {
-        const index = current.findIndex((tab) => tab.id === id);
-        if (index < 0 || index >= current.length - 1) return current;
+        const index = inspectorTabs.findIndex((tab) => tab.id === id);
+        if (index < 0 || index >= inspectorTabs.length - 1) return;
         const removed = new Set(
-          current.slice(index + 1).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
+          inspectorTabs.slice(index + 1).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
         );
-        if (removed.size === 0) return current;
-        if (expandedInspectorTabId && removed.has(expandedInspectorTabId)) {
-          setExpandedInspectorTabId(id);
-        }
-        return current.filter((tab) => !removed.has(tab.id));
-      });
+        if (removed.size === 0) return;
+        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
     },
-    [expandedInspectorTabId],
+    [applyExplorerInspectorClose, inspectorTabs],
   );
 
   const closeOtherExplorerInspectorTabs = useCallback(
     (id: string) => {
-      setInspectorTabs((current) => {
         const removed = new Set(
-          current.filter((tab) => tab.id !== id && tab.mode !== "debug").map((tab) => tab.id),
+          inspectorTabs.filter((tab) => tab.id !== id && tab.mode !== "debug").map((tab) => tab.id),
         );
-        if (removed.size === 0) return current;
-        if (expandedInspectorTabId && removed.has(expandedInspectorTabId)) {
-          setExpandedInspectorTabId(id);
-        }
-        return current.filter((tab) => !removed.has(tab.id));
-      });
+        if (removed.size === 0) return;
+        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
     },
-    [expandedInspectorTabId],
+    [applyExplorerInspectorClose, inspectorTabs],
   );
 
   const loadInspectorTabGroup = useCallback(
@@ -13621,6 +12978,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
       const nextInspector = loadEventInspectorTabGroup(group);
       const nextInspectorTabs = group.inspectorTabs ?? [];
+      if (inspectorTabs.some(tab => tab.selection.type === "storyPlay") && !nextInspectorTabs.some(tab => tab.selection.type === "storyPlay")) {
+        prepareClosedStoryPlay();
+        stopStoryTestRef.current();
+      }
       const nextExpandedInspectorTabId =
         group.inspectorExpandedTabId &&
         nextInspectorTabs.some(
@@ -13632,10 +12993,11 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             : nextInspectorTabs[0]?.id;
       setEventInspector(
         nextExpandedInspectorTabId
-          ? { ...nextInspector, expandedEventId: undefined }
+          ? { ...nextInspector, open: true, expandedEventId: undefined }
           : nextInspector,
       );
       setInspectorTabs(nextInspectorTabs);
+      setInspectorStackOrder(group.inspectorStackOrder ?? []);
       setExpandedInspectorTabId(nextExpandedInspectorTabId);
       setSelection(
         nextExpandedInspectorTabId
@@ -13647,7 +13009,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           : undefined,
       );
     },
-    [eventInspectorTabGroups],
+    [eventInspectorTabGroups, inspectorTabs, prepareClosedStoryPlay],
   );
 
   const requestLoadInspectorTabGroup = useCallback(
@@ -13679,35 +13041,79 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     );
   }, []);
 
-  const selectWithEventDraftGuard = useCallback(
-    (nextSelection?: Selection) => {
-      const currentProject = projectRef.current;
-      const tab =
-        nextSelection && currentProject
-          ? explorerInspectorTab(nextSelection, currentProject, nodes)
-          : undefined;
-      const nextEventId = currentProject
-        ? eventIdFromSelection(currentProject, nodes, nextSelection)
-        : undefined;
-      setSelection(nextSelection);
-      if (tab) {
-        setInspectorTabs((current) =>
-          current.some((candidate) => candidate.id === tab.id)
-            ? current
-            : [tab, ...current],
-        );
-        setExpandedInspectorTabId(tab.id);
-        setEventInspector((current) => ({
-          ...current,
-          expandedEventId: undefined,
-        }));
-      } else if (nextEventId) {
-        setExpandedInspectorTabId(undefined);
-        openEventInspectorForEvent(nextEventId);
-      }
-    },
-    [nodes, openEventInspectorForEvent],
-  );
+  const openInspector = useCallback((target: Selection, section?: string, focusId?: string) => {
+    const current = projectRef.current;
+    if (!current) return;
+    const resolved = canvasInspectorTarget(current, target, nodesRef.current);
+    if (!resolved) return;
+    target = resolved;
+    const key = inspectorSelectionKey(target);
+    if (target.type === "storyPlay") {
+      const playTabKey = inspectorStackKey({ kind: "inspector", id: key });
+      setInspectorStackOrder(order => [playTabKey, ...order.filter(item => item !== playTabKey)]);
+    }
+    const storyKey = current.storyId ?? current.projectId;
+    const isEvent = target.type === "node" && current.events.some(event=>event.id===target.id);
+    setSelection(target);
+    setEventInspector(state=>({...state,open:true,openEventIds:isEvent?[...new Set([...state.openEventIds,target.id])]:state.openEventIds,expandedEventId:isEvent?target.id:undefined}));
+    if (isEvent) setExpandedInspectorTabId(undefined);
+    else {
+      const existing = inspectorTabs.find(item=>inspectorSelectionKey(item.selection)===key);
+      const tab: InspectorTab = existing ?? (target.type === "storyPlay"
+        ? { id: key, selection: target, title: "Play Mode", mode: "play" }
+        : explorerInspectorTab(target,current,nodesRef.current) ?? {id:key,selection:target,title:inspectorTargetTitle(current,target)});
+      setInspectorTabs(tabs=>{
+        const existing = tabs.find(item=>inspectorSelectionKey(item.selection)===key);
+        if (!existing) return [...tabs,tab];
+        return target.type === "storyPlay" && existing.mode !== "play"
+          ? tabs.map(item => item.id === existing.id ? { ...item, mode: "play", title: "Play Mode" } : item)
+          : tabs;
+      });
+      setExpandedInspectorTabId(tab.id);
+    }
+    const rememberedModule = target.type === "node" && narrativeInspectorModules(current, target.id) ? readInspectorModulePreferences(current.projectId, key)?.active : undefined;
+    setInspectorRequest({selectionKey:key,section:section === "write" ? "path" : section ?? rememberedModule ?? inspectorSections[`${storyKey}|${key}`] ?? "overview",focusId,requestId:Date.now()});
+  },[inspectorSections, inspectorTabs]);
+  openInspectorRef.current = openInspector;
+  const openStoryPlay = useCallback(() => {
+    if (playDetachedWindowActiveRef.current || playDetachingRef.current) return;
+    setContextTab("edit");
+    if (playRestoreOnOpenRef.current) {
+      setContextFocus(playPreferredFullscreenRef.current);
+      playRestoreOnOpenRef.current = false;
+    }
+    openInspector({ type: "storyPlay", id: "active" }, "play");
+  }, [openInspector]);
+  useEffect(()=>{setInspectorRequest(request=>request && (!selection || request.selectionKey!==inspectorSelectionKey(selection)) ? undefined : request);},[selection]);
+
+
+  const selectWithEventDraftGuard = useCallback((target?:Selection) => {
+    if (target) openInspector(target);
+    else setSelection(undefined);
+  }, [openInspector]);
+  const pinInspectorTarget = useCallback((target:Selection) => {
+    const current = projectRef.current;
+    if (!current) return;
+    if (target.type === "node" && current.events.some(event => event.id === target.id)) {
+      setEventInspector(state => ({...state,openEventIds:[...new Set([...state.openEventIds,target.id])]}));
+    } else {
+      const tab = explorerInspectorTab(target,current,nodes) ?? {id:inspectorSelectionKey(target),selection:target,title:target.id};
+      setInspectorTabs(tabs => tabs.some(item=>inspectorSelectionKey(item.selection)===inspectorSelectionKey(target)) ? tabs : [...tabs,tab]);
+    }
+  }, [nodes]);
+  const unpinInspectorTarget = useCallback((target:Selection) => {
+    setEventInspector(state => ({...state,openEventIds:state.openEventIds.filter(id=>!(target.type === "node" && id === target.id))}));
+    if (target.type === "storyPlay") prepareClosedStoryPlay();
+    setInspectorTabs(tabs => tabs.filter(tab=>inspectorSelectionKey(tab.selection)!==inspectorSelectionKey(target)));
+  }, [prepareClosedStoryPlay]);
+  const rememberInspectorSection = useCallback((key:string,section:string) => {
+    const current = projectRef.current;
+    if (!current) return;
+    const scoped = `${current.storyId ?? current.projectId}|${key}`;
+    setInspectorSections(sections=>sections[scoped]===section ? sections : {...sections,[scoped]:section});
+    setInspectorRequest(request=>request?.selectionKey===key && request.section!==section ? {...request,section} : request);
+  }, []);
+  const openAuthoringSection = useCallback((id:string,section:string) => openInspector({type:id.startsWith("edge:") ? "edge" : "node",id},section),[openInspector]);
 
   useEffect(() => {
     const pending = pendingPathSelectionRef.current;
@@ -13728,6 +13134,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (expanding) {
         setEventInspector((current) => ({
           ...current,
+          open: true,
           expandedEventId: undefined,
         }));
         const target = inspectorTabs.find((tab) => tab.id === id);
@@ -13740,6 +13147,12 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const closeInspectorTab = useCallback(
     (id: string) => {
       const closedIndex = inspectorTabs.findIndex((tab) => tab.id === id);
+      const closedTab = inspectorTabs[closedIndex];
+      if (closedTab?.selection.type === "storyPlay") {
+        prepareClosedStoryPlay();
+        stopStoryTestRef.current();
+        setSelection(current => current?.type === "storyPlay" && inspectorSelectionKey(current) === inspectorSelectionKey(closedTab.selection) ? undefined : current);
+      }
       const nextTabs = inspectorTabs.filter((tab) => tab.id !== id);
       setInspectorTabs(nextTabs);
       if (expandedInspectorTabId !== id) return;
@@ -13766,6 +13179,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       expandedInspectorTabId,
       inspectorTabs,
       settings.inspectorTabCloseSelectsNext,
+      prepareClosedStoryPlay,
     ],
   );
 
@@ -13848,13 +13262,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         );
       }
       applyProject(result.project, { dirty: false, revision: true });
-      void persistProjectRef.current?.().catch((saveError) => {
+      void persistProjectRef.current?.().then(() => {
+        for (const action of learningActionsForMutation(currentProject, result.project)) reportLearning(action, result.project.storyId ?? result.project.projectId);
+      }).catch((saveError) => {
         setError(
           saveError instanceof Error ? saveError.message : String(saveError),
         );
       });
     },
-    [applyProject, eventDraft?.eventId],
+    [applyProject, eventDraft?.eventId, reportLearning],
   );
 
   const importAssets = useCallback(async () => {
@@ -14006,7 +13422,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const result =
           mode === "ink"
             ? await exportTextDialog(preview.content, preview.defaultName)
-            : mode === "gameData" || mode === "twine"
+            : mode === "gameData" || mode === "twine" || mode === 'runtimeYaml'
               ? await exportTextDialog(preview.content, preview.defaultName)
               : await exportRuntimeDialog(preview.runtimePackage);
         if (!result) {
@@ -14017,6 +13433,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             result.message ?? "Could not export runtime package.",
           );
         }
+        reportLearning("document-exported", project.storyId ?? project.projectId);
         setMessage(`Exported ${projectFileName(result.path)}.`);
       } catch (exportError) {
         setError(
@@ -14058,6 +13475,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       try {
         const opened = await openUniversePath(path);
         applyWorkspace(opened.workspace, opened.path);
+        if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
           worldnotionBridge: {
@@ -14165,13 +13583,12 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
       if (shortcutMatches(event, "Mod+S")) {
         event.preventDefault();
-        void saveActiveManualInspectorDraft().then((saved) => {
-          if (!saved) flushProjectAutosave();
-        });
+        saveDocumentManually();
       }
       if (shortcutMatches(event, "Mod+R")) {
         event.preventDefault();
-        window.location.reload();
+        if (suiteChrome?.onReload) suiteChrome.onReload();
+        else window.location.reload();
         return;
       }
       if (shortcutMatches(event, "Mod+O")) {
@@ -14182,7 +13599,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [
-    flushProjectAutosave,
+    saveDocumentManually,
     openProject,
     redoProject,
     saveActiveManualInspectorDraft,
@@ -14194,7 +13611,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (scope: CanvasScope, nextSelection?: Selection) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      const nextProject = normalizeProject({
+      const nextProject = {
         ...currentProject,
         canvas: {
           ...currentProject.canvas,
@@ -14204,7 +13621,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               ? scope.id
               : currentProject.canvas?.activeSequenceId,
         },
-      });
+      };
       const normalizedScope = activeCanvasScope(nextProject);
       const model = buildStoryCanvasModel(nextProject, {
         nodeColors: settingsRef.current.nodeColors,
@@ -14259,15 +13676,19 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     }
   }, [navigateCanvasScope]);
 
-  const findings = useMemo(() => {
-    if (!project) {
-      return [];
-    }
-    return [
-      ...validateProject(project),
-      ...validateStoryCanvasEdges(nodes, edges),
-    ];
-  }, [project, nodes, edges]);
+  const validateNarrative = useMemo(() => createNarrativeValidationCache(), []);
+  const narrativeFindings = project ? validateNarrative(project) : [];
+  const validateCanvasTopology = useMemo(() => createCanvasValidationCache(), []);
+  const canvasFindings = validateCanvasTopology(nodes, edges);
+  const findings = useMemo(() => project ? [...narrativeFindings, ...canvasFindings] : [], [project, narrativeFindings, canvasFindings]);
+  const testCanvasNodes = useMemo(() => nodes.map(node => {
+    const className = [node.className, node.id === testPosition ? "authoring-position-active" : testVisited.includes(node.id) ? "authoring-route-active" : ""].filter(Boolean).join(" ");
+    return className === (node.className ?? "") ? node : { ...node, className };
+  }), [nodes, testPosition, testVisited]);
+  const testCanvasEdges = useMemo(() => edges.map(edge => {
+    const className = [edge.className, testVisited.some((id, index) => id === edge.source && testVisited[index + 1] === edge.target) ? "authoring-route-active" : ""].filter(Boolean).join(" ");
+    return className === (edge.className ?? "") ? edge : { ...edge, className };
+  }), [edges, testVisited]);
   const webPreviewBanner = desktopRuntime ? null : (
     <div className="persistence-warning" role="status">
       {uiLocale === "es" ? "Vista web: selecciona una carpeta de universo para comprobar y guardar metadatos de PathBranching durante esta sesión." : "Web preview: select a universe folder to review and save PathBranching metadata during this session."}
@@ -14304,6 +13725,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           ),
         );
         setView("workspace");
+        reportLearning("story-created", snapshot.savedProject.storyId ?? snapshot.savedProject.projectId, currentFileState.universePath);
         setMessage(
           `Created story ${snapshot.nextWorkspace.activeStory?.name ?? snapshot.savedProject.name}.`,
         );
@@ -14570,6 +13992,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                     ...group,
                     inspectorTabs: [...inspectorTabs],
                     inspectorExpandedTabId: expandedInspectorTabId,
+                    inspectorStackOrder,
                     expandedEventId: expandedInspectorTabId
                       ? undefined
                       : group.expandedEventId,
@@ -14584,6 +14007,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                 eventIds: [],
                 inspectorTabs: [...inspectorTabs],
                 inspectorExpandedTabId: expandedInspectorTabId,
+                inspectorStackOrder,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
               },
@@ -14605,6 +14029,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       eventDraft,
       expandedInspectorTabId,
       inspectorTabs,
+      inspectorStackOrder,
       nameDialog,
       runCanvasMutation,
       runMutation,
@@ -14647,6 +14072,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           snapshot.nextWorkspace.activeStory?.id ?? "",
         );
         applyWorkspace(opened.workspace, opened.path);
+        if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setFileState((current) => {
           const nextState = { ...current, dirty: false };
           fileStateRef.current = nextState;
@@ -14807,14 +14233,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         if (!event) return;
         setNameDialog({
           kind: "createDialogue",
-          title: "Create Dialogue",
-          label: "Dialogue name",
+          title: uiLocaleRef.current === "es" ? "Crear conversación" : "Create conversation",
+          label: uiLocaleRef.current === "es" ? "Nombre de la conversación" : "Conversation name",
           initialValue: automaticNarrativeName(
             sourceProject,
             eventId,
-            "Dialogue",
-            (event.dialogues ?? []).length + 1,
-          ),
+            "Conversation",
+                      ),
           eventId,
           position,
           connected: { scope, sourceNodeId, sourceHandleId },
@@ -14882,32 +14307,91 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [eventDraft, runCanvasMutation],
   );
 
-  const createBoundaryRoute = useCallback(
-    (eventId: string, targetEventId: string) => {
+  const discardPendingBoundaryPort = useCallback(
+    (preserveNodeId?: string) => {
+      const pending = pendingBoundaryPortRef.current;
+      if (!pending || pending.nodeId === preserveNodeId) return;
+      pendingBoundaryPortRef.current = undefined;
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      if (eventDraft?.eventId === eventId) {
-        mutateEventDraft((draftProject) =>
-          mutations.createInternalTransition(
-            draftProject,
-            eventId,
-            eventId,
-            targetEventId,
-          ),
-        );
-        return;
-      }
-      runCanvasMutation(
-        mutations.createInternalTransition(
+      const scopeKey = pending.dialogueId
+        ? canvasScopeKey({ kind: "dialogue", id: pending.dialogueId, eventId: pending.eventId })
+        : canvasScopeKey({ kind: "event", id: pending.eventId });
+      const slots = pending.direction === "input"
+        ? currentProject.canvas?.scopes?.[scopeKey]?.entrySlots ?? []
+        : currentProject.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
+      if (!slots.includes(pending.slotId)) return;
+      commitCanvasAction(
+        "Discarded unfinished boundary port",
+        mutations.removeBoundaryPortSlot(
           currentProject,
-          eventId,
-          eventId,
-          targetEventId,
+          pending.eventId,
+          pending.direction,
+          pending.slotId,
+          pending.dialogueId,
         ),
-        "Linked route destination",
       );
     },
-    [eventDraft?.eventId, mutateEventDraft, runCanvasMutation],
+    [commitCanvasAction],
+  );
+
+  const onBoundarySelectionChange = useCallback(
+    (selectedNodeIds: string[]) => {
+      const pending = pendingBoundaryPortRef.current;
+      if (!pending) return;
+      if (selectedNodeIds.includes(pending.nodeId)) {
+        pending.selected = true;
+        return;
+      }
+      if (pending.selected) discardPendingBoundaryPort();
+    },
+    [discardPendingBoundaryPort],
+  );
+
+  const createBoundaryRoute = useCallback(
+    (
+      eventId: string,
+      targetEventId: string,
+      direction: "input" | "output" = "output",
+      slotId?: string,
+    ) => {
+      const currentProject = projectRef.current;
+      if (!currentProject) return;
+      const sourceProject = eventDraft?.eventId === eventId
+        ? applyEventDraftToProject(currentProject, eventDraft)
+        : currentProject;
+      const sourceEventId = direction === "input" ? targetEventId : eventId;
+      const destinationEventId = direction === "input" ? eventId : targetEventId;
+      const route = mutations.createInternalTransition(
+        sourceProject,
+        sourceEventId,
+        sourceEventId,
+        destinationEventId,
+      );
+      const createdTransition = route.project.events
+        .find((event) => event.id === sourceEventId)
+        ?.transitions?.find((transition) =>
+          transition.from === sourceEventId && transition.to === destinationEventId,
+        );
+      const nextProject = slotId && createdTransition
+        ? mutations.resolveBoundaryPortSlot(
+            route.project,
+            eventId,
+            direction,
+            slotId,
+            createdTransition.id,
+          )
+        : route.project;
+      if (eventDraft?.eventId === eventId) setEventDraft(undefined);
+      if (pendingBoundaryPortRef.current?.eventId === eventId && pendingBoundaryPortRef.current.slotId === slotId) {
+        pendingBoundaryPortRef.current = undefined;
+      }
+      runCanvasMutation(
+        { ...route, project: nextProject },
+        direction === "input" ? "Linked route source" : "Linked route destination",
+      );
+    },
+    [eventDraft, runCanvasMutation],
   );
 
   const createScriptTransition = useCallback(
@@ -14928,50 +14412,117 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [eventDraft?.eventId, mutateEventDraft, runCanvasMutation],
   );
 
+  const createDialogueBoundaryRoute = useCallback(
+    (eventId: string, dialogueId: string, direction: "input" | "output", targetId: string, slotId: string) => {
+      const currentProject = projectRef.current;
+      if (!currentProject) return;
+      const sourceProject = eventDraft?.eventId === eventId
+        ? applyEventDraftToProject(currentProject, eventDraft)
+        : currentProject;
+      const dialogueRef = `dialogue:${eventId}:${dialogueId}`;
+      const from = direction === "input" ? targetId : dialogueRef;
+      const to = direction === "input" ? dialogueRef : targetId;
+      const result = mutations.createInternalTransition(sourceProject, eventId, from, to);
+      const createdTransition = result.project.events
+        .find((event) => event.id === eventId)
+        ?.transitions?.find((transition) => transition.from === from && transition.to === to);
+      const nextProject = createdTransition
+        ? mutations.resolveDialogueBoundaryPortSlot(
+            result.project,
+            eventId,
+            dialogueId,
+            direction,
+            slotId,
+            createdTransition.id,
+          )
+        : result.project;
+      if (
+        pendingBoundaryPortRef.current?.eventId === eventId &&
+        pendingBoundaryPortRef.current.dialogueId === dialogueId &&
+        pendingBoundaryPortRef.current.slotId === slotId
+      ) pendingBoundaryPortRef.current = undefined;
+      if (eventDraft?.eventId === eventId) setEventDraft(undefined);
+      runCanvasMutation(
+        { ...result, project: nextProject },
+        direction === "input" ? "Connected conversation input" : "Connected conversation output",
+      );
+    },
+    [eventDraft, runCanvasMutation],
+  );
+
   const createBoundaryRouteEvent = useCallback(
-    (eventId: string) => {
+    (eventId: string, direction: "input" | "output" = "output", slotId?: string) => {
       const currentProject = projectRef.current;
       if (!currentProject || workspaceRef.current?.createdDefaultStory) {
-        setMessage("Create an Everend PathBranching story before adding route destinations.");
+        setMessage("Create an Everend PathBranching story before adding route events.");
         return;
       }
       const sourceProject = eventDraft?.eventId === eventId
         ? applyEventDraftToProject(currentProject, eventDraft)
         : currentProject;
       if (eventDraft?.eventId === eventId) setEventDraft(undefined);
-      // End ports point out of the nested canvas. A newly created destination
-      // therefore belongs to the sequence, rather than becoming another child
-      // inside the event we are leaving.
       const created = mutations.createEvent(sourceProject);
-      const targetEventId = created.selection?.type === "node"
+      const newEventId = created.selection?.type === "node"
         ? created.selection.id
         : undefined;
-      if (!targetEventId) {
-        setMessage(created.message ?? "Could not create a route destination.");
+      if (!newEventId) {
+        setMessage(created.message ?? "Could not create a route event.");
         return;
       }
+      const sourceEventId = direction === "input" ? newEventId : eventId;
+      const destinationEventId = direction === "input" ? eventId : newEventId;
+      const route = mutations.createInternalTransition(
+        created.project,
+        sourceEventId,
+        sourceEventId,
+        destinationEventId,
+      );
+      const createdTransition = route.project.events
+        .find((event) => event.id === sourceEventId)
+        ?.transitions?.find((transition) =>
+          transition.from === sourceEventId && transition.to === destinationEventId,
+        );
+      const nextProject = slotId && createdTransition
+        ? mutations.resolveBoundaryPortSlot(
+            route.project,
+            eventId,
+            direction,
+            slotId,
+            createdTransition.id,
+          )
+        : route.project;
+      if (pendingBoundaryPortRef.current?.eventId === eventId && pendingBoundaryPortRef.current.slotId === slotId) {
+        pendingBoundaryPortRef.current = undefined;
+      }
       runCanvasMutation(
-        mutations.createInternalTransition(
-          created.project,
-          eventId,
-          eventId,
-          targetEventId,
-        ),
-        "Created linked route destination",
+        { ...route, project: nextProject },
+        direction === "input" ? "Created linked route source" : "Created linked route destination",
       );
     },
     [eventDraft, runCanvasMutation],
   );
 
   const createBoundaryEnd = useCallback(
-    (eventId: string) => {
+    (eventId: string, direction: "input" | "output", position: { x: number; y: number }, dialogueId?: string) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      const scope = { kind: "event" as const, id: eventId };
+      const scope: CanvasScope = dialogueId
+        ? { kind: "dialogue", id: dialogueId, eventId }
+        : { kind: "event", id: eventId };
       const scopeKey = canvasScopeKey(scope);
-      const currentSlots = currentProject.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
-      const slotId = `exit-${Date.now().toString(36)}-${currentSlots.length + 1}`;
-      commitCanvasAction("Added subcanvas End port", {
+      const currentSlots = direction === "input"
+        ? currentProject.canvas?.scopes?.[scopeKey]?.entrySlots ?? []
+        : currentProject.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
+      const slotId = `${direction === "input" ? "entry" : "exit"}-${Date.now().toString(36)}-${currentSlots.length + 1}`;
+      const boundaryNodeId = dialogueId
+        ? `dialogue-boundary:${eventId}:${dialogueId}:${direction}:${slotId}`
+        : `boundary:${eventId}:${direction}:${slotId}`;
+      pendingBoundaryPortRef.current = { eventId, dialogueId, direction, slotId, nodeId: boundaryNodeId, selected: false };
+      commitCanvasAction(
+        dialogueId
+          ? `Added conversation ${direction === "input" ? "entry" : "continuation"} port`
+          : `Added subcanvas ${direction === "input" ? "Entry" : "End"} port`,
+        {
         ...currentProject,
         canvas: {
           ...currentProject.canvas,
@@ -14979,38 +14530,65 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             ...(currentProject.canvas?.scopes ?? {}),
             [scopeKey]: {
               ...(currentProject.canvas?.scopes?.[scopeKey] ?? {}),
-              exitSlots: [...currentSlots, slotId],
+              ...(direction === "input"
+                ? { entrySlots: [...currentSlots, slotId] }
+                : { exitSlots: [...currentSlots, slotId] }),
+              nodes: {
+                ...(currentProject.canvas?.scopes?.[scopeKey]?.nodes ?? {}),
+                [boundaryNodeId]: { position },
+              },
             },
           },
         },
+        },
+      );
+      window.requestAnimationFrame(() => {
+        setNodes((currentNodes) => currentNodes.map((node) => ({
+          ...node,
+          selected: node.id === boundaryNodeId,
+        })));
       });
     },
     [commitCanvasAction],
   );
 
   const deleteBoundaryEnd = useCallback(
-    (eventId: string, slotId: string) => {
+    (eventId: string, direction: "input" | "output", slotId: string, dialogueId?: string) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      const scopeKey = canvasScopeKey({ kind: "event", id: eventId });
-      const currentSlots = currentProject.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
+      const scopeKey = dialogueId
+        ? canvasScopeKey({ kind: "dialogue", id: dialogueId, eventId })
+        : canvasScopeKey({ kind: "event", id: eventId });
+      const currentSlots = direction === "input"
+        ? currentProject.canvas?.scopes?.[scopeKey]?.entrySlots ?? []
+        : currentProject.canvas?.scopes?.[scopeKey]?.exitSlots ?? [];
       if (!currentSlots.includes(slotId)) return;
-      commitCanvasAction("Removed subcanvas End port", {
-        ...currentProject,
-        canvas: {
-          ...currentProject.canvas,
-          scopes: {
-            ...(currentProject.canvas?.scopes ?? {}),
-            [scopeKey]: {
-              ...(currentProject.canvas?.scopes?.[scopeKey] ?? {}),
-              exitSlots: currentSlots.filter((candidate) => candidate !== slotId),
-            },
-          },
-        },
-      });
+      if (
+        pendingBoundaryPortRef.current?.eventId === eventId &&
+        pendingBoundaryPortRef.current.dialogueId === dialogueId &&
+        pendingBoundaryPortRef.current.slotId === slotId
+      ) pendingBoundaryPortRef.current = undefined;
+      commitCanvasAction(
+        dialogueId
+          ? `Removed conversation ${direction === "input" ? "entry" : "continuation"} port`
+          : `Removed subcanvas ${direction === "input" ? "Entry" : "End"} port`,
+        mutations.removeBoundaryPortSlot(currentProject, eventId, direction, slotId, dialogueId),
+      );
     },
     [commitCanvasAction],
   );
+
+  useEffect(() => {
+    const pending = pendingBoundaryPortRef.current;
+    const pendingScopeStillActive = pending && (
+      pending.dialogueId
+        ? activeScope?.kind === "dialogue" && activeScope.id === pending.dialogueId && activeScope.eventId === pending.eventId
+        : activeScope?.kind === "event" && activeScope.id === pending.eventId
+    );
+    if (pending && !pendingScopeStillActive) {
+      discardPendingBoundaryPort();
+    }
+  }, [activeScope, discardPendingBoundaryPort]);
 
   const createEventInBranch = useCallback(
     (branchId: string, type: EventType = "normal") => {
@@ -15322,14 +14900,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (!event) return;
       setNameDialog({
         kind: "createDialogue",
-        title: "Create Dialogue",
-        label: "Dialogue name",
+        title: uiLocaleRef.current === "es" ? "Crear conversación" : "Create conversation",
+        label: uiLocaleRef.current === "es" ? "Nombre de la conversación" : "Conversation name",
         initialValue: automaticNarrativeName(
           sourceProject,
           eventId,
-          "Dialogue",
-          (event.dialogues ?? []).length + 1,
-        ),
+          "Conversation",
+                  ),
         eventId,
         position,
       });
@@ -15461,9 +15038,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         : mappings.filter((mapping) => mapping.id !== mappingId);
       return {
         ...project,
-        integrationConfigOverride: { specVersion: "0.1", mappings: nextMappings },
+        integrationConfigOverride: { ...project.integrationConfigOverride, specVersion: project.integrationConfigOverride?.specVersion ?? "0.1", mappings: nextMappings },
       };
-    });
+    }, [mappingId]);
   }, [updateManualInspectorDraft]);
 
   // Script blocks edited through Assets are content assets and save immediately.
@@ -16029,6 +15606,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (changes: NodeChange<StoryCanvasNode>[]) => {
       setNodes((currentNodes) => {
         const nextNodes = applyNodeChanges(changes, currentNodes);
+        if (!requiresSubcanvasLayout(changes)) return nextNodes;
         return layoutSubcanvasNodes(nextNodes, {
           gridSize: settingsRef.current.canvasBackground.gridSize,
         });
@@ -16057,6 +15635,15 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
       if (!sourceNode || !targetNode) {
         setMessage("Connection source or target could not be resolved.");
+        return;
+      }
+      if (sourceNode.data.kind === 'interaction' && connection.sourceHandle?.startsWith('interaction-result:')) {
+        const eventId = sourceNode.data.details?.eventId;
+        const use = sourceNode.data.details?.interactionUse as { id: string } | undefined;
+        if (typeof eventId !== 'string' || !use) return;
+        try {
+          updateProject(setInteractionResultRoute(project, eventId, use.id, connection.sourceHandle.slice('interaction-result:'.length), targetNode.data.details?.restart === true ? eventId : targetNode.id));
+        } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
         return;
       }
       const decisionOutcomeSourceId =
@@ -16301,6 +15888,35 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
 
+      if (node.data.kind === "boundary") {
+        if (activeScope?.kind !== "event" && activeScope?.kind !== "dialogue") return;
+        const workspace = nodes.find((item) => item.data.kind === "workspace");
+        if (!workspace) return;
+        const snap = settingsRef.current.canvasBackground;
+        const nextNode = {
+          ...node,
+          position: snapCanvasPoint(
+            node.position,
+            snap.snapToGrid,
+            snap.gridSize,
+          ),
+        };
+        const nextNodes = layoutSubcanvasNodes(
+          nodes.map((item) => item.id === node.id ? nextNode : item),
+          { gridSize: snap.gridSize },
+        );
+        const canvasProject = updateProjectCanvas(
+          currentProject,
+          nextNodes,
+          activeScope,
+        );
+        commitCanvasAction("Moved subcanvas port", canvasProject, {
+          type: "node",
+          id: node.id,
+        });
+        return;
+      }
+
       const storyId = nodeStoryId(node);
       if (!storyId) {
         return;
@@ -16314,14 +15930,14 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           snap.gridSize,
         ),
       };
-      // A gate stores the visual knot position. Logic mode expands it around
-      // that same center, so convert the dragged logic rectangle back to its
-      // compact visual anchor before persisting it.
+      // A gate stores the compact visual knot anchor. Convert the dragged
+      // Logic card rectangle back using its actual rendered dimensions.
       if (node.data.kind === "routeGate" && canvasLayerModeRef.current === "logic") {
-        nextNode.position = {
-          x: nextNode.position.x + (168 - 34) / 2,
-          y: nextNode.position.y + (92 - 34) / 2,
-        };
+        nextNode.position = routeGateVisualAnchorFromLogicPosition(
+          nextNode.position,
+          node.width,
+          node.height,
+        );
       }
       const nextNodes = nodes.map((item) =>
         item.id === node.id ? nextNode : item,
@@ -16330,6 +15946,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         currentProject,
         nextNodes,
         activeScope,
+        node.data.kind === "routeGate" ? node.id : undefined,
       );
       commitCanvasAction("Moved node", canvasProject, {
         type: "node",
@@ -16742,7 +16359,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           (item) => item.id !== sequence.id,
         );
         updateProject(
-          {
+          mutations.pruneDanglingNarrativeMetadata({
             ...project,
             sequences: nextSequences,
             canvas: {
@@ -16752,7 +16369,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   ? nextSequences[0]?.id
                   : project.canvas?.activeSequenceId,
             },
-          },
+          }),
           nextSequences[0]
             ? { type: "node", id: nextSequences[0].id }
             : undefined,
@@ -16762,18 +16379,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
       const branch = findBranch(project, id);
       if (branch) {
-        updateProject(
-          {
-            ...project,
-            branches: project.branches.filter((item) => item.id !== branch.id),
-            sequences: project.sequences.map((item) => ({
-              ...item,
-              branchIds: withoutValue(item.branchIds, branch.id),
-            })),
-            events: project.events.map((item) => item.branchRef === branch.id ? { ...item, branchRef: undefined } : item),
-          },
-          undefined,
-        );
+        updateProject(mutations.deleteBranch(project, branch.id).project, undefined);
         setSelection(undefined);
         return;
       }
@@ -16796,7 +16402,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         );
 
         updateProject(
-          {
+          mutations.pruneDanglingNarrativeMetadata({
             ...project,
             sequences: project.sequences.map((item) => ({
               ...item,
@@ -16842,7 +16448,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   ),
                 };
               }),
-          },
+          }),
           undefined,
         );
         setSelection(undefined);
@@ -16977,6 +16583,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         };
         eventIds.forEach((id) => closeDeletedNodeInspector(id));
         deletedCount += eventIds.length;
+      }
+
+      if (deletedCount > 0) {
+        nextProject = mutations.pruneDanglingNarrativeMetadata(nextProject);
       }
 
       if (deletedCount === 0) {
@@ -17364,14 +16974,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (!event) return;
     setNameDialog({
       kind: "createDialogueFromSelection",
-      title: "Create Dialogue",
-      label: "Dialogue name",
+      title: uiLocaleRef.current === "es" ? "Crear conversación" : "Create conversation",
+      label: uiLocaleRef.current === "es" ? "Nombre de la conversación" : "Conversation name",
       initialValue: automaticNarrativeName(
         currentProject,
         eventId,
-        "Dialogue",
-        (event.dialogues ?? []).length + 1,
-      ),
+        "Conversation",
+              ),
       eventId,
       members: selectedMembers.map(({ member }) => member),
     });
@@ -17448,6 +17057,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
       const target = event.target;
+      // Conversation has protected line deletion; a focused row must never delete its owner scene.
+      if (target instanceof Element && target.closest(".conversation-editor")) return;
       if (
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
@@ -17525,24 +17136,28 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [project, runMutation, selection],
   );
 
-  const toggleCanon = useCallback(() => {
-    setCanonOpen((open) => !open);
-    setPanelCollapsed((current) => ({ ...current, assets: !current.assets }));
-  }, []);
-
-  const toggleFiles = useCallback(() => {
-    setFilesOpen((open) => !open);
-    setPanelCollapsed((current) => ({ ...current, outline: !current.outline }));
-  }, []);
-
   const setPanelCollapsedState = useCallback(
     (panel: WorkspacePanelId, collapsed: boolean) => {
-      setPanelCollapsed((current) => ({ ...current, [panel]: collapsed }));
+      setPanelCollapsed((current) => managementPanelCollapsedState(current, panel, collapsed));
+      if (isExplorerPanel(panel) && !collapsed) {
+        setExplorerTab(panel);
+        setPanelVisibility(current => ({ ...current, [panel]: true }));
+      }
       if (panel === "outline") setFilesOpen(!collapsed);
       if (!collapsed) setRequestedPanel((current) => ({ id: panel, revision: (current?.revision ?? 0) + 1 }));
     },
     [],
   );
+
+  const toggleCanon = useCallback(() => {
+    const collapsed = explorerTab === "assets" && !panelCollapsed.assets;
+    setCanonOpen(!collapsed);
+    setPanelCollapsedState("assets", collapsed);
+  }, [explorerTab, panelCollapsed.assets, setPanelCollapsedState]);
+
+  const toggleFiles = useCallback(() => {
+    setPanelCollapsedState("outline", explorerTab === "outline" && !panelCollapsed.outline);
+  }, [explorerTab, panelCollapsed.outline, setPanelCollapsedState]);
 
   const locateTestNode = useCallback((id: string) => {
     const current = projectRef.current;
@@ -17550,12 +17165,117 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
     else setSelection({ type: "node", id });
   }, [navigateCanvasScope]);
+  const resolveTestSpeaker = useCallback((document: BranchingProject, ref: string, variantId?: string) => {
+    const speaker = storyTestSpeaker(document, workspace?.canonIndex.propertiesConfig, ref, variantId);
+    return speaker ? { name: speaker.name, portraitUrl: speaker.portraitPath ? universeAssetUrl(document, speaker.portraitPath) : undefined } : undefined;
+  }, [workspace?.canonIndex.propertiesConfig]);
   const { controller: storyTestController, snapshot: storyTest, dispatch: dispatchStoryTest } = useStoryTestController(project, {
     onUpdate: updateProject, onLocate: locateTestNode, locale: uiLocale, theme: activeTheme,
+    resolveSpeakerPresentation: resolveTestSpeaker,
     selectedNodeId: selection?.type === "node" ? selection.id : undefined,
     documentKey: `${fileState.universePath ?? ""}:${project?.storyId ?? project?.projectId ?? ""}`,
   });
+  stopStoryTestRef.current = () => { dispatchStoryTest({ type: "stop" }); };
   const storyTestWindows = useStoryTestWindows(storyTest, storyTestController.request);
+  useEffect(() => {
+    playDetachedWindowActiveRef.current = storyTestWindows.detached.preview;
+    if (storyTestWindows.detached.preview || playDetachingRef.current) return;
+    if (inspectorTabs.some(tab => tab.id === expandedInspectorTabId && tab.selection.type === "storyPlay")) {
+      playPreferredFullscreenRef.current = contextFocus;
+    }
+  }, [contextFocus, expandedInspectorTabId, inspectorTabs, storyTestWindows.detached.preview]);
+  const restorePlayAfterDetach = useCallback(() => {
+    const presentation = playDetachedPresentationRef.current;
+    if (!presentation) return;
+    playDetachedPresentationRef.current = undefined;
+    playDetachingRef.current = false;
+    const playTab = inspectorTabs.find(tab => tab.id === presentation.tabId && tab.selection.type === "storyPlay")
+      ?? inspectorTabs.find(tab => tab.selection.type === "storyPlay");
+    if (!playTab) {
+      playRestoreOnOpenRef.current = true;
+      return;
+    }
+    playRestoreOnOpenRef.current = false;
+    setContextTab("edit");
+    setContextFocus(presentation.fullscreen);
+    setExpandedInspectorTabId(playTab.id);
+    setEventInspector(current => ({ ...current, open: true, expandedEventId: undefined }));
+    setSelection(playTab.selection);
+  }, [inspectorTabs]);
+  useEffect(() => {
+    if (storyTestWindows.detached.preview) {
+      playDetachingRef.current = false;
+      playWasDetachedRef.current = true;
+      return;
+    }
+    if (!playWasDetachedRef.current) return;
+    playWasDetachedRef.current = false;
+    restorePlayAfterDetach();
+  }, [storyTestWindows.detached.preview, restorePlayAfterDetach]);
+  useEffect(() => {
+    if (!storyTestWindows.error || storyTestWindows.detached.preview || !playDetachedPresentationRef.current) return;
+    playWasDetachedRef.current = false;
+    restorePlayAfterDetach();
+  }, [storyTestWindows.error, storyTestWindows.detached.preview, restorePlayAfterDetach]);
+  const detachStoryPlay = useCallback(() => {
+    const playTab = inspectorTabs.find(tab => tab.selection.type === "storyPlay");
+    if (!playTab) return;
+    playPreferredFullscreenRef.current = contextFocus;
+    playDetachedPresentationRef.current = { fullscreen: contextFocus, tabId: playTab.id };
+    playDetachingRef.current = true;
+    playRestoreOnOpenRef.current = false;
+    setExpandedInspectorTabId(current => current === playTab.id ? undefined : current);
+    setContextFocus(false);
+    void storyTestWindows.detach("preview");
+  }, [contextFocus, inspectorTabs, storyTestWindows.detach]);
+  useEffect(() => {
+    if (!storyTest.active || storyTest.debugOpen || storyTestWindows.detached.preview || playDetachingRef.current
+      || inspectorTabs.some(tab => tab.selection.type === "storyPlay")) return;
+    openStoryPlay();
+  }, [storyTest.active, storyTest.debugOpen, storyTest.sessionId, storyTestWindows.detached.preview, inspectorTabs, openStoryPlay]);
+  const lastLearningTest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (storyTest.active && storyTest.sessionId !== lastLearningTest.current) {
+      lastLearningTest.current = storyTest.sessionId;
+      reportLearning("story-tested", project?.storyId ?? project?.projectId);
+    }
+  }, [storyTest.active, storyTest.sessionId, reportLearning, project?.storyId, project?.projectId]);
+  switchDraftsRef.current ||= Object.keys(storyTest.drafts).length > 0;
+  const inspectorBeforeDebugRef = useRef<Selection | undefined>(undefined);
+  useEffect(() => {
+    if (storyTest.debugOpen && !storyTestWindows.detached.preview && !contextFocus && !playDetachingRef.current) {
+      if (storyTest.debugAttached) dispatchStoryTest({type:"debugAttachment",attached:false});
+      if (selection?.type !== "storyDebug") inspectorBeforeDebugRef.current = selection;
+      openInspectorRef.current({ type: "storyDebug", id: storyTest.sessionId }, "debug");
+    }
+  }, [storyTest.debugOpen, storyTest.debugAttached, storyTest.debugFocusRevision, storyTest.sessionId, storyTestWindows.detached.preview, contextFocus]);
+  useEffect(() => {
+    if (playDetachingRef.current && !storyTestWindows.detached.preview) return;
+    if (storyTest.debugOpen && !storyTestWindows.detached.preview && !contextFocus) return;
+    const remainingTabs = inspectorTabs.filter(tab => tab.selection.type !== "storyDebug");
+    const activeDebugTab = inspectorTabs.some(tab => tab.id === expandedInspectorTabId && tab.selection.type === "storyDebug");
+    if (remainingTabs.length !== inspectorTabs.length) setInspectorTabs(remainingTabs);
+    if (!activeDebugTab && selection?.type !== "storyDebug") return;
+    const previous = inspectorBeforeDebugRef.current;
+    const previousTab = previous
+      ? remainingTabs.find(tab => inspectorSelectionKey(tab.selection) === inspectorSelectionKey(previous))
+      : undefined;
+    const previousEventId = previous?.type === "node" && eventInspector.openEventIds.includes(previous.id)
+      ? previous.id
+      : undefined;
+    const nextTab = previousTab ?? (previousEventId ? undefined : remainingTabs.at(-1));
+    const nextEventId = previousEventId ?? (!nextTab ? eventInspector.openEventIds.at(-1) : undefined);
+    const nextSelection: Selection | undefined = nextTab?.selection ?? (nextEventId ? { type: "node", id: nextEventId } : undefined);
+    const folded = !eventInspector.open && !expandedInspectorTabId && !eventInspector.expandedEventId;
+    setExpandedInspectorTabId(folded ? undefined : nextTab?.id);
+    setEventInspector(state => ({
+      ...state,
+      open: !folded && Boolean(nextTab || nextEventId),
+      expandedEventId: folded ? undefined : nextEventId,
+    }));
+    setSelection(nextSelection);
+    inspectorBeforeDebugRef.current = undefined;
+  }, [storyTest.debugOpen, storyTest.debugAttached, storyTestWindows.detached.preview, contextFocus, selection, inspectorTabs, expandedInspectorTabId, eventInspector.open, eventInspector.openEventIds, eventInspector.expandedEventId]);
   useEffect(() => { setTestPosition(storyTest.nodeId); setTestVisited(storyTest.visitedNodeIds); }, [storyTest.nodeId, storyTest.visitedNodeIds]);
 
   useEffect(() => {
@@ -17589,7 +17309,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const togglePanelVisibility = useCallback((panel: WorkspacePanelId) => {
     setPanelVisibility((current) => {
       const visible = !current[panel];
-      if (visible) setPanelCollapsed((collapsed) => ({ ...collapsed, [panel]: false }));
+      if (visible) {
+        setPanelCollapsed((collapsed) => managementPanelCollapsedState(collapsed, panel, false));
+        if (isExplorerPanel(panel)) setExplorerTab(panel);
+      }
       return { ...current, [panel]: visible };
     });
   }, []);
@@ -17605,10 +17328,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const openLogicRule = useCallback((id: string) => {
     setSelectedLogicRuleId(id);
     setPanelVisibility((current) => ({ ...current, logic: true }));
-    setPanelCollapsed((current) => ({ ...current, logic: false }));
-  }, []);
+    setPanelCollapsedState("logic", false);
+  }, [setPanelCollapsedState]);
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!panelContextMenu) return;
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -17631,7 +17354,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   useEffect(() => {
     if (suiteChrome && !suiteChrome.active) return;
 
-    if (!settings.worldnotionBridge.connected || !isTauriRuntime()) {
+    if (!isTauriRuntime()) {
       return;
     }
 
@@ -17645,9 +17368,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           break;
         case "pb:file:save":
         case "pb:file:save-as":
-          void saveActiveManualInspectorDraft().then((saved) => {
-            if (!saved) flushProjectAutosave();
-          });
+          saveDocumentManually();
           break;
         case "pb:file:export-runtime":
           void exportRuntime("runtime");
@@ -17668,7 +17389,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           setView("home");
           break;
         case "pb:view:reload":
-          window.location.reload();
+          if (suiteChrome?.onReload) suiteChrome.onReload();
+          else window.location.reload();
           break;
         case "pb:view:workspace":
           setView("workspace");
@@ -17714,6 +17436,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           break;
         case "pb:style:material":
           changeThemeFamily("material");
+          break;
+        case "pb:style:forge-mono":
+          changeThemeFamily("forge-mono");
           break;
         case "pb:style:toggle-mode":
           toggleTheme();
@@ -17765,9 +17490,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     openProject,
     redoProject,
     resetLayout,
-    flushProjectAutosave,
+    saveDocumentManually,
     saveActiveManualInspectorDraft,
     settings.worldnotionBridge.connected,
+    suiteChrome,
     toggleCanon,
     toggleFiles,
     togglePanelVisibility,
@@ -17833,8 +17559,11 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     setStoriesWidth(clampPanelWidth(width));
   }, []);
 
-  const settingsModal = showSettings ? (
+  const settingsModal = (
     <PathBranchingSettingsModal
+      initialSection={settingsInitialSection}
+      hidden={!showSettings}
+      settingsHost={suiteChrome?.settingsHost}
       project={project}
       fileState={fileState}
       settings={settings}
@@ -17845,8 +17574,11 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       onUpdateSpeechBeatCounter={updateSpeechBeatCounter}
       onCanvasBackgroundChange={changeCanvasBackground}
       onNodeColorChange={changeNodeColors}
+      onInterfaceFontChange={interfaceFont => setSettings(current => ({...current, interfaceFont}))}
       onThemeChange={suiteChrome?.suiteSettings?.onStyleChange ?? changeTheme}
       onToggleTheme={suiteChrome?.suiteSettings?.onToggleStyleMode ?? toggleTheme}
+      onAmbientBackgroundChange={suiteChrome?.suiteSettings?.onAmbientBackgroundChange ?? (ambientBackground => setSettings(current => ({ ...current, ambientBackground })))}
+      onBackgroundSceneChange={suiteChrome?.suiteSettings?.onBackgroundSceneChange ?? (backgroundScene => setSettings(current => ({ ...current, backgroundScene })))}
       onInspectorTabCloseSelectsNextChange={changeInspectorTabCloseSelectsNext}
       onCollapseInspectorTabOnCanvasClickChange={
         changeCollapseInspectorTabOnCanvasClick
@@ -17865,10 +17597,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         setShowInteractionTutorial(true);
         setShowSettings(false);
       }}
-      onClose={() => setShowSettings(false)}
+      onClose={() => { setShowSettings(false); setSettingsInitialSection(undefined); }}
       suiteSettings={suiteChrome?.suiteSettings}
     />
-  ) : null;
+  );
 
   const appDialogs = (
     <>
@@ -17899,6 +17631,8 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const locateExportDiagnostic = (location: string) => {
     if (!project) return;
+    const authoring = authoringDiagnosticTarget(project, location);
+    if (authoring) { window.dispatchEvent(new CustomEvent("pathbranching:locate-authoring", { detail: authoring })); return; }
     const target = diagnosticSelection(project, location);
     setRequestedPanel((current) => ({ revision: (current?.revision ?? 0) + 1 }));
     if (!target) return;
@@ -17914,6 +17648,27 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     const key = manualInspectorDraftKey(selection);
     return key ? manualInspectorDrafts[key] : undefined;
   })();
+
+  // Selection and inspector state do not change export compatibility. Stable
+  // delegates let the memoized panel keep its diagnostics and import session.
+  const exportPanelActions = {
+    onCollapsedChange: (collapsed: boolean) => setPanelCollapsedState("export", collapsed),
+    onContextMenu: openPanelContextMenu,
+    onPreview: (mode: ExportPreviewMode) => { setExportPreviewMode(mode); setExportOpen(true); },
+    onLocateDiagnostic: locateExportDiagnostic,
+    onExport: (mode: ExportPreviewMode) => { void exportRuntime(mode); },
+    onImportTwine: importTwine,
+  };
+  const exportPanelActionsRef = useRef(exportPanelActions);
+  exportPanelActionsRef.current = exportPanelActions;
+  const stableExportPanelActions = useMemo(() => ({
+    onCollapsedChange: (collapsed: boolean) => exportPanelActionsRef.current.onCollapsedChange(collapsed),
+    onContextMenu: (event: ReactMouseEvent<HTMLElement>) => exportPanelActionsRef.current.onContextMenu(event),
+    onPreview: (mode: ExportPreviewMode) => exportPanelActionsRef.current.onPreview(mode),
+    onLocateDiagnostic: (location: string) => exportPanelActionsRef.current.onLocateDiagnostic(location),
+    onExport: (mode: ExportPreviewMode) => exportPanelActionsRef.current.onExport(mode),
+    onImportTwine: (...args: Parameters<typeof importTwine>) => exportPanelActionsRef.current.onImportTwine(...args),
+  }), []);
 
   const onboardingCompletion: Record<string, boolean> = {
     "open-stories": Boolean(panelVisibility.outline && !panelCollapsed.outline),
@@ -17941,6 +17696,23 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     );
     setShowInteractionTutorial(false);
   };
+  useLearningAdapter(suiteChrome?.learning, {
+    introduction: pathbranchingIntroduction, lessons: pathbranchingLessons,
+    available: Boolean(fileState.universePath && !initialLoading),
+    busy: showSettings || showFeedback || exportOpen || Boolean(nameDialog),
+    subjectId: project?.storyId ?? project?.projectId,
+    section: !panelCollapsed.export || exportOpen ? "export" : contextTab === "test" ? "preview" : explorerTab === "logic" ? "logic" : explorerTab === "outline" ? "outline" : "canvas",
+    openSection: (section, userInitiated) => {
+      if (!fileStateRef.current.universePath) return;
+      setView("workspace");
+      if (section === "outline" || section === "logic" || section === "export") setPanelCollapsedState(section, false);
+      if (section === "validation") {
+        const button = appShellRef.current?.querySelector<HTMLButtonElement>('[data-onboarding-target="pathbranching.validation"] button');
+        if (button?.getAttribute("aria-expanded") === "false") button.click();
+        if (userInitiated && projectRef.current && !findings.some(finding => finding.severity === "error")) reportLearning("document-validated", projectRef.current.storyId ?? projectRef.current.projectId);
+      }
+    },
+  });
   const interactionTutorialLocale = resolveInterfaceLocale(
     suiteChrome?.suiteSettings?.localePreference ?? settings.localePreference,
   );
@@ -17974,10 +17746,6 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     );
   }
 
-  if (initialLoading && !suiteChrome) {
-    return <BrandLoadingScreen message={settings.lastOpenedProject ? "Opening your universe…" : "Preparing your dashboard…"} />;
-  }
-
   if (initialLoading) {
     return (
       <>
@@ -17999,11 +17767,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           suiteChrome={suiteChrome}
           />
           {webPreviewBanner}
-          <div className="loading-state">
-            {settings.lastOpenedProject
-              ? "Loading last universe..."
-              : "Preparing dashboard..."}
-          </div>
+          <BrandLoadingScreen message={settings.lastOpenedProject ? uiLocale === "es" ? "Abriendo tu universo…" : "Opening your universe…" : uiLocale === "es" ? "Preparando tu biblioteca…" : "Preparing your dashboard…"} />
         </div>
         {settingsModal}
         {appDialogs}
@@ -18031,6 +17795,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           onRemoveRecentProject={removeRecentProject}
           onExportRuntime={exportRuntime}
           onFeedback={() => setShowFeedback(true)}
+          desktopMenu={isTauriRuntime() && !suiteChrome}
+          windowControlsManaged={suiteChrome?.windowControlsManaged}
+          appSwitcher={suiteChrome?.renderAppSwitcher()}
         />
         {webPreviewBanner}
         {settingsModal}
@@ -18044,6 +17811,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       <div className="app-shell" ref={appShellRef}>
         <Topbar
           project={project}
+          managementInSidebar
           fileState={fileState}
           exportOpen={exportOpen}
           theme={activeTheme}
@@ -18073,9 +17841,11 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         {webPreviewBanner}
 
         {workspace?.saveBlocked ? <div className="workspace-error-banner" role="alert"><span>{uiLocale === "es" ? "La carga está incompleta. El guardado se ha bloqueado para conservar los archivos." : "Loading is incomplete. Saving is blocked to preserve the files."}<details><summary>{uiLocale === "es" ? "Ver causas" : "View reasons"}</summary><ul>{workspace.saveBlockReasons?.map((reason, index) => <li key={index}>{reason}</li>)}</ul></details></span></div> : null}
-        {error && error !== saveError ? <div className="workspace-error-banner" role="alert"><span>{error}</span><button type="button" onClick={() => setError(undefined)}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
+
         {pendingRecovery ? <div className="workspace-error-banner" role="status"><span>{uiLocale === "es" ? "Hay una edición recuperable que no llegó a guardarse en disco." : "An unsaved editing session can be recovered."}</span><button type="button" onClick={() => { void commitStructuralAction("Recovered editing session", pendingRecovery.project); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Recuperar edición" : "Recover edits"}</button><button type="button" onClick={() => { if (fileState.universePath && project.storyId) clearAuthoringRecovery(fileState.universePath, project.storyId); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Descartar recuperación" : "Discard recovery"}</button></div> : null}
         <AdaptiveWorkspace resizing={panelResizing} requestedPanel={requestedPanel}
+          onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setExplorerTab("outline"); setStoriesWidth(DEFAULT_PANEL_WIDTH); setContextFocus(false); setRequestedPanel((current) => ({ id: "outline", revision: (current?.revision ?? 0) + 1 })); }}
+          explorerTab={explorerTab} onExplorerTabChange={setExplorerTab}
           onCollapsedChange={setPanelCollapsedState}
           panels={VISIBLE_WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
           {panelVisibility.assets ? <WorkspacePanelSlot id="assets" side="left" title={uiCopy.assets}><AssetsPanel
@@ -18086,7 +17856,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onContextMenu={openPanelContextMenu}
             onImport={() => void importAssets()}
             selected={selection}
-            onSelect={setSelection}
+            onSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
             onOpenInspector={selectWithEventDraftGuard}
             onCreateEntity={createExplorerEntity}
             onDeleteEntity={deleteLocalExplorerEntity}
@@ -18100,7 +17870,9 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onContextMenu={openPanelContextMenu}
             onUpdate={(nextProject) => updateProject(nextProject)}
             selected={selection}
-            onSelect={setSelection}
+            onSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
+            currentEventId={activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : undefined}
+            currentDialogueId={activeScope?.kind === "dialogue" ? activeScope.id : undefined}
             onOpenInspector={selectWithEventDraftGuard}
             onCreateProperty={createExplorerProperty}
             onInitializeProperties={initializePropertiesFromTemplate}
@@ -18148,31 +17920,18 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           ) : !activeSequenceId(project) ? (
             <StoryCreationEmptyState kind="sequence" />
           ) : <StoryCanvas
+            contextTab={contextTab} contextFocus={contextFocus && (eventInspector.open || storyTest.active)} onContextTabChange={setContextTab} onContextFocusChange={setContextFocus}
+            stories={workspace?.manifest.stories ?? []} activeStoryId={workspace?.activeStory?.id} onStoryChange={setActiveStory}
             project={project}
-            onToggleAuthoring={() => {
-              setEventScriptWorkspace(current => current ? undefined : { eventId: authoringNodeOptions(project).find(n => n.id === selection?.id)?.eventId ?? (activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : project.events[0]?.id ?? "") });
-            }}
-            authoringWorkspace={eventScriptWorkspace ? <AuthoringWorkspace
-              project={project}
-              initialTab={eventScriptWorkspace.tab}
-              initialEntityId={eventScriptWorkspace.entityId}
-              initialFocusId={eventScriptWorkspace.focusId}
-              eventId={authoringNodeOptions(project).find(n => n.id === selection?.id)?.eventId ?? (activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : eventScriptWorkspace.eventId)}
-              dialogueId={authoringNodeOptions(project).find(n => n.id === selection?.id)?.dialogueId ?? (activeScope?.kind === "dialogue" ? activeScope.id : undefined)}
-              selectedNodeId={selection?.id}
-              onMutation={async mutate => { if (projectRef.current) await commitStructuralAction("Updated story", mutate(projectRef.current)); }}
-              onSelect={id => {
-                const target = authoringNodeOptions(projectRef.current ?? project).find(n => n.id === id);
-                if (target) navigateCanvasScope(target.dialogueId ? { kind: "dialogue", id: target.dialogueId, eventId: target.eventId } : { kind: "event", id: target.eventId }, { type: "node", id });
-                else setSelection({ type: "node", id });
-              }}
-              onClose={() => setEventScriptWorkspace(undefined)}
-              onTest={() => dispatchStoryTest({ type: "play" })}
-            /> : undefined}
+            storyTestActive={storyTest.active} inspectorRequest={inspectorRequest} inspectorSections={inspectorSections} inspectorSize={inspectorSize} onInspectorResize={setInspectorSize} inspectorStackOrder={inspectorStackOrder} onInspectorStackOrderChange={setInspectorStackOrder} onInspectorSectionChange={rememberInspectorSection}
+            onAuthoringMutation={async mutate=>{if(projectRef.current) await commitStructuralAction("Updated story",mutate(projectRef.current));}}
+            onOpenInspectorSection={openInspector} onOpenStoryPlay={openStoryPlay} onPinInspectorTarget={pinInspectorTarget} onUnpinInspectorTarget={unpinInspectorTarget}
+            onCollapseInspector={()=>{setEventInspector(state=>({...state,open:true,expandedEventId:undefined}));setExpandedInspectorTabId(undefined);if(selection?.type==="storyDebug")dispatchStoryTest({type:"debug",open:false});}}
+            inspectorDebugContent={<div className="inspector-debug-content"><button type="button" onClick={()=>dispatchStoryTest({type:"debug",open:false})}>{uiLocale === "es" ? "Cerrar depuración" : "Close debug"}</button>{storyTestWindows.canDetach ? <button type="button" onClick={()=>{void storyTestWindows.detach("preview");}}>{uiLocale === "es" ? "Abrir Play Mode completo" : "Open full Play Mode"}</button> : null}<StoryTestDebug integrated snapshot={storyTest} dispatch={dispatchStoryTest}/></div>}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             files={files}
-            nodes={nodes.map(node => ({ ...node, className: [node.className, node.id === testPosition ? "authoring-position-active" : testVisited.includes(node.id) ? "authoring-route-active" : ""].filter(Boolean).join(" ") }))}
-            edges={edges.map(edge => ({ ...edge, className: [edge.className, testVisited.some((id, index) => id === edge.source && testVisited[index + 1] === edge.target) ? "authoring-route-active" : ""].filter(Boolean).join(" ") }))}
+            nodes={testCanvasNodes}
+            edges={testCanvasEdges}
             selection={selection}
             findings={findings}
             message={message}
@@ -18195,11 +17954,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             expandedInspectorTabId={expandedInspectorTabId}
             inspectorMaximized={inspectorMaximized}
             canvasBackground={settings.canvasBackground}
-            storyTestControls={<StoryTestControls snapshot={storyTest} dispatch={dispatchStoryTest} />}
+            storyTestControls={<StoryTestControls compact snapshot={storyTest} dispatch={dispatchStoryTest} onOpenPlay={openStoryPlay} />}
             testingActive={storyTest.active}
-            storyTestWorkspace={<>
-              {storyTest.active && !storyTestWindows.detached.preview ? <FloatingStoryTestPanel kind="preview" title={uiLocale === "es" ? "Probar historia" : "Test story"} locale={uiLocale} projectId={project.projectId} sessionId={storyTest.sessionId} avoidWriter={Boolean(eventScriptWorkspace)} detachable={storyTestWindows.canDetach} onDetach={() => { void storyTestWindows.detach("preview"); }}><StoryTestPreview snapshot={storyTest} dispatch={dispatchStoryTest} /></FloatingStoryTestPanel> : null}
-              {storyTest.debugOpen && !storyTestWindows.detached.debug ? <FloatingStoryTestPanel kind="debug" title={uiLocale === "es" ? "Debug del recorrido" : "Story debug"} locale={uiLocale} projectId={project.projectId} sessionId={storyTest.sessionId} avoidWriter={Boolean(eventScriptWorkspace)} detachable={storyTestWindows.canDetach} onDetach={() => { void storyTestWindows.detach("debug"); }} onClose={() => dispatchStoryTest({ type: "debug", open: false })}><StoryTestDebug snapshot={storyTest} dispatch={dispatchStoryTest} /></FloatingStoryTestPanel> : null}
+            storyTestWorkspace={storyTestWindows.detached.preview ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "La prueba está en otra ventana" : "Testing is in another window"}</strong><p>{uiLocale === "es" ? "El recorrido y sus valores se mantienen en este documento." : "The run and its values remain in this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver a acoplar" : "Redock"}</button></div> : <StoryTestPlayback snapshot={storyTest} dispatch={dispatchStoryTest} locale={uiLocale} />}
+            storyTestPlayTab={<>
+              {storyTestWindows.detached.preview
+                ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "Play Mode y Debug están en otra ventana" : "Play Mode and Debug are in another window"}</strong><p>{uiLocale === "es" ? "La reproducción, configuración y traza siguen vinculadas a este documento." : "Playback, settings and trace remain connected to this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver al inspector" : "Return to inspector"}</button></div>
+                : <StoryTestInspectorView snapshot={storyTest} dispatch={dispatchStoryTest} locale={uiLocale} fullscreen={contextFocus} detachable={storyTestWindows.canDetach} onDetach={detachStoryPlay} onOpenPlay={openStoryPlay} />}
               {storyTestWindows.error ? <div className="story-test-window-error" role="alert"><span>{uiLocale === "es" ? "No se pudo desacoplar. El recorrido sigue disponible aquí." : "Could not detach. The run remains available here."} {storyTestWindows.error}</span><button type="button" onClick={storyTestWindows.clearError}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
             </>}
             minimapOpen={settings.minimapOpen}
@@ -18212,10 +17973,10 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onConnect={handleConnect}
             onNodeDragStop={handleNodeDragStop}
             onSelect={selectWithEventDraftGuard}
-            onCanvasSelect={setSelection}
+            onCanvasSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
             onOpenCanvasInspector={selectWithEventDraftGuard}
             onNavigateScope={navigateCanvasScope}
-            onOpenEventScript={(eventId, textKey) => setEventScriptWorkspace({ eventId, textKey })}
+            onOpenEventScript={(eventId,textKey)=>openInspector({type:"node",id:eventId},"path",textKey)}
             onExportPreviewModeChange={setExportPreviewMode}
             onToggleData={() => setDataOpen((open) => !open)}
             onCreateEvent={createEvent}
@@ -18253,8 +18014,11 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onUpdateTransition={updateTransition}
             onCreateBoundaryRoute={createBoundaryRoute}
             onCreateBoundaryRouteEvent={createBoundaryRouteEvent}
+            onCreateDialogueBoundaryRoute={createDialogueBoundaryRoute}
             onCreateBoundaryEnd={createBoundaryEnd}
             onDeleteBoundaryEnd={deleteBoundaryEnd}
+            onDiscardPendingBoundaryPort={discardPendingBoundaryPort}
+            onBoundarySelectionChange={onBoundarySelectionChange}
             onWorkspaceBoundsChange={changeSubcanvasWorkspace}
             onArrangeScopeNodes={arrangeScopeNodes}
             onRemoveMissingEventReference={removeMissingEventReference}
@@ -18319,18 +18083,13 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               void saveActiveManualInspectorDraft();
             }}
           />}
-          {panelVisibility.export ? <WorkspacePanelSlot id="export" side="right" title={uiCopy.exportImport}><ExportPanel
+          {panelVisibility.export ? <WorkspacePanelSlot id="export" side="left" title={uiCopy.exportImport}><ExportPanel
             project={project}
             collapsed={panelCollapsed.export}
-            onCollapsedChange={(collapsed) => setPanelCollapsedState("export", collapsed)}
-            onContextMenu={openPanelContextMenu}
+            {...stableExportPanelActions}
             locale={uiLocale}
-            onPreview={(mode) => { setExportPreviewMode(mode); setExportOpen(true); }}
-            onLocateDiagnostic={locateExportDiagnostic}
-            onExport={(mode) => void exportRuntime(mode)}
-            onImportTwine={importTwine}
           /></WorkspacePanelSlot> : null}
-          {panelVisibility.connect ? <WorkspacePanelSlot id="connect" side="right" title={uiCopy.connect}><ConnectPanel
+          {panelVisibility.connect ? <WorkspacePanelSlot id="connect" side="left" title={uiCopy.connect}><ConnectPanel
             collapsed={panelCollapsed.connect}
             onCollapsedChange={(collapsed) => setPanelCollapsedState("connect", collapsed)}
             onContextMenu={openPanelContextMenu}
@@ -18361,7 +18120,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ) : null}
       </div>
       {project ? <ExportPreviewDialog project={project} mode={exportPreviewMode} open={exportOpen} onClose={() => setExportOpen(false)} onExport={(mode) => void exportRuntime(mode)} /> : null}
-      {!onboardingDismissed && !showInteractionTutorial && !showSettings && !exportOpen ? (
+      {!suiteChrome?.learning && !onboardingDismissed && !showInteractionTutorial && !showSettings && !exportOpen ? (
         <OnboardingGuide
           locale={uiLocale}
           steps={pathBranchingOnboardingSteps}
@@ -18370,7 +18129,7 @@ export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           onOpenStories={openStoriesForOnboarding}
         />
       ) : null}
-      {showInteractionTutorial ? (
+      {!suiteChrome?.learning && showInteractionTutorial ? (
         <InteractionTutorial
           locale={interactionTutorialLocale}
           onDismiss={dismissInteractionTutorial}

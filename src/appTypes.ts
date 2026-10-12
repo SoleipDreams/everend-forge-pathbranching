@@ -1,4 +1,10 @@
 export type Selection =
+  | { type: "story"; id: string }
+  | { type: "narrativeAction"; id: string }
+  | { type: "narrativeRule"; id: string }
+  | { type: "entityInstance"; id: string }
+  | { type: "storyDebug"; id: string }
+  | { type: "storyPlay"; id: string }
   | { type: "node"; id: string }
   | { type: "edge"; id: string }
   | { type: "canon"; id: string }
@@ -13,8 +19,19 @@ export type InspectorTab = {
   id: string;
   selection: Selection;
   title: string;
-  mode?: "normal" | "debug";
+  mode?: "normal" | "debug" | "play";
 };
+
+export type InspectorRequest = {
+  selectionKey: string;
+  section: string;
+  focusId?: string;
+  requestId?: number;
+};
+
+export function inspectorSelectionKey(selection: Selection) {
+  return `${selection.type}:${selection.id}${"source" in selection ? `:${selection.source}` : ""}`;
+}
 
 export type CanvasMode = "branching" | "focus";
 export type AppView = "home" | "workspace";

@@ -3,14 +3,22 @@ import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEva
 import { applyConsequenceDetailed, combineConditions, effectiveConditions, orderedTransitions, orderedMomentEffects } from './logic.js';
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
 import { resolveLogicField } from './logicCapabilities.js';
+import { barrierNodeId, defaultInteractionEnvironment, interactionNodeId, interactionUsesFor, resolveInteraction, type InteractionEnvironment, type InteractionExecution } from './interactions.js';
 
-export type AuthoringTrace = { kind: 'enter' | 'condition' | 'effect' | 'route' | 'rule' | 'action' | 'return' | 'error'; nodeId?: string; id?: string; message: string; evaluation?: ConditionEvaluationResult; before?: PlayerSimulationState; after?: PlayerSimulationState };
-export type AuthoringChoice = { id: string; nodeId: string; text: string; status: ConditionEvaluationResult['status']; hidden: boolean; reason?: string; evaluation: ConditionEvaluationResult };
+export type AuthoringTrace = { kind: 'enter' | 'condition' | 'effect' | 'route' | 'rule' | 'action' | 'return' | 'error' | 'interaction'; nodeId?: string; id?: string; message: string; evaluation?: ConditionEvaluationResult; before?: PlayerSimulationState; after?: PlayerSimulationState };
+export type AuthoringChoice = { id: string; nodeId: string; text: string; status: ConditionEvaluationResult['status']; hidden: boolean; masked: boolean; reason?: string; evaluation: ConditionEvaluationResult };
 export type AuthoringActionOption = { id: string; name: string; status: ConditionEvaluationResult['status']; requiresTarget: boolean; reason?: string };
-export type AuthoringView = { nodeId?: string; eventId?: string; dialogueId?: string; kind?: string; title?: string; text?: string; speakerRef?: string; choices: AuthoringChoice[]; actions: AuthoringActionOption[] };
+export type AuthoringView = { nodeId?: string; eventId?: string; dialogueId?: string; kind?: string; title?: string; text?: string; speakerRef?: string; speakerVariantId?: string; choices: AuthoringChoice[]; actions: AuthoringActionOption[]; interactions?: (InteractionExecution & { name: string; prompt?: import('./domain.js').InteractionDefinition['prompt']; mechanic: import('./domain.js').InteractionMechanic; results: { id: string; name: string }[] })[]; waiting?: boolean };
 type Frame = { nodeId: string; context?: PlayerSimulationState['context'] };
 type Snapshot = Omit<AuthoringSession, 'history'>;
 export type AuthoringSession = {
+  interactions: InteractionExecution[];
+  interactionSerial: number;
+  interactionClockAt?: number;
+  /** Retained across Back so replaying an execution never rolls again. */
+  interactionResolutions?: Record<string, { resultId: string; total?: number; rolls?: number[]; forced: boolean }>;
+  confirmedOutcomeId?: string;
+  waiting?: { kind: 'entry' | 'exit' | 'barrier'; nodeId: string; chosenNodeId?: string };
   revision: string;
   scenarioId?: string;
   startNodeId?: string;
@@ -28,13 +36,15 @@ export type AuthoringSession = {
   message?: string;
 };
 export type AuthoringCommand =
+  | { type: 'resolveInteraction'; executionId: string; resultId?: string; key?: string; timeout?: boolean; manual?: boolean }
+  | { type: 'interactionTime'; elapsedMs?: number }
   | { type: 'continue' }
   | { type: 'choose'; outcomeId: string }
   | { type: 'action'; actionId: string; self?: LogicSubject; target?: LogicSubject; actor?: LogicSubject }
   | { type: 'setState'; state: Partial<PlayerSimulationState> }
   | { type: 'back' }
   | { type: 'restart'; scenario?: AuthoringScenario; startNodeId?: string };
-type ContentNode = { id: string; rawId: string; kind: string; event?: EventNode; dialogue?: DialogueNode; title?: string; text?: string; speakerRef?: string; logic?: LogicMoment; when?: ConditionInput; automatic: boolean; decision?: NonNullable<EventNode['decisions']>[number] };
+type ContentNode = { id: string; rawId: string; kind: string; event?: EventNode; dialogue?: DialogueNode; title?: string; text?: string; speakerRef?: string; speakerVariantId?: string; logic?: LogicMoment; when?: ConditionInput; automatic: boolean; decision?: NonNullable<EventNode['decisions']>[number] };
 
 /** Only narrative data participates in the fixed revision; panels/layout never invalidate a run. */
 export function authoringRevision(project: BranchingProject): string {
@@ -52,7 +62,7 @@ function nodeIndex(project: BranchingProject): Map<string, ContentNode> {
     add({ id: event.id, rawId: event.id, kind: 'event', event, title: event.name, text: event.text?.content, logic: event.logic ?? { then: event.consequences }, when: effectiveConditions(event), automatic: !event.text?.content });
     const beat = (b: NonNullable<EventNode['dialogueBeats']>[number], dialogue?: DialogueNode) => {
       const block = project.scriptDocuments?.find(s => s.id === b.blockRef.scriptId)?.blocks.find(block => block.id === b.blockRef.blockId);
-      add({ id: `beat:${event.id}:${b.id}`, rawId: b.id, kind: b.kind, event, dialogue, title: dialogue?.title ?? event.name, text: block?.content, speakerRef: block?.characterRef ?? block?.speakerRef, logic: b.logic ?? { then: b.consequences }, when: effectiveConditions(b), automatic: false });
+      add({ id: `beat:${event.id}:${b.id}`, rawId: b.id, kind: b.kind, event, dialogue, title: dialogue?.title ?? event.name, text: block?.content, speakerRef: block?.characterRef ?? block?.speakerRef, speakerVariantId: block?.characterVariantId, logic: b.logic ?? { then: b.consequences }, when: effectiveConditions(b), automatic: false });
     };
     (event.dialogueBeats ?? []).forEach(b => beat(b));
     for (const dialogue of event.dialogues ?? []) {
@@ -64,6 +74,8 @@ function nodeIndex(project: BranchingProject): Map<string, ContentNode> {
       add({ id: `decision:${event.id}:${decision.id}`, rawId: decision.id, kind: 'decision', event, dialogue, title: decision.name, text: decision.description, decision, logic: decision.logic, when: effectiveConditions(decision), automatic: false });
       decision.outcomes.forEach(outcome => add({ id: `outcome:${event.id}:${decision.id}:${outcome.id}`, rawId: outcome.id, kind: 'outcome', event, dialogue, title: outcome.name, logic: outcome.logic ?? { then: outcome.consequences }, when: combineConditions(effectiveConditions(decision), effectiveConditions(outcome)), automatic: true }));
     }
+    for (const use of event.interactionUses ?? []) if (!use.ownerNodeId) add({ id: interactionNodeId(event.id, use.id), rawId: use.id, kind: 'interaction', event, dialogue: event.dialogues?.find(d => d.id === use.dialogueId), title: event.interactionDefinitions?.find(d => d.id === use.definitionId)?.name, automatic: true });
+    for (const barrier of event.interactionBarriers ?? []) add({ id: barrierNodeId(event.id, barrier.id), rawId: barrier.id, kind: 'barrier', event, dialogue: event.dialogues?.find(d => d.id === barrier.dialogueId), title: barrier.name, automatic: true });
     (event.dialogueStarts ?? []).forEach(start => add({ id: `dialogue-start:${event.id}:${start.id}`, rawId: start.id, kind: 'dialogueStart', event, when: effectiveConditions(start), logic: start.logic, automatic: true }));
     const boundaries = new Set((event.transitions ?? []).flatMap(t => [t.from, t.to]).concat((event.boundaryBindings ?? []).map(b => b.portId)));
     for (const id of boundaries) if (id.startsWith(`boundary:${event.id}:`) || id.startsWith(`dialogue-boundary:${event.id}:`)) add({ id, rawId: id, kind: 'boundary', event, dialogue: event.dialogues?.find(d => id.startsWith(`dialogue-boundary:${event.id}:${d.id}:`)), automatic: true });
@@ -271,7 +283,7 @@ function structuralNext(project: BranchingProject, session: AuthoringSession, no
     if (inputs.length > 1) { stop(session, 'Choose the event input; several entries are possible', node.id); return undefined; }
     if (inputs.length === 1) return route(project, session, inputs[0], budget);
     if (routes(project, node.id).length) return route(project, session, node.id, budget);
-    const children = [...(node.event.dialogueBeats ?? []).map(b => `beat:${node.event!.id}:${b.id}`), ...(node.event.dialogues ?? []).map(d => `dialogue:${node.event!.id}:${d.id}`), ...(node.event.decisions ?? []).filter(d => !d.dialogueId).map(d => `decision:${node.event!.id}:${d.id}`), ...(node.event.childEventIds ?? [])];
+    const children = [...(node.event.dialogueBeats ?? []).map(b => `beat:${node.event!.id}:${b.id}`), ...(node.event.dialogues ?? []).map(d => `dialogue:${node.event!.id}:${d.id}`), ...(node.event.decisions ?? []).filter(d => !d.dialogueId).map(d => `decision:${node.event!.id}:${d.id}`), ...(node.event.childEventIds ?? []), ...(node.event.interactionUses ?? []).filter(u => !u.ownerNodeId && !u.dialogueId).map(u => interactionNodeId(node.event!.id, u.id)), ...(node.event.interactionBarriers ?? []).filter(b => !b.dialogueId).map(b => barrierNodeId(node.event!.id, b.id))];
     const starts = children.filter(id => !node.event!.transitions?.some(t => t.to === id));
     if (starts.length > 1) { stop(session, 'Choose the event entry; several blocks are possible', node.id); return undefined; }
     if (starts.length === 1) return starts[0];
@@ -282,15 +294,64 @@ function refreshView(project: BranchingProject, session: AuthoringSession) {
   const node = nodeIndex(project).get(session.nodeId ?? '');
   const choices: AuthoringChoice[] = (node?.decision?.outcomes ?? []).map(o => {
     const result = evaluate(project, session.state, combineConditions(node?.when, effectiveConditions(o)));
-    return { id: o.id, nodeId: `outcome:${node!.event!.id}:${node!.decision!.id}:${o.id}`, text: o.visibleText ?? o.name, status: result.status, hidden: o.unavailableBehavior === 'hidden' && result.status !== 'satisfied', reason: result.status === 'satisfied' ? undefined : o.lockText?.content ?? result.message, evaluation: result };
+    const unavailable = result.status !== 'satisfied';
+    const masked = unavailable && Boolean(o.unavailableText?.content.trim());
+    return {
+      id: o.id, nodeId: `outcome:${node!.event!.id}:${node!.decision!.id}:${o.id}`,
+      text: masked ? o.unavailableText!.content : o.visibleText ?? o.name,
+      status: result.status, hidden: o.unavailableBehavior === 'hidden' && unavailable, masked,
+      // Detailed diagnostics stay in debug; a masked label must not reveal its identity.
+      reason: unavailable ? o.lockText?.content || (masked ? undefined : result.message) : undefined,
+      evaluation: result,
+    };
   });
   const actions = (project.narrativeActions ?? []).filter(a => a.enabled !== false).map(a => {
     const result = evaluate(project, session.state, a.when);
     return { id: a.id, name: a.name, status: result.status, requiresTarget: a.requiresTarget ?? false, reason: result.status === 'satisfied' ? undefined : result.message };
   });
-  session.view = { nodeId: node?.id, eventId: node?.event?.id, dialogueId: node?.dialogue?.id, kind: node?.kind, title: node?.title, text: node?.text, speakerRef: node?.speakerRef, choices, actions };
+  session.view = { nodeId: node?.id, eventId: node?.event?.id, dialogueId: node?.dialogue?.id, kind: node?.kind, title: node?.title, text: node?.text, speakerRef: node?.speakerRef, speakerVariantId: node?.speakerVariantId, choices: session.waiting ? [] : choices, actions, waiting: Boolean(session.waiting), interactions: session.interactions.filter(x => x.status === 'pending' && x.eventId === node?.event?.id).map(x => { const definition = project.events.find(e => e.id === x.eventId)!.interactionDefinitions!.find(d => d.id === x.definitionId)!; return { ...x, name: definition.name, prompt: definition.prompt, mechanic: definition.mechanic, results: definition.results.map(r => ({ id: r.id, name: r.name })) }; }) };
 }
-function advance(project: BranchingProject, session: AuthoringSession, destination: string | undefined, budget: { value: number }) {
+function startInteractions(project: BranchingProject, session: AuthoringSession, node: ContentNode, uses: import('./domain.js').InteractionUse[]) {
+  for (const use of uses) {
+    if (session.interactions.some(x => x.useId === use.id && x.status === 'pending')) { stop(session, 'An interaction is already pending; add a barrier before re-entry', use.id); return false; }
+    if (!node.event?.interactionDefinitions?.some(d => d.id === use.definitionId)) { stop(session, 'Missing interaction definition', use.id); return false; }
+    session.interactions.push({ id: `execution:${++session.interactionSerial}`, useId: use.id, definitionId: use.definitionId, eventId: node.event.id, ownerNodeId: node.id, moment: node.kind === 'interaction' ? 'before' : use.moment, status: 'pending', elapsedMs: 0 });
+    const results = { ...session.state.interactionResults }; delete results[use.id]; session.state.interactionResults = results;
+    session.trace.push({ kind: 'interaction', nodeId: node.id, id: use.id, message: 'Interaction started' });
+  }
+  return true;
+}
+function startExit(project: BranchingProject, session: AuthoringSession, node: ContentNode, chosenNodeId?: string) {
+  if (node.kind === 'dialogue' && node.automatic) return true;
+  const uses = interactionUsesFor(node.event, node.id, 'after');
+  if (!startInteractions(project, session, node, uses)) return false;
+  if (!uses.length) return true;
+  session.waiting = { kind: 'exit', nodeId: node.id, chosenNodeId };
+  return false;
+}
+function barrierReady(session: AuthoringSession, node: ContentNode) {
+  const barrier = node.event?.interactionBarriers?.find(b => b.id === node.rawId);
+  return Boolean(barrier?.useIds.length && barrier.useIds.every(id => session.state.interactionResults?.[id] && !session.interactions.some(x => x.useId === id && x.status === 'pending')));
+}
+function finishInteraction(project: BranchingProject, session: AuthoringSession, executionId: string, input: { resultId?: string; key?: string; timeout?: boolean; manual?: boolean }, environment: InteractionEnvironment) {
+  const execution = session.interactions.find(x => x.id === executionId);
+  if (!execution || execution.status === 'resolved') return;
+  const definition = project.events.find(e => e.id === execution.eventId)?.interactionDefinitions?.find(d => d.id === execution.definitionId);
+  if (!definition) { stop(session, 'Missing interaction definition', execution.useId); return; }
+  try {
+    const previous = !input.resultId ? session.interactionResolutions?.[execution.id] : undefined;
+    const resolved = previous
+      ? { result: definition.results.find(r => r.id === previous.resultId)!, total: previous.total, rolls: previous.rolls, forced: previous.forced }
+      : resolveInteraction(project, session.state, definition, input, environment);
+    if (!resolved.result) throw new Error('Cached interaction result no longer exists');
+    session.interactionResolutions = { ...session.interactionResolutions, [execution.id]: { resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced } };
+    if (!effects(project, session, resolved.result.effects, `interaction:${execution.id}`)) return;
+    Object.assign(execution, { status: 'resolved', resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced });
+    session.state.interactionResults = { ...session.state.interactionResults, [execution.useId]: { executionId, resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced } };
+    session.trace.push({ kind: 'interaction', nodeId: execution.ownerNodeId, id: execution.useId, message: `${definition.name}: ${resolved.result.name}${resolved.total === undefined ? '' : ` (${resolved.total})`}${resolved.forced ? ' [forced]' : ''}` });
+  } catch (error) { stop(session, error instanceof Error ? error.message : String(error), execution.useId); }
+}
+function advance(project: BranchingProject, session: AuthoringSession, destination: string | undefined, budget: { value: number }, resumeEntry = false) {
   const index = nodeIndex(project);
   const seen = new Set<string>();
   while (destination && session.status !== 'blocked') {
@@ -301,11 +362,47 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
     const node = index.get(destination);
     if (!node) { stop(session, `Missing narrative node ${destination}`, destination); break; }
     const previousEvent = index.get(session.nodeId ?? '')?.event;
+    if (!resumeEntry && previousEvent && previousEvent.id !== node.event?.id && session.interactions.some(x => x.eventId === previousEvent.id && x.status === 'pending') && !session.returns.some(f => index.get(f.nodeId)?.event?.id === previousEvent.id)) { stop(session, 'Wait at a barrier before leaving this event', node.id); break; }
     session.nodeId = node.id;
-    const inherited = node.event ? combineConditions(...project.sequences.filter(s => s.eventIds.includes(node.event!.id)).map(effectiveConditions), ...project.branches.filter(b => b.eventIds.includes(node.event!.id)).map(effectiveConditions), effectiveConditions(node.event), node.dialogue ? effectiveConditions(node.dialogue) : undefined, node.when) : node.when;
-    const gate = evaluate(project, session.state, inherited);
+    const dialogueAvailability = node.kind === 'dialogue' ? node.when : undefined;
+    const inherited = node.event ? combineConditions(
+      ...project.sequences.filter(s => s.eventIds.includes(node.event!.id)).map(effectiveConditions),
+      ...project.branches.filter(b => b.eventIds.includes(node.event!.id)).map(effectiveConditions),
+      effectiveConditions(node.event),
+      node.dialogue && node.kind !== 'dialogue' ? effectiveConditions(node.dialogue) : undefined,
+      node.kind === 'dialogue' ? undefined : node.when,
+    ) : node.kind === 'dialogue' ? undefined : node.when;
+    const gate = evaluate(project, session.state, node.kind === 'outcome' && session.confirmedOutcomeId === node.id ? undefined : inherited);
     session.trace.push({ kind: 'condition', nodeId: node.id, message: gate.message, evaluation: gate });
     if (gate.status !== 'satisfied') { stop(session, gate.status === 'unsatisfied' ? 'This content is unavailable' : gate.message, node.id); break; }
+    if (dialogueAvailability) {
+      const availability = evaluate(project, session.state, dialogueAvailability);
+      if (availability.status !== 'satisfied') {
+        session.trace.push({
+          kind: 'condition',
+          nodeId: node.id,
+          message: availability.status === 'unsatisfied'
+            ? 'Dialogue condition is not met. Content skipped; evaluating outgoing routes.'
+            : availability.message,
+          evaluation: availability,
+        });
+        if (availability.status === 'invalid' || availability.status === 'unresolved') {
+          stop(session, availability.message, node.id);
+          break;
+        }
+        if (!routes(project, node.id).length) {
+          stop(session, 'Dialogue condition failed and no outgoing route can continue the story', node.id);
+          break;
+        }
+        destination = route(project, session, node.id, budget);
+        if (blocked(session)) break;
+        if (!destination) {
+          stop(session, 'Dialogue condition failed and no valid route can continue the story', node.id);
+          break;
+        }
+        continue;
+      }
+    }
     if (!session.visitedNodeIds.includes(node.id)) session.visitedNodeIds.push(node.id);
     const visited = new Set(session.state.visited ?? []); visited.add(node.id);
     if (['event','decision','outcome','sequence'].includes(node.kind)) visited.add(`${node.kind}:${node.rawId}`);
@@ -319,50 +416,96 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
       for (const entityId of node.event.presentEntityRefs ?? node.event.canonRefs ?? []) entityStates[entityId] = { ...entityStates[entityId], states: { ...entityStates[entityId]?.states, present: true } };
       session.state.entityStates = entityStates;
     }
+    if (!resumeEntry) {
+      const uses = node.kind === 'interaction' ? (node.event?.interactionUses ?? []).filter(u => u.id === node.rawId) : interactionUsesFor(node.event, node.id, 'before');
+      if (!startInteractions(project, session, node, uses)) break;
+      if (uses.length) { session.waiting = { kind: 'entry', nodeId: node.id }; refreshView(project, session); return; }
+    }
+    if (node.kind === 'boundary' && node.dialogue && node.id.endsWith(':output')) {
+      const owner = index.get(`dialogue:${node.event!.id}:${node.dialogue.id}`)!;
+      const uses = interactionUsesFor(node.event, owner.id, 'after');
+      if (!resumeEntry && !startInteractions(project, session, { ...owner, id: node.id }, uses)) break;
+      if (!resumeEntry && uses.length) { session.waiting = { kind: 'entry', nodeId: node.id }; refreshView(project, session); return; }
+    }
+    if (node.kind === 'barrier' && (node.event?.interactionBarriers?.find(b => b.id === node.rawId)?.useIds ?? []).some(id => !session.interactions.some(x => x.useId === id))) { stop(session, 'Barrier references an interaction that has not started', node.id); break; }
+    if (node.kind === 'barrier' && !barrierReady(session, node)) { session.waiting = { kind: 'barrier', nodeId: node.id }; refreshView(project, session); return; }
+    resumeEntry = false;
     if (blocked(session) || !moment(project, session, node)) break;
+    if (!startInteractions(project, session, node, interactionUsesFor(node.event, node.id, 'during'))) break;
     const triggered = runRules(project, session, 'enter', node, budget);
     const changed = immediate(project, session, node, budget);
     if (blocked(session)) break;
     if (triggered || changed) { destination = triggered ?? changed; continue; }
     if (!node.automatic) { session.status = 'ready'; refreshView(project, session); return; }
+    if (!startExit(project, session, node)) { refreshView(project, session); return; }
     destination = structuralNext(project, session, node, budget);
     if (!destination && !blocked(session) && session.returns.length) {
+      if (session.interactions.some(x => x.status === 'pending' && x.eventId === node.event?.id)) { stop(session, 'Wait at a barrier before returning from this event'); break; }
       const frame = session.returns.pop()!; session.nodeId = frame.nodeId; session.state.context = frame.context;
       session.trace.push({ kind: 'return', nodeId: frame.nodeId, message: 'Returned to the interrupted content' });
       session.status = 'ready'; refreshView(project, session); return;
     }
   }
-  if (session.status !== 'blocked') session.status = 'ended';
+  if (session.status !== 'blocked') {
+    if (session.interactions.some(x => x.status === 'pending' && x.eventId === index.get(session.nodeId ?? '')?.event?.id)) stop(session, 'Wait at a barrier before ending the event');
+    else session.status = 'ended';
+  }
   refreshView(project, session);
 }
-export function createAuthoringSession(project: BranchingProject, scenario?: AuthoringScenario, startNodeId?: string): AuthoringSession {
+export function createAuthoringSession(project: BranchingProject, scenario?: AuthoringScenario, startNodeId?: string, environment: InteractionEnvironment = defaultInteractionEnvironment): AuthoringSession {
   const state = initialAuthoringState(project, scenario);
-  const session: AuthoringSession = { revision: authoringRevision(project), scenarioId: scenario?.id, startNodeId: startNodeId ?? scenario?.startNodeId, status: 'ready', state, view: { choices: [], actions: [] }, trace: [], applied: [], returns: [], ruleTruth: {}, history: [], visitedNodeIds: [] };
+  const session: AuthoringSession = { interactions: [], interactionSerial: 0, revision: authoringRevision(project), scenarioId: scenario?.id, startNodeId: startNodeId ?? scenario?.startNodeId, status: 'ready', state, view: { choices: [], actions: [] }, trace: [], applied: [], returns: [], ruleTruth: {}, history: [], visitedNodeIds: [] };
   if (new Set(state.entityInstances?.map(i => i.id)).size !== state.entityInstances?.length) { stop(session, 'Duplicate copy IDs'); return session; }
   for (const i of state.entityInstances ?? []) { const error = instanceOwnerIssue(project, state.entityInstances ?? [], i); if (error) { stop(session, error, i.id); return session; } }
   for (const { r } of rules(project)) if (r.trigger === 'stateChanged') session.ruleTruth[r.id] = evaluate(project, state, r.when).status === 'satisfied';
   const sequence = project.sequences.find(s => s.id === project.entrySequenceId) ?? (project.sequences.length === 1 ? project.sequences[0] : undefined);
   const start = session.startNodeId ?? (sequence ? `start:${sequence.id}` : project.events.length === 1 ? project.events[0].id : undefined);
   if (!start) { stop(session, 'Choose a story entry; several sequences are possible'); return session; }
+  if (project.events.some(e => e.interactionDefinitions?.some(d => d.mechanic.kind === 'qte'))) session.interactionClockAt = environment.now();
   advance(project, session, start, { value: 0 });
   return session;
 }
-export function authoringCommand(project: BranchingProject, source: AuthoringSession, command: AuthoringCommand): AuthoringSession {
-  if (command.type === 'restart') return createAuthoringSession(project, command.scenario, command.startNodeId ?? source.startNodeId);
+export function authoringCommand(project: BranchingProject, source: AuthoringSession, command: AuthoringCommand, environment: InteractionEnvironment = defaultInteractionEnvironment): AuthoringSession {
+  if (command.type === 'restart') return createAuthoringSession(project, command.scenario, command.startNodeId ?? source.startNodeId, environment);
   if (command.type === 'back') {
     const previous = source.history.at(-1);
-    return previous ? { ...structuredClone(previous), history: source.history.slice(0, -1) } : source;
+    return previous ? { ...structuredClone(previous), ...(source.interactionResolutions ? { interactionResolutions: structuredClone(source.interactionResolutions) } : {}), history: source.history.slice(0, -1) } : source;
   }
   const session = structuredClone(source);
   if (source.revision !== authoringRevision(project)) { stop(session, 'The story changed. Restart to use the new revision.'); return session; }
   if (session.status === 'blocked' && command.type !== 'setState') return session;
+  if (session.waiting && !['resolveInteraction', 'interactionTime', 'setState'].includes(command.type)) return source;
+  const clockNow = environment.now();
+  const elapsedMs = command.type === 'interactionTime' ? command.elapsedMs ?? Math.max(0, clockNow - (source.interactionClockAt ?? clockNow)) : 0;
+  if (command.type === 'interactionTime' && (!Number.isFinite(elapsedMs) || elapsedMs < 0)) return source;
+  if (source.interactionClockAt !== undefined) session.interactionClockAt = clockNow;
   const { history, ...snapshot } = structuredClone(source);
-  session.history = [...history.slice(-99), snapshot];
+  session.history = command.type === 'interactionTime' ? history : [...history.slice(-99), snapshot];
   session.message = undefined; session.status = 'ready';
   const node = nodeIndex(project).get(session.nodeId ?? '');
   const budget = { value: 0 };
   let next: string | undefined;
-  if (command.type === 'setState') {
+  if (command.type === 'resolveInteraction' || command.type === 'interactionTime') {
+    if (command.type === 'interactionTime') {
+      for (const execution of session.interactions.filter(x => x.status === 'pending' && x.eventId === node?.event?.id)) {
+        const definition = project.events.find(e => e.id === execution.eventId)?.interactionDefinitions?.find(d => d.id === execution.definitionId);
+        if (definition?.mechanic.kind === 'qte') { execution.elapsedMs += elapsedMs; if (execution.elapsedMs >= definition.mechanic.durationMs) finishInteraction(project, session, execution.id, { timeout: true }, environment); }
+      }
+    } else finishInteraction(project, session, command.executionId, command, environment);
+    if (command.type === 'interactionTime' && session.interactions.some((x, i) => x.status === 'resolved' && source.interactions[i]?.status === 'pending')) session.history = [...history.slice(-99), snapshot];
+    if (blocked(session)) { refreshView(project, session); return session; }
+    const waiting = session.waiting;
+    if (waiting) {
+      const owner = nodeIndex(project).get(waiting.nodeId)!;
+      const ready = waiting.kind === 'barrier' ? barrierReady(session, owner) : !session.interactions.some(x => x.status === 'pending' && x.ownerNodeId === owner.id && (waiting.kind === 'entry' && owner.kind === 'boundary' ? x.moment === 'after' : x.moment === (waiting.kind === 'entry' ? 'before' : 'after')));
+      if (ready) {
+        session.waiting = undefined;
+        if (waiting.kind === 'exit') { next = waiting.chosenNodeId ?? structuralNext(project, session, owner, budget); if (!blocked(session)) advance(project, session, next, budget); }
+        else advance(project, session, owner.id, budget, true);
+      }
+    }
+    refreshView(project, session); return session;
+  } else if (command.type === 'setState') {
     const nextState = { ...session.state, ...command.state, context: { ...session.state.context, ...command.state.context } };
     for (const v of project.logicVariables ?? []) if (Object.prototype.hasOwnProperty.call(nextState.variables, v.id) && !conditionValueMatchesType(nextState.variables![v.id], v.type)) { stop(session, `Variable ${v.name} has an incompatible value`, v.id); return session; }
     for (const i of nextState.entityInstances ?? []) { const error = instanceOwnerIssue(project, nextState.entityInstances ?? [], i); if (error) { stop(session, error, i.id); return session; } }
@@ -373,6 +516,8 @@ export function authoringCommand(project: BranchingProject, source: AuthoringSes
     refreshView(project, session);
     const choice = session.view.choices.find(c => c.id === command.outcomeId);
     if (!choice || choice.status !== 'satisfied') { stop(session, choice?.reason ?? 'This response is not available', command.outcomeId); return session; }
+    session.confirmedOutcomeId = choice.nodeId;
+    if (node && !startExit(project, session, node, choice.nodeId)) { refreshView(project, session); return session; }
     next = choice.nodeId;
   } else if (command.type === 'action') {
     const action = project.narrativeActions?.find(a => a.id === command.actionId && a.enabled !== false);
@@ -396,10 +541,12 @@ export function authoringCommand(project: BranchingProject, source: AuthoringSes
     if (action.navigation === 'jump') session.returns = [];
     if (!next) { session.state.context = oldContext; refreshView(project, session); return session; }
   } else {
+    if (node && !startExit(project, session, node)) { refreshView(project, session); return session; }
     if (node?.kind === 'decision') { stop(session, 'Choose a response before continuing', node.id); return session; }
     next = runRules(project, session, 'continue', node, budget) ?? immediate(project, session, node, budget);
     if (!next && node && !blocked(session)) next = structuralNext(project, session, node, budget);
     if (!next && !blocked(session) && session.returns.length) {
+      if (session.interactions.some(x => x.status === 'pending' && x.eventId === node?.event?.id)) { stop(session, 'Wait at a barrier before returning from this event'); return session; }
       const frame = session.returns.pop()!; session.nodeId = frame.nodeId; session.state.context = frame.context;
       session.trace.push({ kind: 'return', nodeId: frame.nodeId, message: 'Returned to the interrupted content' }); refreshView(project, session); return session;
     }

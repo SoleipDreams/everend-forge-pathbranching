@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 .condition-ux {
   container-type: inline-size;
   min-width: 0;
@@ -101,4 +103,6 @@
 
 @container (min-width: 700px) {
   .condition-ux .condition-predicate-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 }

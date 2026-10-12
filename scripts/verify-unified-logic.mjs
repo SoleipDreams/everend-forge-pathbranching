@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { applyLogicEffect, evaluateConditionInput } from "../lib/logic.js";
-import { buildStoryCanvasModel } from "../lib/canvas/storyCanvasModel.js";
+import { buildStoryCanvasModel, routeGateVisualAnchorFromLogicPosition } from "../lib/canvas/storyCanvasModel.js";
 import { connectedNarrativeNodePosition } from "../lib/canvas/nodePlacement.js";
 import { logicFieldOptions, presentConsequences } from "../lib/logicCapabilities.js";
 import { createInternalTransition, deleteTransition, updateTransition } from "../lib/projectMutations.js";
@@ -92,19 +92,58 @@ conditionalSplit.events[0].transitions[1].mode = "fallback";
 const visualModel = buildStoryCanvasModel(conditionalSplit, { canvasLayerMode: "visual" });
 const logicModel = buildStoryCanvasModel(conditionalSplit, { canvasLayerMode: "logic" });
 const splitGateId = "route-gate:event:a:event:a";
+
+const alignedGateScope = { kind: "sequence", id: "sequence:main" };
+const alignedGateScopeKey = "sequence:sequence:main";
+const storedGateProject = {
+  ...conditionalSplit,
+  canvas: {
+    ...conditionalSplit.canvas,
+    activeScope: alignedGateScope,
+    scopes: {
+      ...conditionalSplit.canvas?.scopes,
+      [alignedGateScopeKey]: {
+        ...conditionalSplit.canvas?.scopes?.[alignedGateScopeKey],
+        nodes: {
+          "event:a": { position: { x: 0, y: 0 } },
+          "event:b": { position: { x: 500, y: 100 } },
+          "event:c": { position: { x: 500, y: 300 } },
+          [splitGateId]: { position: { x: 333, y: 700 } },
+        },
+      },
+    },
+  },
+};
+const autoAlignedGate = buildStoryCanvasModel(storedGateProject, {
+  scope: alignedGateScope,
+  canvasLayerMode: "visual",
+}).nodes.find((node) => node.id === splitGateId);
+assert.equal(autoAlignedGate?.position.x, 333, "automatic gate alignment must preserve the author's horizontal placement");
+assert.equal(autoAlignedGate?.position.y, 237, "a stored gate should recenter between the rows of its forward destinations");
+const manuallyPositionedGate = buildStoryCanvasModel({
+  ...storedGateProject,
+  canvas: {
+    ...storedGateProject.canvas,
+    scopes: {
+      ...storedGateProject.canvas.scopes,
+      [alignedGateScopeKey]: {
+        ...storedGateProject.canvas.scopes[alignedGateScopeKey],
+        nodes: {
+          ...storedGateProject.canvas.scopes[alignedGateScopeKey].nodes,
+          [splitGateId]: { position: { x: 333, y: 401 }, manual: true },
+        },
+      },
+    },
+  },
+}, {
+  scope: alignedGateScope,
+  canvasLayerMode: "visual",
+}).nodes.find((node) => node.id === splitGateId);
+assert.equal(manuallyPositionedGate?.position.y, 401, "a gate deliberately dragged by the author must retain its vertical placement");
 const visualGate = visualModel.nodes.find((node) => node.id === splitGateId);
 const logicGate = logicModel.nodes.find((node) => node.id === splitGateId);
 assert.equal(visualGate?.data.details?.junctionPresentation, "split");
 assert.equal(logicGate?.data.details?.junctionPresentation, "gate");
-const visualGateCenter = {
-  x: (visualGate?.position.x ?? 0) + (visualGate?.width ?? 0) / 2,
-  y: (visualGate?.position.y ?? 0) + (visualGate?.height ?? 0) / 2,
-};
-const logicGateCenter = {
-  x: (logicGate?.position.x ?? 0) + (logicGate?.width ?? 0) / 2,
-  y: (logicGate?.position.y ?? 0) + (logicGate?.height ?? 0) / 2,
-};
-assert.deepEqual(visualGateCenter, logicGateCenter, "layer toggles must preserve the route-gate center");
 assert.equal(visualGate?.width, 34, "Visual gates must use a square selectable knot footprint");
 assert.equal(visualGate?.height, 34, "Visual gates must use a square selectable knot footprint");
 assert.ok((logicGate?.width ?? 0) >= 160, "Logic gates must have room for an informational summary");
@@ -112,22 +151,138 @@ assert.ok((logicGate?.height ?? 0) > (visualGate?.height ?? 0), "Logic gates mus
 const visualSource = visualModel.nodes.find((node) => node.id === "event:a");
 const logicSource = logicModel.nodes.find((node) => node.id === "event:a");
 assert.deepEqual(logicSource?.position, visualSource?.position, "Layer switches must not reflow surrounding nodes when a gate expands.");
+assert.ok((logicGate?.position.x ?? 0) >= (logicSource?.position.x ?? 0) + (logicSource?.width ?? 0), "an automatically placed Logic router must sit outside its source card");
+const wideGapLogicModel = buildStoryCanvasModel(storedGateProject, {
+  scope: alignedGateScope,
+  canvasLayerMode: "logic",
+});
+const wideGapGate = wideGapLogicModel.nodes.find((node) => node.id === splitGateId);
+const wideGapSource = wideGapLogicModel.nodes.find((node) => node.id === "event:a");
+const wideGapTarget = wideGapLogicModel.nodes.find((node) => node.id === "event:b");
+assert.ok(wideGapGate && wideGapSource && wideGapTarget);
+assert.ok(wideGapGate.position.x >= wideGapSource.position.x + (wideGapSource.width ?? 0), "a Logic router must leave breathing room after its source");
+assert.ok(wideGapGate.position.x + (wideGapGate.width ?? 0) <= wideGapTarget.position.x, "a Logic router must fit inside the lane before the first destination");
+const manualLogicGate = buildStoryCanvasModel({
+  ...storedGateProject,
+  canvas: {
+    ...storedGateProject.canvas,
+    scopes: {
+      ...storedGateProject.canvas.scopes,
+      [alignedGateScopeKey]: {
+        ...storedGateProject.canvas.scopes[alignedGateScopeKey],
+        nodes: {
+          ...storedGateProject.canvas.scopes[alignedGateScopeKey].nodes,
+          [splitGateId]: { position: { x: 333, y: 401 }, manual: true },
+        },
+      },
+    },
+  },
+}, { scope: alignedGateScope, canvasLayerMode: "logic" }).nodes.find((node) => node.id === splitGateId);
+assert.deepEqual(
+  routeGateVisualAnchorFromLogicPosition(manualLogicGate.position, manualLogicGate.width, manualLogicGate.height),
+  { x: 333, y: 401 },
+  "dragging a Logic router must persist its visual anchor using its rendered dimensions",
+);
 assert.equal(visualModel.nodes.find((node) => node.id === "event:a")?.data.logicSummary, undefined);
 assert.ok(logicModel.nodes.find((node) => node.id === "event:a")?.data.logicSummary);
+
 const visualRoute = visualModel.edges.find((edge) => edge.data?.kind === "transition" && edge.data?.conditions);
 const logicRoute = logicModel.edges.find((edge) => edge.data?.kind === "transition" && edge.data?.conditions);
 assert.equal(visualRoute?.data?.canvasLayerMode, "visual");
 assert.equal(visualRoute?.animated, false);
 assert.equal(logicRoute?.data?.canvasLayerMode, "logic");
-assert.equal(logicRoute?.animated, true);
+assert.equal(logicRoute?.animated, false, "authored routes should not animate continuously outside a running test");
 assert.equal(logicRoute?.data?.routePreview?.conditionItems?.[0]?.subjectLabel, "Relic");
 const gateRouteEdges = logicModel.edges.filter((edge) => edge.source === splitGateId);
 assert.equal(gateRouteEdges.length, 2, "a Logic Gate must expose every outgoing route");
 assert.ok(gateRouteEdges.every((edge) => edge.sourceHandle === "route:output"), "every route must leave through the shared gate output");
+assert.ok(gateRouteEdges.every((edge) => edge.data.routeGateId === splitGateId), "route edges must point back to their shared router inspector");
+assert.deepEqual(gateRouteEdges.map((edge) => edge.data.routeIndex), [0, 1], "router routes need stable generic ordinals");
 const visualGateRouteEdges = visualModel.edges.filter((edge) => edge.source === splitGateId);
 assert.ok(visualGateRouteEdges.every((edge) => edge.sourceHandle === "route:output"), "every Visual knot route must resolve through the shared output");
 const gateOptions = logicGate?.data.details?.routeOptions;
 assert.equal(Array.isArray(gateOptions) ? gateOptions.length : 0, 2, "a Logic Gate must summarize every outgoing route");
+assert.deepEqual(gateOptions.map((route) => route.targetLabel), ["B", "C"], "ordered routes need readable destinations, including Else");
+assert.equal(gateOptions[1].mode, "fallback");
+assert.deepEqual(gateOptions.map((route) => route.label), ["Route 1", "Route 2"], "router rows use generic route names instead of condition labels");
+const interactionRouteProject = structuredClone(conditionalSplit);
+interactionRouteProject.events[0].interactionUses = [{ id: "interaction:split", definitionId: "definition:split", ownerNodeId: "event:a", moment: "before" }];
+const interactionRouter = buildStoryCanvasModel(interactionRouteProject, { canvasLayerMode: "logic" }).nodes.find((node) => node.id === splitGateId);
+assert.equal(interactionRouter?.data.details?.interactionCount, 1, "router summaries count interactions attached to their source");
+assert.equal(logicModel.nodes.find((node) => node.id === "event:a").data.logicSummary.when, "", "nodes with no own conditions must not repeat Always");
+assert.equal(logicModel.nodes.find((node) => node.id === "event:a").data.logicSummary.then, "", "nodes with no effects must not repeat No effects");
+
+const authoringCanvasProject = normalizeProject({
+  ...source,
+  events: [
+    { ...source.events[0], decisions: [{ id: "decision:test", name: "Choose a path", logic: { when: owned }, outcomes: [
+      { id: "response:one", name: "Guarded answer", availability: visited, unavailableBehavior: "hidden" },
+      { id: "response:two", name: "Apply a change", logic: { then: [{ type: "property", subject: owned.subject, propertyId: "durability", operation: "add", value: 1 }] } },
+    ] }], transitions: [{ id: "route:effects", from: "event:a", to: "event:b", role: "route", consequences: [{ type: "state", subject: owned.subject, stateId: "owned", operation: "grant" }] }] },
+    source.events[1],
+    { ...source.events[2], parentEventId: "event:a", transitions: [{ id: "route:return", from: "event:c", to: "event:a" }] },
+  ],
+});
+const beforeCanvas = JSON.stringify(authoringCanvasProject);
+for (const canvasLayerMode of ["visual", "logic"]) {
+  const model = buildStoryCanvasModel(authoringCanvasProject, { scope: { kind: "event", id: "event:a" }, canvasLayerMode, interfaceLocale: "es" });
+  const decision = model.nodes.find((node) => node.id === "decision:event:a:decision:test");
+  assert.equal(decision.data.title, "Choose a path");
+  assert.deepEqual(decision.data.infoBadges, [{ kind: "outcomes", count: 2 }], "decision cards preview the number of options inside");
+  assert.equal(decision.data.authoringLogicSummary.conditionCount, 1, "a decision's availability belongs to its own card in both layers");
+  const responses = decision.data.details.options;
+  assert.equal(responses[0].logicSummary.conditionCount, 1, "each response retains its independent restriction");
+  assert.equal(responses[0].unavailableBehavior, "hidden");
+  assert.equal(responses[1].logicSummary.consequenceCount, 1, "response effects must be distinct from decision availability");
+  assert.equal(responses[0].handleId, "outcome:event:a:decision:test:response:one");
+  const sequenceModel = buildStoryCanvasModel(authoringCanvasProject, { scope: { kind: "sequence", id: "sequence:main" }, canvasLayerMode, interfaceLocale: "es" });
+  const effectsRoute = sequenceModel.edges.find((edge) => edge.id === "edge:transition:route:effects");
+  assert.deepEqual(effectsRoute.data.routePreview.conditions, [], "an effects-only route must not invent an Always condition");
+  assert.equal(effectsRoute.data.routePreview.consequences.length, 1);
+  assert.equal(effectsRoute.data.routeTargetLabel, "B");
+  const returnRoute = model.edges.find((edge) => edge.id === "edge:transition:route:return");
+  assert.equal(returnRoute.data.returnRoute, true, "child-to-parent returns need a visible return role");
+  const returnPort = model.nodes.find((node) => node.data.details?.restart);
+  assert.equal(returnPort.data.title, "A", "return boundaries must identify the destination event");
+}
+assert.equal(JSON.stringify(authoringCanvasProject), beforeCanvas, "canvas presentation must not mutate authored logic, routes or positions");
+
+const dialogueStatsProject = structuredClone(authoringCanvasProject);
+dialogueStatsProject.events[0].dialogues = [{
+  id: "dialogue:stats",
+  title: "A short conversation",
+  beats: [
+    { id: "beat:one", kind: "speech", blockRef: { scriptId: "script:fixture", blockId: "block:one" } },
+    { id: "beat:two", kind: "direction", blockRef: { scriptId: "script:fixture", blockId: "block:two" } },
+    { id: "beat:three", kind: "speech", blockRef: { scriptId: "script:fixture", blockId: "block:three" } },
+  ],
+  text: "",
+}];
+const dialogueStatsNode = buildStoryCanvasModel(dialogueStatsProject, {
+  scope: { kind: "event", id: "event:a" },
+  canvasLayerMode: "logic",
+}).nodes.find((node) => node.id === "dialogue:event:a:dialogue:stats");
+assert.deepEqual(dialogueStatsNode?.data.infoBadges, [{ kind: "lines", count: 3 }], "conversation cards preview their line count");
+
+const dialogueEntryProject = structuredClone(authoringCanvasProject);
+dialogueEntryProject.events[0].dialogues = [{
+  id: "dialogue:entry-label",
+  title: "Entry label",
+  entryBeatId: "beat:entry-label",
+  beats: [{ id: "beat:entry-label", kind: "speech", blockRef: { scriptId: "script:fixture", blockId: "block:entry-label" } }],
+}];
+const dialogueEntryScope = { kind: "dialogue", id: "dialogue:entry-label", eventId: "event:a" };
+const visualDialogueEntry = buildStoryCanvasModel(dialogueEntryProject, {
+  scope: dialogueEntryScope,
+  canvasLayerMode: "visual",
+}).edges.find((edge) => edge.id === "edge:dialogue-entry:dialogue:entry-label");
+const logicDialogueEntry = buildStoryCanvasModel(dialogueEntryProject, {
+  scope: dialogueEntryScope,
+  canvasLayerMode: "logic",
+}).edges.find((edge) => edge.id === "edge:dialogue-entry:dialogue:entry-label");
+assert.equal(visualDialogueEntry?.label, undefined, "Visual mode should hide the structural enters label from conversation entry edges");
+assert.equal(visualDialogueEntry?.data?.label, "", "Visual mode should not pass the entry label to the default edge renderer");
+assert.equal(logicDialogueEntry?.label, "enters", "Logic mode should retain the structural enters label");
 
 const ordinaryStorySplit = normalizeProject({
   ...source,
@@ -143,13 +298,13 @@ const ordinaryStorySplit = normalizeProject({
 const ordinaryStoryLogic = buildStoryCanvasModel(ordinaryStorySplit, { canvasLayerMode: "logic" });
 assert.equal(
   ordinaryStoryLogic.nodes.some((node) => node.id === "route-gate:event:a:event:a"),
-  false,
-  "A story-level event with ordinary exits must keep direct Logic-mode lines.",
+  true,
+  "A story-level event with multiple exits must expose one shared Logic Gate.",
 );
 assert.equal(
-  ordinaryStoryLogic.edges.filter((edge) => edge.source === "event:a" && edge.data?.kind === "transition").length,
+  ordinaryStoryLogic.edges.filter((edge) => edge.source === "route-gate:event:a:event:a" && edge.data?.kind === "transition").length,
   2,
-  "Ordinary story-level exits must remain attached to their event.",
+  "Every ordinary route must leave through the shared Logic Gate.",
 );
 
 const outcomeSource = "outcome:event:a:decision:choose:continue";

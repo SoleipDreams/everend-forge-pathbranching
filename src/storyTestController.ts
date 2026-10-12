@@ -4,31 +4,190 @@ import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEva
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, resolveContextSubject } from './authoringEntities.js';
 import { authoringNodeOptions } from './authoringMutations.js';
 import { conditionDiagnosticMessage, conditionTreeSummary } from './conditionPresentation.js';
+import { locationEntities, propertyIsEntityPresentable } from './explorerSchema.js';
 
 export type StoryTestKind = 'preview' | 'debug';
-export type StoryTestField = { key: string; id: string; label: string; type: string; value: unknown; options?: { value: string; label: string }[] };
+export type StoryTestField = { key: string; id: string; label: string; type: string; value: unknown; options?: { value: string; label: string; group?: string }[] };
 export type StoryTestCopy = { id: string; entityId: string; name: string; owner: StoryTestField; properties: StoryTestField[]; states: StoryTestField[]; availableProperties: { id: string; label: string; type: string }[] };
 export type StoryTestTrace = Pick<AuthoringTrace, 'kind' | 'nodeId' | 'id' | 'evaluation'> & { message: string; priority?: number; changes: { label: string; before: unknown; after: unknown }[] };
 export type StoryTestSnapshot = {
-  version: 1; sessionId: string; sequence: number; projectId?: string; locale: 'en' | 'es'; theme: string;
-  active: boolean; paused: boolean; changed: boolean; debugOpen: boolean; status?: AuthoringSession['status'];
+  version: 1; sessionId: string; sequence: number; projectId?: string; storyName: string; locale: 'en' | 'es'; theme: string;
+  active: boolean; paused: boolean; changed: boolean; debugOpen: boolean; debugAttached: boolean; debugFocusRevision: number; status?: AuthoringSession['status'];
   nodeId?: string; visitedNodeIds: string[]; historyCount: number; message?: string; error?: string;
-  view?: Omit<AuthoringView, 'choices'> & { speakerName?: string; choices: (AuthoringView['choices'][number] & { summary: string })[] };
+  view?: Omit<AuthoringView, 'choices'> & { speakerName?: string; speakerPortraitUrl?: string; choices: (AuthoringView['choices'][number] & { summary: string })[] };
   actions: (AuthoringView['actions'][number] & { evaluation: ConditionEvaluationResult })[];
-  actionSource: string; actionTarget: string; subjects: { value: string; label: string }[]; scenarioSubjects: { value: string; label: string }[];
+  actionSource: string; actionTarget: string; subjects: { value: string; label: string }[]; scenarioSubjects: { value: string; label: string; group?: string }[];
   state: PlayerSimulationState; variables: StoryTestField[]; copies: StoryTestCopy[]; trace: StoryTestTrace[];
   scenarioId: string; scenarios: { id: string; name: string }[]; scenario?: AuthoringScenario;
   scenarioState: PlayerSimulationState; scenarioVariables: StoryTestField[]; scenarioCopies: StoryTestCopy[];
-  nodes: { id: string; label: string }[]; entities: { id: string; name: string }[];
+  nodes: { id: string; label: string }[]; startNodes: { id: string; label: string }[]; entities: { id: string; name: string }[];
   selectedNodeId?: string; drafts: Record<string, string>; draftErrors: Record<string, string>; draftEpochs: { run: number; scenario: number };
 };
+
+function orderedEventIds(project: BranchingProject) {
+  const byId = new Map(project.events.map(event => [event.id, event]));
+  const parentOf = (id: string) => byId.get(id)?.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(id))?.id;
+  const visited = new Set<string>();
+  const result: string[] = [];
+  const visit = (id: string) => {
+    const event = byId.get(id);
+    if (!event || visited.has(id)) return;
+    visited.add(id);
+    result.push(id);
+    const children = [...new Set([...(event.childEventIds ?? []), ...project.events.filter(candidate => candidate.parentEventId === id).map(candidate => candidate.id)])];
+    children.forEach(visit);
+  };
+  const visitFromRoot = (id: string) => {
+    let currentId = id;
+    const ancestors = new Set<string>();
+    let parentId = parentOf(currentId);
+    while (parentId && !ancestors.has(parentId)) {
+      ancestors.add(parentId);
+      currentId = parentId;
+      parentId = parentOf(currentId);
+    }
+    visit(currentId);
+  };
+  const entrySequence = project.sequences.find(sequence => sequence.id === project.entrySequenceId);
+  const sequences = entrySequence ? [entrySequence, ...project.sequences.filter(item => item.id !== entrySequence.id)] : project.sequences;
+  for (const sequence of sequences) {
+    visitFromRoot(sequence.entryEventId);
+    sequence.eventIds.forEach(visitFromRoot);
+  }
+  project.events.filter(event => !parentOf(event.id)).forEach(event => visit(event.id));
+  project.events.forEach(event => visitFromRoot(event.id));
+  return result;
+}
+
+function scenarioStartOptions(project: BranchingProject, locale: 'en' | 'es') {
+  const es = locale === 'es';
+  const marker = es ? 'Punto centrado' : 'Start point';
+  const sequences = project.sequences.map(sequence => ({ id: `start:${sequence.id}`, label: `${sequence.name} [${marker}] ${es ? 'Secuencia' : 'Sequence'}` }));
+  const nodes = authoringNodeOptions(project);
+  const eventById = new Map(project.events.map(event => [event.id, event]));
+  const eventOrder = orderedEventIds(project);
+  const options: { id: string; label: string }[] = [...sequences];
+  for (const eventId of eventOrder) {
+    const event = eventById.get(eventId)!;
+    const parentEventId = event.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(eventId))?.id;
+    const path: string[] = [];
+    let current: typeof event | undefined = event;
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      path.unshift(current.name);
+      const currentId: string = current.id;
+      const ancestorId: string | undefined = current.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(currentId))?.id;
+      current = ancestorId ? eventById.get(ancestorId) : undefined;
+    }
+    const related = nodes.filter(node => node.eventId === eventId && ['event', 'dialogue', 'decision'].includes(node.kind));
+    const eventNode = related.find(node => node.kind === 'event');
+    const orderedRelated = eventNode ? [eventNode] : [];
+    const addedIds = new Set(orderedRelated.map(node => node.id));
+    for (const dialogue of event.dialogues ?? []) {
+      const conversationNode = related.find(node => node.kind === 'dialogue' && node.dialogueId === dialogue.id);
+      if (conversationNode && !addedIds.has(conversationNode.id)) {
+        orderedRelated.push(conversationNode);
+        addedIds.add(conversationNode.id);
+      }
+      for (const decision of related.filter(node => node.kind === 'decision' && node.dialogueId === dialogue.id)) {
+        if (!addedIds.has(decision.id)) {
+          orderedRelated.push(decision);
+          addedIds.add(decision.id);
+        }
+      }
+    }
+    related.filter(node => node.kind === 'decision' && !addedIds.has(node.id)).forEach(node => { orderedRelated.push(node); addedIds.add(node.id); });
+    related.filter(node => !addedIds.has(node.id)).forEach(node => orderedRelated.push(node));
+    for (const node of orderedRelated) {
+      const type = node.kind === 'event'
+        ? parentEventId ? (es ? 'Subevento' : 'Subevent') : (es ? 'Evento' : 'Event')
+        : node.kind === 'dialogue' ? (es ? 'Conversación' : 'Conversation') : (es ? 'Decisión' : 'Decision');
+      const dialogueName = node.dialogueId ? event.dialogues?.find(dialogue => dialogue.id === node.dialogueId)?.title : undefined;
+      const name = node.kind === 'event' ? path.join(' / ') : `${[...path, ...(dialogueName && node.kind !== 'dialogue' ? [dialogueName] : []), node.label].join(' / ')}`;
+      options.push({ id: node.id, label: `${name} [${marker}] ${type}` });
+    }
+  }
+  return options;
+}
+
+function scenarioCharacters(project: BranchingProject, startNodeId: string | undefined) {
+  const allNodes = authoringNodeOptions(project);
+  if (startNodeId?.startsWith('start:')) {
+    const sequence = project.sequences.find(item => `start:${item.id}` === startNodeId);
+    if (sequence) return project.events.find(event => event.id === sequence.entryEventId);
+  }
+  const node = allNodes.find(item => item.id === startNodeId);
+  const eventId = node?.eventId ?? (startNodeId ? project.events.find(event => event.id === startNodeId)?.id : undefined)
+    ?? project.sequences.find(item => item.id === project.entrySequenceId)?.entryEventId
+    ?? (project.sequences.length === 1 ? project.sequences[0].entryEventId : undefined)
+    ?? (project.events.length === 1 ? project.events[0].id : undefined);
+  return project.events.find(event => event.id === eventId);
+}
+
+function scenarioActorOptions(project: BranchingProject, startNodeId: string | undefined, locale: 'en' | 'es') {
+  const es = locale === 'es';
+  const options: { value: string; label: string; group: string }[] = [];
+  const seen = new Set<string>();
+  const add = (subject: LogicSubject | undefined, label: string, group: string) => {
+    if (!subject) return;
+    const value = storyTestSubjectValue(subject);
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    options.push({ value, label, group });
+  };
+  const protagonistsGroup = es ? 'Protagonistas configurados' : 'Configured protagonists';
+  const eventCharactersGroup = es ? 'Personajes del evento de inicio' : 'Characters in the starting event';
+  const profiles = [...(project.playerProfiles ?? [])];
+  if (!profiles.some(profile => profile.id === 'default') && project.playerSimulation?.context?.actor) {
+    profiles.unshift({ id: 'default', name: es ? 'Protagonista' : 'Protagonist', simulation: project.playerSimulation });
+  }
+  for (const profile of profiles) {
+    const inheritedActor = profile.id === project.activePlayerProfileId || profile.id === 'default' ? project.playerSimulation?.context?.actor : undefined;
+    const subject = profile.playableCharacterRef
+      ? { kind: 'entity' as const, entityId: profile.playableCharacterRef }
+      : profile.simulation.context?.actor ?? inheritedActor;
+    add(subject, profile.name || (es ? 'Protagonista' : 'Protagonist'), protagonistsGroup);
+  }
+
+  const event = scenarioCharacters(project, startNodeId);
+  if (!event) return options;
+  const speakerRefs = new Set<string>();
+  const addBeatSpeaker = (beat: NonNullable<typeof event.dialogueBeats>[number]) => {
+    const block = project.scriptDocuments?.find(script => script.id === beat.blockRef.scriptId)?.blocks.find(item => item.id === beat.blockRef.blockId);
+    const ref = block?.characterRef ?? block?.speakerRef;
+    if (ref) speakerRefs.add(ref);
+  };
+  (event.dialogueBeats ?? []).forEach(addBeatSpeaker);
+  for (const dialogue of event.dialogues ?? []) {
+    if (dialogue.speakerRef) speakerRefs.add(dialogue.speakerRef);
+    (dialogue.beats ?? []).forEach(addBeatSpeaker);
+  }
+  const presentRefs = [...(event.presentEntityRefs ?? event.canonRefs ?? []), ...(event.dialogues ?? []).flatMap(dialogue => dialogue.presentEntityRefs ?? [])];
+  const configuredCharacters = new Set([
+    ...project.canonRefs.filter(ref => ref.kind && propertyIsEntityPresentable(project, 'canon', `type:${ref.kind}`)).map(ref => ref.id),
+    ...(project.localExplorerEntities ?? []).filter(entity => entity.type === 'character' || propertyIsEntityPresentable(project, 'local', `type:${entity.type}`)).map(entity => entity.id),
+  ]);
+  const placeIds = new Set(locationEntities(project).map(place => place.id));
+  const candidates = [...new Set([...presentRefs, ...speakerRefs])];
+  for (const id of candidates) {
+    const character = project.canonRefs.some(ref => ref.id === id) || project.localExplorerEntities?.some(entity => entity.id === id);
+    if (!character || placeIds.has(id) || (configuredCharacters.size && !configuredCharacters.has(id) && !speakerRefs.has(id))) continue;
+    const label = entityDefinition(project, id)?.name ?? id;
+    add({ kind: 'entity', entityId: id }, label, eventCharactersGroup);
+  }
+  return options;
+}
 export type StoryTestUiCommand =
   | { type: 'play' | 'pause' | 'stop' | 'continue' | 'back' | 'applyRunDrafts' | 'applyScenarioDrafts' | 'deleteScenario' }
   | { type: 'start' | 'restart'; fromSelection?: boolean }
+  | { type: 'resolveInteraction'; executionId: string; resultId?: string; key?: string; timeout?: boolean; manual?: boolean }
+  | { type: 'interactionTime'; elapsedMs: number }
   | { type: 'choose'; outcomeId: string }
   | { type: 'action'; actionId: string }
   | { type: 'actionContext'; source?: string; target?: string }
   | { type: 'debug'; open: boolean }
+  | { type: 'debugAttachment'; attached: boolean }
   | { type: 'scenario'; id: string }
   | { type: 'createScenario'; fromRun?: boolean }
   | { type: 'updateScenario'; patch: Partial<AuthoringScenario> }
@@ -38,7 +197,12 @@ export type StoryTestUiCommand =
   | { type: 'copyProperty'; scope: 'run' | 'scenario'; copyId: string; propertyId: string; inherit?: boolean }
   | { type: 'locate'; nodeId?: string };
 export type StoryTestRequest = { version: 1; sessionId: string; expectedSequence: number; commandId: string; command: StoryTestUiCommand };
-export type StoryTestControllerOptions = { onUpdate?: (project: BranchingProject) => void; onLocate?: (nodeId: string) => void; locale?: 'en' | 'es'; theme?: string; selectedNodeId?: string; documentKey?: string };
+export type StoryTestControllerOptions = {
+  onUpdate?: (project: BranchingProject) => void; onLocate?: (nodeId: string) => void;
+  locale?: 'en' | 'es'; theme?: string; selectedNodeId?: string; documentKey?: string;
+  /** Presentation is resolved against the running revision, including local speech variants. */
+  resolveSpeakerPresentation?: (project: BranchingProject, ref: string, variantId?: string) => { name?: string; portraitUrl?: string } | undefined;
+};
 
 export function storyTestSubjectValue(subject: LogicSubject | EntityOwner | undefined): string {
   if (!subject) return '';
@@ -75,6 +239,8 @@ export class StoryTestController {
   private sequence = 0;
   private paused = false;
   private debugOpen = false;
+  private debugAttached = true;
+  private debugFocusRevision = 0;
   private scenarioId = '';
   private source = '';
   private target = '';
@@ -119,7 +285,8 @@ export class StoryTestController {
       this.error = undefined;
       const project = this.project;
       if (command.type === 'stop') this.clear();
-      else if (command.type === 'debug') this.debugOpen = command.open;
+      else if (command.type === 'debug') { this.debugOpen = command.open; if (command.open) this.debugFocusRevision = this.sequence + 1; }
+      else if (command.type === 'debugAttachment') { this.debugAttached = command.attached; this.debugOpen = true; if (!command.attached) this.debugFocusRevision = this.sequence + 1; }
       else if (command.type === 'locate') { const id = command.nodeId ?? this.session?.nodeId; if (id) this.options.onLocate?.(id); }
       else if (command.type === 'editDraft') { this.drafts[command.key] = command.value; delete this.draftErrors[command.key]; }
       else if (command.type === 'discardDrafts') this.discard(command.scope);
@@ -136,6 +303,7 @@ export class StoryTestController {
       else if (command.type === 'createScenario') {
         const id = `scenario:${crypto.randomUUID()}`;
         const state = structuredClone(command.fromRun && this.session ? this.session.state : initialAuthoringState(project));
+        delete state.interactionResults;
         const scenario: AuthoringScenario = { id, name: `${this.es ? 'Escenario' : 'Scenario'} ${(project.authoringScenarios?.length ?? 0) + 1}`, actor: command.fromRun ? state.context?.actor : this.scenario?.actor, profileId: command.fromRun ? state.context?.profileId : this.scenario?.profileId, state };
         this.commit({ ...project, authoringScenarios: [...(project.authoringScenarios ?? []), scenario] }); this.scenarioId = id; this.debugOpen = true; this.discard('scenario');
       } else if (command.type === 'deleteScenario') { this.commit({ ...project, authoringScenarios: project.authoringScenarios?.filter(s => s.id !== this.scenarioId) }); this.scenarioId = ''; this.discard('scenario'); }
@@ -170,6 +338,7 @@ export class StoryTestController {
           if (!action || action.reason || action.evaluation.status !== 'satisfied') throw new Error(action?.reason ?? 'Action unavailable');
           this.session = authoringCommand(this.runProject!, this.session!, { type: 'action', actionId: command.actionId, self: this.self(), target: this.target ? JSON.parse(this.target) : undefined });
         } else if (command.type === 'continue') this.session = authoringCommand(this.runProject!, this.session!, { type: 'continue' });
+        else if (command.type === 'resolveInteraction' || command.type === 'interactionTime') this.session = authoringCommand(this.runProject!, this.session!, command);
         else if (command.type === 'choose') this.session = authoringCommand(this.runProject!, this.session!, command);
       }
       this.publish(); return true;
@@ -188,7 +357,7 @@ export class StoryTestController {
     this.session = createAuthoringSession(this.runProject, this.runProject.authoringScenarios?.find(s => s.id === this.scenarioId), selected ? this.options.selectedNodeId : undefined);
     this.paused = false; this.discard('run');
   }
-  private clear() { this.session = undefined; this.runProject = undefined; this.runRevision = undefined; this.paused = false; this.debugOpen = false; this.source = ''; this.target = ''; this.drafts = {}; this.draftErrors = {}; this.draftEpochs = { run: this.draftEpochs.run + 1, scenario: this.draftEpochs.scenario + 1 }; this.error = undefined; this.sessionId = crypto.randomUUID(); this.seen.clear(); }
+  private clear() { this.session = undefined; this.runProject = undefined; this.runRevision = undefined; this.paused = false; this.debugOpen = false; this.debugAttached = true; this.debugFocusRevision = 0; this.source = ''; this.target = ''; this.drafts = {}; this.draftErrors = {}; this.draftEpochs = { run: this.draftEpochs.run + 1, scenario: this.draftEpochs.scenario + 1 }; this.error = undefined; this.sessionId = crypto.randomUUID(); this.seen.clear(); }
   private discard(scope: 'run' | 'scenario') { this.draftEpochs[scope]++; for (const key of Object.keys(this.drafts)) if (key.startsWith(`${scope}:`)) { delete this.drafts[key]; delete this.draftErrors[key]; } }
   private commit(project: BranchingProject) { this.options.onUpdate?.(project); this.project = project; this.documentRevision = storyTestRevision(project); if (this.isChanged()) this.paused = true; }
   private updateScenario(patch: Partial<AuthoringScenario>) {
@@ -198,7 +367,7 @@ export class StoryTestController {
     const state = initialAuthoringState(this.project!, next);
     this.validateState(state);
     if (next.actor) this.validateSubject(next.actor, state);
-    if (next.startNodeId && !authoringNodeOptions(this.project!).some(n => n.id === next.startNodeId)) throw new Error(this.es ? 'El punto inicial ya no existe.' : 'The starting point no longer exists.');
+    if (patch.startNodeId && !authoringNodeOptions(this.project!).some(n => n.id === patch.startNodeId) && !this.project!.sequences.some(sequence => `start:${sequence.id}` === patch.startNodeId)) throw new Error(this.es ? 'El punto inicial ya no existe.' : 'The starting point no longer exists.');
     this.commit({ ...this.project!, authoringScenarios: this.project!.authoringScenarios?.map(s => s.id === this.scenarioId ? next : s) });
   }
   private validateSubject(subject: LogicSubject, state: PlayerSimulationState, project = this.project!) {
@@ -357,27 +526,38 @@ export class StoryTestController {
         label: `${c.name ?? entities.find(e => e.id === c.entityId)?.name ?? c.id} · ${this.es ? 'copia' : 'copy'}`,
       })),
     ];
+    const locale = this.options.locale ?? 'en';
+    const scenarioStartId = this.drafts['scenario:start'] ?? this.scenario?.startNodeId;
+    const scenarioSubjects = editingProject ? scenarioActorOptions(editingProject, scenarioStartId, locale) : [];
+    const speakerRef = this.session?.view.speakerRef;
+    let speakerPresentation: ReturnType<NonNullable<StoryTestControllerOptions['resolveSpeakerPresentation']>>;
+    try {
+      if (project && speakerRef) speakerPresentation = this.options.resolveSpeakerPresentation?.(project, speakerRef, this.session?.view.speakerVariantId);
+    } catch { /* A missing portrait must not interrupt a narrative run. */ }
     this.snapshot = {
       version: 1, sessionId: this.sessionId, sequence: this.sequence, projectId: project?.projectId,
+      storyName: project?.name ?? '',
       locale: this.options.locale ?? 'en', theme: this.options.theme ?? 'worldnotion-dark',
-      active: Boolean(this.session), paused: this.paused, changed: this.isChanged(), debugOpen: this.debugOpen,
+      active: Boolean(this.session), paused: this.paused, changed: this.isChanged(), debugOpen: this.debugOpen, debugAttached: this.debugAttached, debugFocusRevision: this.debugFocusRevision,
       status: this.session?.status, nodeId: this.session?.nodeId, visitedNodeIds: this.session?.visitedNodeIds ?? [],
       historyCount: this.session?.history.length ?? 0, message: this.session?.message, error: this.error,
       view: this.session ? {
         ...this.session.view,
-        speakerName: project && this.session.view.speakerRef ? entityDefinition(project, this.session.view.speakerRef)?.name ?? this.session.view.speakerRef : undefined,
+        speakerName: speakerPresentation?.name ?? (project && speakerRef ? entityDefinition(project, speakerRef)?.name ?? speakerRef : undefined),
+        speakerPortraitUrl: speakerPresentation?.portraitUrl,
         choices: this.session.view.choices.map(c => ({
           ...c,
           summary: project ? conditionTreeSummary(project, project.events.flatMap(e => e.decisions ?? []).flatMap(d => d.outcomes).find(o => o.id === c.id)?.logic?.when, this.es ? 'es' : 'en', 1000).text : '',
         })),
       } : undefined,
       actions, actionSource: this.source, actionTarget: this.target, subjects: subjectOptions(state),
-      scenarioSubjects: subjectOptions(scenarioState), state: structuredClone(state),
+      scenarioSubjects, state: structuredClone(state),
       variables: this.variableFields(state, 'run', project), copies: this.copyFields(state, 'run', project), trace,
       scenarioId: this.scenarioId, scenarios: (editingProject?.authoringScenarios ?? []).map(s => ({ id: s.id, name: s.name })),
       scenario: this.scenario ? structuredClone(this.scenario) : undefined,
       scenarioState, scenarioVariables: this.variableFields(scenarioState, 'scenario'), scenarioCopies: this.copyFields(scenarioState, 'scenario'),
-      nodes: (editingProject ? authoringNodeOptions(editingProject) : []).map(n => ({ id: n.id, label: n.label })), entities,
+      nodes: (editingProject ? authoringNodeOptions(editingProject) : []).map(n => ({ id: n.id, label: n.label })),
+      startNodes: editingProject ? scenarioStartOptions(editingProject, locale) : [], entities,
       selectedNodeId: this.options.selectedNodeId, drafts: { ...this.drafts }, draftErrors: { ...this.draftErrors }, draftEpochs: { ...this.draftEpochs },
     };
   }

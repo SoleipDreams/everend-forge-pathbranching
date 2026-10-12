@@ -1,3 +1,4 @@
+import { normalizeBackgroundScene } from "./backgroundScenes.js";
 import { normalizeThemeId, type ThemeId } from "./themes.js";
 import type {
   AppView,
@@ -57,6 +58,7 @@ export type CanvasBackgroundSettings = {
   showGrid: boolean;
   snapToGrid: boolean;
   gridSize: number;
+  dotOpacity: number;
   opacity: number;
   connectionPadding: number;
 };
@@ -104,13 +106,15 @@ export type EventInspectorTabGroup = {
   updatedAt: number;
   inspectorTabs?: InspectorTab[];
   inspectorExpandedTabId?: string;
+  inspectorStackOrder?: string[];
 };
 
 export const DEFAULT_CANVAS_BACKGROUND_SETTINGS: CanvasBackgroundSettings = {
   showDots: true,
-  showGrid: true,
+  showGrid: false,
   snapToGrid: true,
   gridSize: 24,
+  dotOpacity: 0.3,
   opacity: 0.5,
   connectionPadding: 18,
 };
@@ -138,6 +142,14 @@ export const DEFAULT_AUTHORING_DISPLAY_SETTINGS: AuthoringDisplaySettings = {
 };
 
 export type PathBranchingWorkspaceSession = {
+  explorerTab?: "outline" | "assets" | "logic" | "export" | "connect";
+  /** Legacy presentation preference; the inspector currently supports floating only. */
+  contextPresentation?: "floating";
+  contextTab?: "edit" | "test";
+  contextFocus?: boolean;
+  inspectorSections?: Record<string, string>;
+  inspectorStackOrder?: string[];
+  inspectorSize?: { width: number; height?: number };
   view?: AppView;
   selection?: Selection;
   canonOpen?: boolean;
@@ -165,6 +177,10 @@ export type PathBranchingWorkspaceSession = {
 };
 
 export type AppSettings = {
+  /** Machine-local visual preference, never part of a story export. */
+  interfaceFont?: "sans" | "serif" | "humanist";
+  ambientBackground?: boolean;
+  backgroundScene?: string;
   /** Interface language only; story localization remains in the project catalog. */
   localePreference: LocalePreference;
   theme: ThemeId;
@@ -216,6 +232,14 @@ export function normalizeCanvasBackgroundSettings(
     typeof settings.opacity === "number" && Number.isFinite(settings.opacity)
       ? Math.min(1, Math.max(0.05, settings.opacity))
       : DEFAULT_CANVAS_BACKGROUND_SETTINGS.opacity;
+  const dotOpacity =
+    typeof settings.dotOpacity === "number" && Number.isFinite(settings.dotOpacity)
+      ? Math.min(1, Math.max(0, settings.dotOpacity))
+      : value && typeof value === "object"
+        // Keep the old grid-opacity appearance for existing settings created
+        // before dot opacity became independent.
+        ? opacity
+        : DEFAULT_CANVAS_BACKGROUND_SETTINGS.dotOpacity;
   const connectionPadding =
     typeof settings.connectionPadding === "number" && Number.isFinite(settings.connectionPadding)
       ? Math.min(64, Math.max(0, Math.round(settings.connectionPadding)))
@@ -234,6 +258,7 @@ export function normalizeCanvasBackgroundSettings(
         ? settings.snapToGrid
         : DEFAULT_CANVAS_BACKGROUND_SETTINGS.snapToGrid,
     gridSize,
+    dotOpacity,
     opacity,
     connectionPadding,
   };
@@ -335,6 +360,9 @@ export function loadSettings(): AppSettings {
     return {
       localePreference: normalizeLocalePreference(parsed.localePreference),
       theme: normalizeThemeId(parsed.theme),
+      interfaceFont: parsed.interfaceFont === "serif" || parsed.interfaceFont === "humanist" ? parsed.interfaceFont : "sans",
+      ambientBackground: parsed.ambientBackground !== false,
+      backgroundScene: normalizeBackgroundScene(parsed.backgroundScene),
       minimapOpen:
         typeof parsed.minimapOpen === "boolean" ? parsed.minimapOpen : true,
       recentProjects: Array.isArray(parsed.recentProjects)
@@ -381,6 +409,8 @@ export function loadSettings(): AppSettings {
     return {
       localePreference: "system",
       theme: "worldnotion-light",
+      ambientBackground: true,
+      backgroundScene: "original",
       minimapOpen: true,
       recentProjects: [],
       lastView: "home",
@@ -456,7 +486,7 @@ export function isSelection(value: unknown): value is Selection {
   const selection = value as { type?: unknown; id?: unknown };
   return (
     typeof selection.id === "string" &&
-    (selection.type === "node" ||
+    (selection.type === "story" || selection.type === "narrativeAction" || selection.type === "narrativeRule" || selection.type === "entityInstance" || selection.type === "storyDebug" || selection.type === "storyPlay" || selection.type === "node" ||
       selection.type === "edge" ||
       selection.type === "canon" ||
       selection.type === "file" ||
@@ -537,7 +567,7 @@ function sessionInspectorTabs(value: unknown): InspectorTab[] {
         id: tab.id,
         title: tab.title,
         selection: tab.selection,
-        mode: tab.mode === "debug" ? "debug" : "normal",
+        mode: tab.mode === "debug" || tab.mode === "play" ? tab.mode : "normal",
       },
     ];
   });
@@ -586,6 +616,7 @@ export function sessionEventInspectorTabGroups(
         updatedAt,
         inspectorTabs,
         inspectorExpandedTabId,
+        inspectorStackOrder: uniqueSessionStringIds(group.inspectorStackOrder),
       };
     })
     .filter(
@@ -619,11 +650,20 @@ export function normalizeWorkspaceSession(
       ? session.eventInspectorExpandedEventId
       : undefined;
   return {
+    explorerTab: session.explorerTab === "outline" || session.explorerTab === "assets" || session.explorerTab === "logic" || session.explorerTab === "export" || session.explorerTab === "connect" ? session.explorerTab : undefined,
+    contextPresentation: "floating",
+    contextTab: session.contextTab === "test" ? "test" : "edit",
+    contextFocus: session.contextFocus === true,
     view:
       session.view === "home" || session.view === "workspace"
         ? session.view
         : undefined,
     selection: isSelection(session.selection) ? session.selection : undefined,
+    inspectorSections: session.inspectorSections && typeof session.inspectorSections === "object"
+      ? Object.fromEntries(Object.entries(session.inspectorSections).filter(([, value]) => typeof value === "string")) : {},
+    inspectorStackOrder: uniqueSessionStringIds(session.inspectorStackOrder),
+    inspectorSize: session.inspectorSize && Number.isFinite(session.inspectorSize.width)
+      ? { width: Math.max(360, Math.min(1100, session.inspectorSize.width)), height: Number.isFinite(session.inspectorSize.height) ? Math.max(260, Math.min(1800, session.inspectorSize.height!)) : undefined } : { width: 420 },
     canonOpen:
       typeof session.canonOpen === "boolean" ? session.canonOpen : undefined,
     filesOpen:

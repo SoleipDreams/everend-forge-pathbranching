@@ -30,15 +30,18 @@ export function storyTestWindowKind(search = window.location.search): StoryTestK
 }
 
 type Geometry = { width: number; height: number; x?: number; y?: number };
-type WindowRecord = { window: WebviewWindow; sessionId: string; ready: boolean; listeners: UnlistenFn[]; timer?: ReturnType<typeof setTimeout> };
+type WindowRecord = { window: WebviewWindow; sessionId: string; ready: boolean; redocking?: boolean; listeners: UnlistenFn[]; timer?: ReturnType<typeof setTimeout> };
 const geometryKey = (kind: StoryTestKind) => `pathbranching.story-test.native.${kind}`;
-const defaults: Record<StoryTestKind, Geometry> = { preview: { width: 430, height: 420 }, debug: { width: 580, height: 650 } };
+const defaults: Record<StoryTestKind, Geometry> = { preview: { width: 1180, height: 860 }, debug: { width: 580, height: 650 } };
+// A detached Play surface remains available while the run is idle or stopped.
+const previewVisible = (_snapshot: StoryTestSnapshot) => true;
 
 function savedGeometry(kind: StoryTestKind): Geometry {
   try {
     const value = JSON.parse(localStorage.getItem(geometryKey(kind)) ?? 'null') as Geometry | null;
     if (value && Number.isFinite(value.width) && Number.isFinite(value.height)) {
-      return { width: Math.max(340, Math.min(1200, value.width)), height: Math.max(260, Math.min(1000, value.height)),
+      const minimum = kind === 'preview' ? { width: 860, height: 640 } : { width: 340, height: 260 };
+      return { width: Math.max(minimum.width, Math.min(1200, value.width)), height: Math.max(minimum.height, Math.min(1000, value.height)),
         ...(Number.isFinite(value.x) && Number.isFinite(value.y) ? { x: value.x, y: value.y } : {}) };
     }
   } catch { /* A presentation preference must never prevent a run. */ }
@@ -148,23 +151,39 @@ export function useStoryTestWindows(snapshot: StoryTestSnapshot, onRequest: (req
         setDetached((previous) => previous[kind] ? ({ ...previous, [kind]: false }) : previous);
         continue;
       }
-      if (record.sessionId !== snapshot.sessionId || (kind === 'preview' ? !snapshot.active : !snapshot.debugOpen)) {
+      if (record.sessionId !== snapshot.sessionId || (kind === 'preview' ? !previewVisible(snapshot) : !snapshot.debugOpen)) {
         void closeRecord(kind);
-      } else if (record.ready) void sendSnapshot(kind).catch(() => undefined);
+      } else {
+        // Attachment changes must drain the client's queued drafts before its
+        // inspector moves into Play Mode. An owner stop remains authoritative.
+        if (kind === 'debug' && snapshot.debugAttached && !record.redocking) {
+          record.redocking = true;
+          void emitTo(STORY_TEST_LABELS.debug, STORY_TEST_EVENTS.redockRequest,
+            { version: 1, kind, sessionId: record.sessionId }).catch((cause) => {
+            record.redocking = false;
+            if (mounted.current) setError(String(cause));
+          });
+        }
+        if (record.ready) void sendSnapshot(kind).catch(() => undefined);
+      }
     }
   }, [snapshot, closeRecord, sendSnapshot]);
 
-  const detach = useCallback(async (kind: StoryTestKind) => {
+  const detach = useCallback(async (_requestedKind: StoryTestKind) => {
     if (!isTauri()) return;
+    const kind: StoryTestKind = 'preview';
     const current = snapshotRef.current;
-    if (kind === 'preview' ? !current.active : !current.debugOpen) return;
     if (opening.current.has(kind)) return;
     opening.current.add(kind);
     setError(undefined);
     try {
       await listenersReady.current;
+      // A previous debug-only presentation must not coexist with the unified window.
+      await closeRecord('debug');
       const existing = records.current[kind];
       if (existing) { await existing.window.setFocus().catch(() => undefined); return; }
+      const oldDebug = await WebviewWindow.getByLabel(STORY_TEST_LABELS.debug);
+      if (oldDebug) await oldDebug.destroy();
       const orphan = await WebviewWindow.getByLabel(STORY_TEST_LABELS[kind]);
       if (orphan) await orphan.destroy();
       const geometry = savedGeometry(kind);
@@ -179,11 +198,12 @@ export function useStoryTestWindows(snapshot: StoryTestSnapshot, onRequest: (req
         if (!visible) { delete geometry.x; delete geometry.y; }
       }
       const latest = snapshotRef.current;
-      if (!mounted.current || latest.sessionId !== current.sessionId || (kind === 'preview' ? !latest.active : !latest.debugOpen)) return;
-      const title = current.locale === 'es' ? (kind === 'preview' ? 'Probar historia' : 'Debug de la historia') : (kind === 'preview' ? 'Story preview' : 'Story debug');
+      if (!mounted.current || latest.sessionId !== current.sessionId) return;
+      const storyName = latest.storyName.trim() || (latest.locale === 'es' ? 'Historia sin título' : 'Untitled story');
+      const title = `Play Mode [${storyName}]`;
       const auxiliary = new WebviewWindow(STORY_TEST_LABELS[kind], {
         url: `index.html?view=story-${kind}&session=${encodeURIComponent(current.sessionId)}`,
-        title, ...geometry, minWidth: 340, minHeight: 260,
+        title, ...geometry, minWidth: kind === 'preview' ? 860 : 340, minHeight: kind === 'preview' ? 640 : 260,
         center: geometry.x === undefined, resizable: true, focus: true,
         decorations: false, parent: 'main',
       });

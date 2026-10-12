@@ -1,8 +1,9 @@
+import { NotificationBell } from "../notifications";
+import { useApplicationEffect } from "./useApplicationActivity.js";
 import {
   ArrowLeft,
   Download,
   FolderOpen,
-  Home,
   History,
   Moon,
   MessageSquareText,
@@ -14,7 +15,7 @@ import {
   RotateCcw,
   Info,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Check, Eye } from "lucide-react";
 import forgeLogoOnDark from "../assets/everend-forge-logo-on-dark.png";
 import forgeLogoOnLight from "../assets/everend-forge-logo-on-light.png";
@@ -24,8 +25,11 @@ import { projectFileName, type ProjectFileState } from "../projectPersistence.js
 import type { SuiteChrome } from "../suiteChrome.js";
 import { isDarkTheme, themeById, type ThemeId } from "../themes.js";
 import { UniverseIconFrame } from "./UniverseIconFrame.js";
+import { DesktopMenuBar } from "./DesktopMenuBar.js";
+import { WindowTitleControls } from "./WindowTitleControls.js";
 import type { WorkspacePanelId, WorkspacePanelState } from "../workspaceSettings.js";
 import { authoringUiCopy, useInterfaceLocale } from "../i18n.js";
+import { handleWindowTitlebarMouseDown } from "../utils/windowTitlebar.js";
 import "../authoringControls.css";
 
 export type DocumentSaveState = "pending" | "saving" | "saved" | "error";
@@ -66,6 +70,30 @@ function ForgeLogoMark() {
   );
 }
 
+/** Forge's corner menu on the standalone library screen. */
+export function HomeForgeMenu({ onFeedback }: { onFeedback: () => void }) {
+  const c = controlsCopy[useInterfaceLocale()];
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  useApplicationEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+  const show = () => { setOpen(true); focusMenu(menuRef); };
+  return <div ref={menuRef} className={`forge-corner-menu ${open ? "open" : ""}`}>
+    <button ref={triggerRef} type="button" className="forge-corner-button" aria-label={c.everend} title={c.everend} aria-haspopup="menu" aria-controls={`${id}-forge`} aria-expanded={open} onClick={() => open ? setOpen(false) : show()} onKeyDown={event => { if (event.key === "ArrowDown") { event.preventDefault(); show(); } }}><ForgeLogoMark /></button>
+    {open ? <div id={`${id}-forge`} className="forge-orbit-panel" role="menu" aria-label={c.everend} onKeyDown={event => menuKey(event, () => setOpen(false), triggerRef.current)}>
+      <button type="button" role="menuitem" onClick={() => { window.open(EVEREND_FORGE_GITHUB_URL, "_blank", "noopener,noreferrer"); setOpen(false); }}>Github</button>
+      <button type="button" role="menuitem" onClick={() => { window.open(BUY_SUITE_URL, "_blank", "noopener,noreferrer"); setOpen(false); }}>{c.buy}</button>
+      <button type="button" role="menuitem" onClick={() => { onFeedback(); setOpen(false); }}>{c.feedback}</button>
+    </div> : null}
+  </div>;
+}
+
 function universeDisplayName(project?: BranchingProject, fileState?: ProjectFileState, fallback = "No universe") {
   return fileState?.universeProfile?.name ?? project?.name ?? project?.projectId ?? fallback;
 }
@@ -97,6 +125,7 @@ export function Topbar({
   onTogglePanelVisibility,
   onOpenExportPanel,
   onResetLayout,
+  managementInSidebar = false,
   locale: localeOverride,
   saveState,
   saveError,
@@ -124,6 +153,7 @@ export function Topbar({
   onTogglePanelVisibility?: (panel: WorkspacePanelId) => void;
   onOpenExportPanel?: () => void;
   onResetLayout?: () => void;
+  managementInSidebar?: boolean;
   locale?: "en" | "es";
   saveState?: DocumentSaveState;
   saveError?: string;
@@ -144,6 +174,8 @@ export function Topbar({
   const [forgeMenuOpen, setForgeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
+  const [loadNotesOpen, setLoadNotesOpen] = useState(false);
+  const loadNotesLabel = locale === "es" ? "Notas de carga" : "Load notes";
   const forgeMenuRef = useRef<HTMLDivElement | null>(null);
   const viewMenuRef = useRef<HTMLDivElement | null>(null);
   const historyMenuRef = useRef<HTMLDivElement | null>(null);
@@ -160,7 +192,7 @@ export function Topbar({
     setForgeMenuOpen(false);
   };
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!forgeMenuOpen && !viewMenuOpen && !historyMenuOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
@@ -206,7 +238,7 @@ export function Topbar({
   };
 
   return (
-    <header className="topbar dock-top-bar pathbranching-topbar pb-authoring-topbar" aria-label={c.workspace}>
+    <header data-onboarding-target="pathbranching.toolbar" className="topbar dock-top-bar pathbranching-topbar pb-authoring-topbar" aria-label={c.workspace} onMouseDown={handleWindowTitlebarMouseDown}>
       <div className="dock-top-left">
         {suiteChrome ? (
           suiteChrome.renderAppSwitcher()
@@ -240,17 +272,14 @@ export function Topbar({
           </div>
         )}
 
-        <button type="button" className="dock-icon-button" title={c.home} aria-label={c.home} onClick={suiteChrome?.onHome ?? onHome}>
-          <Home size={15} />
-        </button>
+        {!suiteChrome ? <DesktopMenuBar onHome={onHome} /> : null}
 
         <div className="dock-top-divider" />
 
-        <button type="button" className="dock-universe-button" onClick={onOpenSettings} title={c.universeSettings}>
+        <button type="button" className="dock-universe-button" onClick={onOpenSettings} aria-label={universeName} title={[c.universeSettings, universePath].filter(Boolean).join(" · ")}>
           <UniverseIconFrame profile={fileState?.universeProfile} />
           <span className="dock-universe-copy">
             <strong>{universeName}</strong>
-            <span>{universePath || c.openUniverse}</span>
           </span>
         </button>
         <button type="button" className="dock-icon-button dock-settings-button" onClick={onOpenSettings} title={c.settings} aria-label={c.settings}>
@@ -274,7 +303,6 @@ export function Topbar({
           {currentSaveState === "saving" ? <LoaderCircle size={14} className="pb-save-spinner" aria-hidden="true" /> : currentSaveState === "saved" ? <CheckCircle2 size={14} aria-hidden="true" /> : <span className="pb-status-dot" aria-hidden="true" />}<span className="pb-status-full">{c[currentSaveState]}</span><span className="pb-status-compact" aria-hidden="true">{compactStatus[currentSaveState]}</span>
         </span> : null}
         {hasUnappliedDraft ? <span className="pb-draft-state" title={c.draftHint} aria-label={`${c.draft}. ${c.draftHint}`}><span className="pb-status-full">{c.draft}</span><span className="pb-status-compact" aria-hidden="true">{compactStatus.draft}</span></span> : null}
-        {loadWarnings?.length ? <details className="pb-save-details" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary className="pb-save-state"><Info size={14} aria-hidden="true" /><span>{locale === "es" ? "Notas de carga" : "Load notes"} · {loadWarnings.length}</span></summary><div className="pb-save-error-popover"><ul>{loadWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div></details> : null}
       </div>
       </div>
       <div className="dock-top-right">
@@ -284,6 +312,7 @@ export function Topbar({
             className={`topbar-menu-trigger ${historyMenuOpen ? "active" : ""}`}
             ref={historyTriggerRef}
             title={c.history}
+            aria-label={c.history}
             aria-haspopup="menu"
             aria-controls={`${id}-history`}
             onClick={toggleHistoryMenu}
@@ -296,6 +325,10 @@ export function Topbar({
             <strong>{c.history}</strong>
             <button className="topbar-menu-option" type="button" role="menuitem" onClick={() => { onUndo(); setHistoryMenuOpen(false); historyTriggerRef.current?.focus(); }} disabled={!canUndo}><ArrowLeft size={14} />{c.undo}</button>
             <button className="topbar-menu-option" type="button" role="menuitem" onClick={() => { onRedo(); setHistoryMenuOpen(false); historyTriggerRef.current?.focus(); }} disabled={!canRedo}><ArrowLeft size={14} style={{ transform: "scaleX(-1)" }} />{c.redo}</button>
+            {loadWarnings?.length ? <>
+              <button type="button" role="menuitem" className="topbar-menu-option pb-menu-separated" aria-expanded={loadNotesOpen} aria-controls={`${id}-load-notes`} onClick={() => setLoadNotesOpen(open => !open)}><Info size={14} aria-hidden="true" />{loadNotesLabel} · {loadWarnings.length}</button>
+              {loadNotesOpen ? <div id={`${id}-load-notes`} className="topbar-load-notes" role="note" aria-label={loadNotesLabel}><ul>{loadWarnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div> : null}
+            </> : null}
             {recentActions.length ? <>
               <span className="topbar-history-label">{c.recent}</span>
               <div className="topbar-history-actions">
@@ -305,7 +338,7 @@ export function Topbar({
           </div> : null}
         </div>
 
-        <div className="dock-command-group" aria-label={c.panels}>
+        {!managementInSidebar ? <div className="dock-command-group" aria-label={c.panels}>
           {panelVisibility && onTogglePanelVisibility ? <div ref={viewMenuRef} className="topbar-view-menu">
             <button
               type="button"
@@ -332,7 +365,7 @@ export function Topbar({
             <Download size={14} />
             <span>{c.export}</span>
           </button>
-        </div>
+        </div> : null}
 
         {onFeedback ? (
           <button type="button" className="dock-icon-button" onClick={onFeedback} title={c.feedback} aria-label={c.feedback}>
@@ -342,6 +375,8 @@ export function Topbar({
         <button type="button" className="dock-icon-button" onClick={onToggleTheme} title={`${c.theme} (${themeById(theme).label})`} aria-label={c.theme}>
           {isDarkTheme(theme) ? <Sun size={15} /> : <Moon size={15} />}
         </button>
+        <NotificationBell locale={interfaceLocale} />
+        {!suiteChrome?.windowControlsManaged ? <WindowTitleControls /> : null}
       </div>
     </header>
   );

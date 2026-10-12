@@ -182,3 +182,23 @@ assert.equal(brokenIntro.dialogueBeats.length, 2, "JSON sidecar must be preserve
 assert.equal(blockContent(loadedBroken.activeProject, "block:b1"), "¿Dónde está la reliquia?");
 
 console.log("evpath storage (0.5) verification passed");
+
+// Loading a divergent textual projection must never silently remove saved nodes.
+const destructive = universeFiles(sampleProject());
+const destructiveIndex = destructive.files.findIndex(file => file.relativePath.endsWith('/events/intro.evpath'));
+destructive.files[destructiveIndex] = { ...destructive.files[destructiveIndex], content: '=== Intro === #^intro\n' };
+const protectedLoad = loadPathBranchingWorkspace(destructive.files);
+assert.equal(eventOf(protectedLoad.activeProject, 'intro').dialogueBeats.length, 2);
+assert.ok(protectedLoad.saveBlocked, 'A divergent destructive projection must block implicit overwrite.');
+
+// A saved scenario referencing an excluded sidecar diagnoses the broken index.
+const excluded = sampleProject();
+excluded.sequences[0].eventIds = ['vault'];
+excluded.sequences[0].entryEventId = 'vault';
+excluded.authoringScenarios = [{ id: 'saved-check', name: 'Saved check', startNodeId: 'intro' }];
+const excludedFiles = universeFiles(excluded);
+const originalIntro = universeFiles(sampleProject()).files.filter(file => /\/events\/intro\.(json|evpath)$/.test(file.relativePath));
+excludedFiles.files.push(...originalIntro);
+const excludedLoad = loadPathBranchingWorkspace(excludedFiles.files);
+assert.ok(excludedLoad.loadWarnings.some(message => message.includes('absent from') && message.includes('Intro')));
+assert.ok(excludedLoad.saveBlocked);

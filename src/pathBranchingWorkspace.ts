@@ -17,6 +17,7 @@ import {
   serializeIntegrationConfigYaml,
 } from "./integrationConfig.js";
 import { applyEvpathToEvent, parseEvpath, serializeEventEvpath } from "./evpathFormat.js";
+import { narrativeNodeReferences } from './authoringMutations.js';
 
 /**
  * 0.5 preserves the complete project metadata and modular authoring state.
@@ -248,7 +249,7 @@ function parseUniverseProfile(
 
   try {
     const parsed = JSON.parse(profileFile.content) as UniverseProfile | null;
-    if (!parsed || typeof parsed !== "object") return undefined;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
     const icon: UniverseIcon | undefined =
       parsed.icon?.type && parsed.icon.value
         ? {
@@ -257,6 +258,7 @@ function parseUniverseProfile(
           }
         : undefined;
     return {
+      ...parsed,
       name:
         typeof parsed.name === "string" && parsed.name.trim()
           ? parsed.name.trim()
@@ -400,6 +402,18 @@ function parseModularStoryProject(
         loadWarnings?.push(`Incomplete story: ${eventEvpathPath(storyId, sequence.id, id)} is missing.`);
       }
     }
+    // Sidecars left after a deletion are not automatically resurrected. A
+    // still-referenced missing event, however, must not be silently ignored.
+    const prefix = `${sequenceDirectory(storyId, sequence.id)}/events/`;
+    for (const file of files.filter(file => file.relativePath.startsWith(prefix) && file.relativePath.endsWith('.json'))) {
+      const excluded = unwrapEvent(parseJsonFile<unknown>(file));
+      if (!excluded || sequence.eventIds.includes(excluded.id)) continue;
+      const prefixId = `:${excluded.id}:`;
+      const scenarios = parsedStory.authoringScenarios ?? [];
+      if (scenarios.some(scenario => scenario.startNodeId === excluded.id || scenario.startNodeId?.includes(prefixId))) {
+        loadWarnings?.push(`Incomplete story: ${excluded.name} has a saved event file and an active scenario reference but is absent from ${sequencePath(storyId, sequence.id)}. Repair the sequence membership before saving.`);
+      }
+    }
     for (const id of sequence.branchIds ?? []) {
       if (branches.some((candidate) => candidate.id === id)) continue;
       const branch = readRequired(branchPath(storyId, sequence.id, id), unwrapBranch, id);
@@ -508,6 +522,11 @@ function reconcileEventEvpathFiles(
     for (const warning of applied.warnings) loadWarnings?.push(`${event.name}: ${warning}`);
     if (evpathFile.content.includes('{ #')) loadWarnings?.push(`${event.name}: lógica opaca; se conserva el JSON original.`);
     if (!applied.changed) continue;
+    const retained = new Set(narrativeNodeReferences(applied.project, event.id).map(node => node.id));
+    if (narrativeNodeReferences(current, event.id).some(node => !retained.has(node.id))) {
+      loadWarnings?.push(`El texto editado de "${event.name}" omite contenido guardado; se conserva el JSON completo. Aplica la eliminación explícitamente desde Source si es intencional.`);
+      continue;
+    }
     // The `.evpath` diverged from the JSON (an external edit). Adopt it only if
     // re-serializing the applied event reaches a fixed point.
     const reserialized = serializeEventEvpath(applied.project, event.id);

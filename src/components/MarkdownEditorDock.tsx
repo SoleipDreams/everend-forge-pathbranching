@@ -1,6 +1,7 @@
 import { Save } from "lucide-react";
 import { MARKDOWN_FORMAT_LABELS } from "../canonWorkingCopy.js";
 import type { MarkdownDraftFormat, MarkdownEditorTab } from "../appTypes.js";
+import { useSurfaceMotion } from "../useSurfaceMotion.js";
 
 export function MarkdownEditorDock({
   tabs,
@@ -20,6 +21,7 @@ export function MarkdownEditorDock({
   onSave: (id: string) => void;
 }) {
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const surface = useSurfaceMotion<HTMLDivElement>(activeTab?.id);
   if (!activeTab) return null;
 
   return (
@@ -41,7 +43,7 @@ export function MarkdownEditorDock({
         ))}
       </div>
 
-      <div className="markdown-editor-panel">
+      <div ref={surface} className="markdown-editor-panel">
         <div className="markdown-editor-header">
           <div>
             <strong>{activeTab.title}</strong>

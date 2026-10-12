@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 const base = process.env.STORY_TEST_LIB ?? '../lib';
 const { StoryTestController, storyTestFieldText, storyTestSubjectValue } = await import(`${base}/storyTestController.js`);
+const { storyTestSpeaker } = await import(`${base}/storyTestMedia.js`);
 const { normalizeProject, serializeProject } = await import(`${base}/projectSerialization.js`);
 const { exportRuntimePackage } = await import(`${base}/exportRuntime.js`);
 
@@ -118,6 +119,130 @@ test('Play is manual, Pause freezes narrative commands, Stop discards temporary 
   assert.deepEqual(s.trace, []); assert.deepEqual(s.visitedNodeIds, []); assert.equal(s.historyCount, 0);
   assert.notEqual(s.sessionId, previousId);
   s = run(c, { type: 'play' }); assert.equal(s.nodeId, 'beat:room:intro');
+});
+
+test('Debug attachment only moves presentation and preserves the owned run and drafts', () => {
+  const p = fixture(); let writes = 0;
+  const c = new StoryTestController(p, { onUpdate: () => writes++ });
+  assert.equal(snap(c).storyName, p.name); assert.equal(snap(c).debugAttached, true);
+  run(c, { type: 'play' }); run(c, { type: 'continue' }); run(c, { type: 'pause' });
+  const key = snap(c).variables.find(field => field.id === 'strength').key;
+  run(c, { type: 'editDraft', key, value: '7' });
+  run(c, { type: 'editDraft', key: 'scenario:name', value: 'Prepared draft' });
+  const before = structuredClone(snap(c));
+  assert.equal(c.request(request(c, { type: 'debugAttachment', attached: false }, 'detach-debug')), true);
+  let s = snap(c);
+  assert.equal(s.debugAttached, false); assert.equal(s.debugOpen, true);
+  assert.equal(s.sessionId, before.sessionId); assert.equal(s.nodeId, before.nodeId);
+  assert.equal(s.historyCount, before.historyCount); assert.equal(s.paused, true); assert.equal(s.changed, false);
+  assert.deepEqual(s.state, before.state); assert.deepEqual(s.trace, before.trace);
+  assert.deepEqual(s.drafts, before.drafts); assert.deepEqual(s.draftEpochs, before.draftEpochs);
+  run(c, { type: 'debug', open: false });
+  s = run(c, { type: 'debugAttachment', attached: true });
+  assert.equal(s.debugAttached, true); assert.equal(s.debugOpen, true);
+  assert.deepEqual(s.drafts, before.drafts); assert.deepEqual(s.state, before.state);
+  assert.equal(s.historyCount, before.historyCount); assert.equal(writes, 0);
+  run(c, { type: 'debugAttachment', attached: false }); run(c, { type: 'restart' });
+  assert.equal(snap(c).debugAttached, false, 'Restart keeps the chosen window arrangement.');
+  run(c, { type: 'stop' });
+  assert.equal(snap(c).debugAttached, true); assert.equal(snap(c).debugOpen, false);
+  run(c, { type: 'debugAttachment', attached: false });
+  c.updateProject(p, { documentKey: 'another-story-document' });
+  assert.equal(snap(c).debugAttached, true); assert.equal(snap(c).debugOpen, false);
+});
+
+test('Play Mode metadata and speech portraits resolve against the fixed story revision', () => {
+  const p = fixture(), calls = [];
+  p.localExplorerEntities.find(entity => entity.id === 'npc').properties.portrait = 'original.png';
+  p.scriptDocuments[0].blocks[0].characterVariantId = 'winter';
+  const resolveSpeakerPresentation = (project, ref, variantId) => {
+    calls.push({ name: project.name, ref, variantId });
+    const entity = project.localExplorerEntities.find(entity => entity.id === ref);
+    return { name: entity.name, portraitUrl: `${entity.properties.portrait}?variant=${variantId}` };
+  };
+  const c = new StoryTestController(p, { resolveSpeakerPresentation });
+  let s = run(c, { type: 'play' });
+  assert.equal(s.storyName, 'The two keys'); assert.equal(s.view.speakerName, 'Recipient');
+  assert.equal(s.view.speakerVariantId, 'winter'); assert.equal(s.view.speakerPortraitUrl, 'original.png?variant=winter');
+  const changed = structuredClone(p);
+  changed.name = 'Revised story';
+  changed.localExplorerEntities.find(entity => entity.id === 'npc').name = 'Revised recipient';
+  changed.localExplorerEntities.find(entity => entity.id === 'npc').properties.portrait = 'revised.png';
+  changed.scriptDocuments[0].blocks[0].characterVariantId = 'summer';
+  c.updateProject(changed);
+  s = snap(c); assert.equal(s.changed, true); assert.equal(s.paused, true);
+  assert.equal(s.storyName, 'The two keys'); assert.equal(s.view.speakerName, 'Recipient');
+  assert.equal(s.view.speakerVariantId, 'winter'); assert.equal(s.view.speakerPortraitUrl, 'original.png?variant=winter');
+  assert.deepEqual(calls.at(-1), { name: 'The two keys', ref: 'npc', variantId: 'winter' });
+  s = run(c, { type: 'restart' });
+  assert.equal(s.storyName, 'Revised story'); assert.equal(s.view.speakerName, 'Revised recipient');
+  assert.equal(s.view.speakerVariantId, 'summer'); assert.equal(s.view.speakerPortraitUrl, 'revised.png?variant=summer');
+  s = run(c, { type: 'continue' });
+  assert.equal(s.view.speakerRef, undefined); assert.equal(s.view.speakerPortraitUrl, undefined);
+});
+
+test('Unavailable speaker media falls back to the entity name without interrupting playback', () => {
+  for (const resolveSpeakerPresentation of [() => undefined, () => { throw new Error('Missing image'); }]) {
+    const p = fixture();
+    delete p.scriptDocuments[0].blocks[0].characterRef;
+    p.scriptDocuments[0].blocks[0].speakerRef = 'npc';
+    p.scriptDocuments[0].blocks[0].characterVariantId = 'legacy-variant';
+    const c = new StoryTestController(p, { resolveSpeakerPresentation });
+    const s = run(c, { type: 'play' });
+    assert.equal(s.view.speakerRef, 'npc'); assert.equal(s.view.speakerVariantId, 'legacy-variant');
+    assert.equal(s.view.speakerName, 'Recipient'); assert.equal(s.view.speakerPortraitUrl, undefined);
+    assert.equal(s.status, 'ready'); assert.equal(s.error, undefined);
+  }
+});
+
+test('Speaker media uses nested schema portrait roles and selected canon variants', () => {
+  const p = fixture();
+  const config = {
+    version: '3.0',
+    entityTypes: { definitions: [{ id: 'character', presentation: { portraitPropertyId: 'portrait' } }] },
+    customFields: { definitions: [{
+      id: 'identity', type: 'group', appliesTo: ['character'], children: [
+        { id: 'portrait', label: 'Portrait', type: 'image' },
+        { id: 'gallery', label: 'Other image', type: 'image' },
+      ],
+    }] },
+  };
+  p.canonRefs.push({
+    id: 'canon-speaker', label: 'Mara', kind: 'character', frontmatter: {
+      identity: { portrait: 'attachments/base.png', gallery: 'attachments/unrelated.png' },
+      variants: {
+        veteran: { label: 'Veteran', overrides: { identity: { portrait: 'attachments/veteran.png' } } },
+        alternate: { label: 'Alternate', overrides: { identity: { gallery: 'attachments/alternate.png' } } },
+      },
+    },
+  });
+  const before = structuredClone(p);
+  assert.deepEqual(storyTestSpeaker(p, config, 'canon-speaker'), { name: 'Mara', portraitPath: 'attachments/base.png' });
+  assert.deepEqual(storyTestSpeaker(p, config, 'canon-speaker', 'veteran'), { name: 'Mara', portraitPath: 'attachments/veteran.png' });
+  assert.equal(storyTestSpeaker(p, config, 'canon-speaker', 'alternate').portraitPath, 'attachments/base.png', 'A partial variant inherits the base portrait.');
+  assert.equal(storyTestSpeaker(p, config, 'canon-speaker', 'unknown').portraitPath, 'attachments/base.png', 'Unknown variants resolve to base.');
+  assert.deepEqual(storyTestSpeaker(p, undefined, 'canon-speaker'), { name: 'Mara', portraitPath: undefined });
+  assert.equal(storyTestSpeaker(p, config, 'missing-speaker'), undefined);
+  assert.deepEqual(p, before, 'Media resolution never modifies canon frontmatter or local data.');
+});
+
+test('Local speaker portrait roles resolve imported image assets and tolerate missing portraits', () => {
+  const p = fixture();
+  const config = {
+    version: '3.0',
+    entityTypes: { definitions: [{ id: 'person', presentation: { portraitPropertyId: 'portrait' } }] },
+    customFields: { definitions: [{ id: 'portrait', type: 'image', appliesTo: ['person'] }] },
+  };
+  const npc = p.localExplorerEntities.find(entity => entity.id === 'npc');
+  npc.properties.portrait = 'portrait-asset';
+  p.assets = [{ id: 'portrait-asset', name: 'Local portrait', kind: 'image', origin: 'uncanon', path: '.everend/assets/image/portrait.png' }];
+  assert.deepEqual(storyTestSpeaker(p, config, 'npc'), { name: 'Recipient', portraitPath: '.everend/assets/image/portrait.png' });
+  npc.properties.portrait = 'attachments/local.png';
+  assert.equal(storyTestSpeaker(p, config, 'npc').portraitPath, 'attachments/local.png');
+  npc.properties.portrait = '';
+  assert.deepEqual(storyTestSpeaker(p, config, 'npc'), { name: 'Recipient', portraitPath: undefined });
+  npc.properties.portrait = ['attachments/local.png'];
+  assert.equal(storyTestSpeaker(p, config, 'npc').portraitPath, undefined, 'Non-string schema data cannot become an image URL.');
 });
 
 test('scenario and selection entry preserve engine gates and once-per-run effects', () => {
@@ -506,7 +631,8 @@ test('a complete temporary run and presentation changes leave the narrative and 
   const p = fixture(), serialized = serializeProject(p), runtime = JSON.stringify(exportRuntimePackage(p));
   let writes = 0; const c = new StoryTestController(p, { onUpdate: () => writes++ });
   run(c, { type: 'scenario', id: 'strong' }); run(c, { type: 'play' });
-  run(c, { type: 'debug', open: true }); run(c, { type: 'continue' }); run(c, { type: 'choose', outcomeId: 'open' });
+  run(c, { type: 'debugAttachment', attached: false }); run(c, { type: 'continue' }); run(c, { type: 'choose', outcomeId: 'open' });
+  run(c, { type: 'debugAttachment', attached: true });
   run(c, { type: 'pause' }); run(c, { type: 'play' }); run(c, { type: 'back' }); run(c, { type: 'stop' });
   assert.equal(writes, 0); assert.equal(serializeProject(p), serialized); assert.equal(JSON.stringify(exportRuntimePackage(p)), runtime);
 });
@@ -516,4 +642,28 @@ test('controller subscriptions deliver accepted changes and unsubscribe cleanly'
   const unsubscribe = c.subscribe(() => notifications++);
   run(c, { type: 'play' }); run(c, { type: 'pause' }); assert.equal(notifications, 2);
   unsubscribe(); run(c, { type: 'stop' }); assert.equal(notifications, 2);
+});
+
+test('only explicit Debug requests refocus the inspector and duplicate IPC cannot refocus twice', () => {
+  const p = fixture(), serialized = serializeProject(p), c = new StoryTestController(p);
+  run(c, { type: 'play' });
+  const before = snap(c);
+  const opened = run(c, { type: 'debugAttachment', attached: false });
+  assert.ok(opened.debugFocusRevision > before.debugFocusRevision);
+  c.updateProject(p, { selectedNodeId: 'beat:room:intro' });
+  assert.equal(snap(c).debugFocusRevision, opened.debugFocusRevision, 'Selecting content must not steal inspector focus.');
+  run(c, { type: 'pause' });
+  assert.equal(snap(c).debugFocusRevision, opened.debugFocusRevision);
+  const current = snap(c);
+  const request = { version: 1, sessionId: current.sessionId, expectedSequence: current.sequence, commandId: 'reopen-debug', command: { type: 'debug', open: true } };
+  assert.equal(c.request(request), true);
+  const reopened = snap(c);
+  assert.ok(reopened.debugFocusRevision > opened.debugFocusRevision, 'Open Debug must restore the inspector even while Debug remains open.');
+  assert.equal(c.request(request), true);
+  assert.equal(snap(c).debugFocusRevision, reopened.debugFocusRevision);
+  assert.equal(snap(c).sequence, reopened.sequence);
+  assert.deepEqual(reopened.state, before.state);
+  assert.equal(reopened.nodeId, before.nodeId);
+  assert.equal(serializeProject(p), serialized);
+  assert.equal(run(c, { type: 'stop' }).debugFocusRevision, 0);
 });

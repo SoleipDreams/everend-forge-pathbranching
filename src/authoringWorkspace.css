@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 .authoring-workspace { position: absolute; z-index: 16; top: 104px; right: 12px; bottom: 24px; width: 440px; max-width: calc(100% - 36px); display: flex; flex-direction: column; background: var(--wn-panel, var(--wn-editor-bg)); color: var(--wn-text); border: 1px solid var(--wn-border); border-radius: 10px; box-shadow: 0 8px 24px #0003; overflow: hidden; font-size: 13px; }
 .authoring-workspace.compact { top: auto; left: 12px; right: 12px; width: auto; max-width: none; height: 52%; }
 .authoring-workspace-header { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--wn-border); }
@@ -34,3 +36,5 @@
 .react-flow__node.authoring-position-active { outline: 3px solid var(--wn-accent, #b58a4c); outline-offset: 5px; }
 .react-flow__node.authoring-route-active { outline: 2px dashed var(--wn-accent, #b58a4c); outline-offset: 3px; }
 .react-flow__edge.authoring-route-active path { stroke: var(--wn-accent, #b58a4c); stroke-width: 3px; }
+
+}

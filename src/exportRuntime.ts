@@ -1,3 +1,4 @@
+import { hasInteractions } from './interactions.js';
 import type {
   BranchingProject,
   EventNode,
@@ -8,6 +9,7 @@ import type {
 } from "./domain.js";
 import { combineConditions, effectiveConditions, orderedTransitions } from "./logic.js";
 import { UNKNOWN_SPEAKER_REF } from "./speakerRoles.js";
+import { modularExportDiagnostics } from "./exportCompatibility.js";
 
 function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[] | undefined {
   const outcomeChoices: RuntimeChoice[] = (event.decisions ?? []).flatMap((decision) =>
@@ -168,7 +170,17 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
   })));
   const nodes = [...eventNodes, ...dialogueNodes, ...directBeatNodes, ...dialogueStartNodes, ...routers];
   if (new Set(nodes.map(n=>n.id)).size !== nodes.length) throw Error("Runtime: duplicate node or generated route ID");
-  const requiredFeatures = ["typed-condition-tree-v1", "ordered-routes-v1", "logic-rules-v1", ...(routers.length ? ["dynamic-choice-routing-v1"] : [])];
+  const withoutInteractionResults = (state: import('./domain.js').PlayerSimulationState | undefined) => {
+    if (!state || !('interactionResults' in state)) return state;
+    const { interactionResults: _temporary, ...authored } = state; return authored;
+  };
+  const modularRequirements = modularExportDiagnostics(project);
+  const modularExecution = modularRequirements.length > 0 || project.events.some(event =>
+    event.dialogues?.length || event.dialogueBeats?.length || event.dialogueStarts?.length ||
+    event.parentEventId || event.childEventIds?.length || event.boundaryBindings?.length ||
+    event.transitions?.some(route => /^(boundary|beat|dialogue|dialogue-start|decision):/.test(route.from) || /^(boundary|beat|dialogue|dialogue-start|decision|outcome):/.test(route.to)));
+  const requiredFeatures = [...(hasInteractions(project) ? ["interactions-v1"] : []), "typed-condition-tree-v1", "ordered-routes-v1", "logic-rules-v1", ...(routers.length ? ["dynamic-choice-routing-v1"] : []), ...(modularExecution ? ["modular-authoring-v1"] : [])];
+  if (options.profile === "legacy" && modularExecution) throw Error("Legacy runtime cannot preserve modular authoring; use the enhanced profile.");
   if (options.profile === "legacy" && (routers.length || JSON.stringify(project).includes('"logic"') || project.events.some(e=>e.transitions?.some(t=>effectiveConditions(t))))) throw Error("Legacy runtime cannot preserve conditional logic; use the enhanced profile.");
 
   const legacyPrimary = {
@@ -206,9 +218,27 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
     pathBranching: {
       profile: options.profile ?? "enhanced",
       requiredFeatures,
+      // Consumers of modular stories must execute this source model, including
+      // its initial state. The flattened nodes alone are not an equivalent run.
+      ...(modularExecution ? { authoringModelVersion: "0.5" } : {}),
+      storyId: project.storyId,
+      name: project.name,
       logicVariables: project.logicVariables,
       localExplorerEntities: project.localExplorerEntities,
+      localExplorerTypes: project.localExplorerTypes,
       localExplorerProperties: project.localExplorerProperties,
+      logicPropertyOverrides: project.logicPropertyOverrides,
+      logicTypeOverrides: project.logicTypeOverrides,
+      entityInstances: project.entityInstances,
+      entityOverrides: project.entityOverrides,
+      narrativeActions: project.narrativeActions,
+      narrativeRules: project.narrativeRules,
+      playerSimulation: withoutInteractionResults(project.playerSimulation),
+      playerProfiles: project.playerProfiles?.map(p => ({ ...p, simulation: withoutInteractionResults(p.simulation)! })),
+      activePlayerProfileId: project.activePlayerProfileId,
+      authoringScenarios: project.authoringScenarios?.map(s => ({ ...s, state: withoutInteractionResults(s.state) })),
+      assets: project.assets,
+      localizationCatalog: project.localizationCatalog,
       resolutionPolicy: "first-satisfied-then-else; stop-on-unresolved-or-invalid",
       formatLimitations: ["Twine and GameData do not guarantee condition/consequence equivalence"],
       projectId: project.projectId,

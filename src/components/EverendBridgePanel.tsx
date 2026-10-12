@@ -1,3 +1,5 @@
+import { settingsContent } from "../SettingsFrame";
+import { useInterfaceLocale } from "../i18n.js";
 import { useEffect, useRef, useState } from "react";
 import type { BranchingProject } from "../domain.js";
 import type { ProjectFileState } from "../projectPersistence.js";
@@ -33,14 +35,17 @@ function projectStoryId(project?: BranchingProject): string {
 type EverendBridgeServerState = "unknown" | "offline" | "online";
 type EverendBridgeTab = "dashboard" | "connection" | "sync";
 
-export function EverendBridgePanel({ project, fileState }: { project?: BranchingProject; fileState: ProjectFileState }) {
+export function EverendBridgePanel({ project, fileState, flat = false, pairingCode: controlledPairingCode, onPairingCodeChange }: { project?: BranchingProject; fileState: ProjectFileState; flat?: boolean; pairingCode?: string; onPairingCodeChange?: (value: string) => void }) {
+  const locale = useInterfaceLocale();
   const [settings, setSettings] = useState<EverendBridgeSettings>(() => loadSettings());
   const [activeTab, setActiveTab] = useState<EverendBridgeTab>("dashboard");
   const [status, setStatus] = useState<EverendBridgeStatus>({ state: "disconnected", message: "Disconnected.", revision: 0 });
   const [serverState, setServerState] = useState<EverendBridgeServerState>("offline");
   const [serverMessage, setServerMessage] = useState("Not checked yet.");
   const [session, setSession] = useState<EverendBridgeSession>();
-  const [pairingCode, setPairingCode] = useState("");
+  const [localPairingCode, setLocalPairingCode] = useState("");
+  const pairingCode = controlledPairingCode ?? localPairingCode;
+  const setPairingCode = onPairingCodeChange ?? setLocalPairingCode;
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
   const client = useRef<EverendBridgeClient | undefined>(undefined);
@@ -218,18 +223,18 @@ export function EverendBridgePanel({ project, fileState }: { project?: Branching
   const statusButtonLabel = serverState === "online" ? "Activo" : serverState === "unknown" ? "Comprobando…" : "Apagado";
   const connectionLabel = status.state === "connected" ? "Conectado" : status.state === "connecting" || status.state === "reconnecting" ? "Conectando" : "Desconectado";
 
-  return <section className="settings-subsection everend-bridge-panel">
+  return settingsContent(<section className="settings-subsection everend-bridge-panel">
     <div className="settings-page-title compact">
       <h3>Everend Forge Bridge</h3>
       <p>Controla el daemon local y la conexión entre PathBranching y Unity.</p>
     </div>
-    <div className="bridge-tabs" role="tablist" aria-label="Everend Forge Bridge sections">
+    {!flat && <div className="bridge-tabs" role="tablist" aria-label="Everend Forge Bridge sections">
       <button type="button" className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")} role="tab" aria-selected={activeTab === "dashboard"}>Dashboard</button>
-      <button type="button" className={activeTab === "connection" ? "active" : ""} onClick={() => setActiveTab("connection")} role="tab" aria-selected={activeTab === "connection"}>Connection</button>
-      <button type="button" className={activeTab === "sync" ? "active" : ""} onClick={() => setActiveTab("sync")} role="tab" aria-selected={activeTab === "sync"}>Sync</button>
-    </div>
+      <button type="button" className={flat || activeTab === "connection" ? "active" : ""} onClick={() => setActiveTab("connection")} role="tab" aria-selected={activeTab === "connection"}>Connection</button>
+      <button type="button" className={flat || activeTab === "sync" ? "active" : ""} onClick={() => setActiveTab("sync")} role="tab" aria-selected={activeTab === "sync"}>Sync</button>
+    </div>}
 
-    {activeTab === "dashboard" ? <div className="bridge-dashboard-tab">
+    {flat || activeTab === "dashboard" ? <div className="bridge-dashboard-tab">
       <div className={`bridge-server-card ${serverState}`}>
         <div className="bridge-server-copy">
           <span className="bridge-eyebrow">Estado del servidor</span>
@@ -243,15 +248,15 @@ export function EverendBridgePanel({ project, fileState }: { project?: Branching
       </button>
     </div> : null}
 
-    {activeTab === "connection" ? <div className="bridge-tab-panel">
+    {flat || activeTab === "connection" ? <div className="bridge-tab-panel">{flat && <h3>Connection</h3>}
       <div className="settings-grid">
-        <label><span>Mode</span><select value={settings.mode} onChange={(event) => update("mode", event.target.value as EverendBridgeSettings["mode"])}><option value="live">Live</option><option value="manual">Manual export</option></select></label>
-        <label><span>Endpoint</span><input value={settings.endpoint} onChange={(event) => update("endpoint", event.target.value)} /></label>
-        <label><span>Daemon executable</span><input value={settings.daemonExecutable} onChange={(event) => update("daemonExecutable", event.target.value)} placeholder="Path to everend-forge-bridge executable" /></label>
-        <label><span>Profile</span><input value={settings.profileId} onChange={(event) => update("profileId", event.target.value)} /></label>
-        <label><span>Project ID</span><input value={project?.projectId ?? "No project loaded"} readOnly /></label>
-        <label><span>Story ID</span><input value={project?.storyId ?? "No story loaded"} readOnly /></label>
-        <label><span>Show daemon terminal</span><input type="checkbox" checked={settings.showTerminal} onChange={(event) => update("showTerminal", event.target.checked)} /></label>
+        <label data-setting-id="pathbranching.bridge.mode"><span>Mode</span><select value={settings.mode} onChange={(event) => update("mode", event.target.value as EverendBridgeSettings["mode"])}><option value="live">Live</option><option value="manual">Manual export</option></select></label>
+        <label data-setting-id="pathbranching.bridge.endpoint"><span>Endpoint</span><input value={settings.endpoint} onChange={(event) => update("endpoint", event.target.value)} /></label>
+        <label data-setting-id="pathbranching.bridge.daemon"><span>Daemon executable</span><input value={settings.daemonExecutable} onChange={(event) => update("daemonExecutable", event.target.value)} placeholder="Path to everend-forge-bridge executable" /></label>
+        <label data-setting-id="pathbranching.bridge.profile"><span>Profile</span><input value={settings.profileId} onChange={(event) => update("profileId", event.target.value)} /></label>
+        <label data-setting-id="pathbranching.bridge.project"><span>Project ID</span><input value={project?.projectId ?? "No project loaded"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.story"><span>Story ID</span><input value={project?.storyId ?? "No story loaded"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.terminal"><span>Show daemon terminal</span><input type="checkbox" checked={settings.showTerminal} onChange={(event) => update("showTerminal", event.target.checked)} /></label>
       </div>
       <div className="bridge-connection-row">
         <span className={`bridge-connection-pill ${status.state}`}><span className="bridge-connection-dot" aria-hidden="true" /> Conexión: {connectionLabel}</span>
@@ -263,20 +268,20 @@ export function EverendBridgePanel({ project, fileState }: { project?: Branching
         <button type="button" onClick={disconnect} disabled={status.state === "disconnected"}>Disconnect</button>
       </div>
       <div className="settings-grid">
-        <label><span>Unity pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="Only needed when configured by the daemon" /></label>
-        <label><span>Session</span><input value={session?.sessionId ?? "Not loaded"} readOnly /></label>
-        <label><span>Connected clients</span><input value={session?.connectedClients.map((client) => `${client.role}:${client.clientId}`).join(", ") || "None"} readOnly /></label>
-        <label><span>Remote revision</span><input value={session?.revision ?? "Unknown"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.pairing"><span>Unity pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} placeholder="Only needed when configured by the daemon" /></label>
+        <label data-setting-id="pathbranching.bridge.session"><span>Session</span><input value={session?.sessionId ?? "Not loaded"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.clients"><span>Connected clients</span><input value={session?.connectedClients.map((client) => `${client.role}:${client.clientId}`).join(", ") || "None"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.revision"><span>Remote revision</span><input value={session?.revision ?? "Unknown"} readOnly /></label>
       </div>
       {notice ? <p className="bridge-status-note">{notice}</p> : null}
     </div> : null}
 
-    {activeTab === "sync" ? <div className="bridge-tab-panel">
+    {flat || activeTab === "sync" ? <div className="bridge-tab-panel">{flat && <h3>Sync</h3>}
       <div className="settings-grid">
-        <label><span>Auto-sync snapshot</span><input type="checkbox" checked={settings.autoSync} onChange={(event) => update("autoSync", event.target.checked)} /></label>
-        <label><span>Output root</span><input value={settings.outputRoot} onChange={(event) => update("outputRoot", event.target.value)} /></label>
-        <label><span>Locale</span><input value={settings.locale} onChange={(event) => update("locale", event.target.value)} /></label>
-        <label><span>Source folder</span><input value={fileState.universePath ?? "Not opened"} readOnly /></label>
+        <label data-setting-id="pathbranching.bridge.auto-sync"><span>Auto-sync snapshot</span><input type="checkbox" checked={settings.autoSync} onChange={(event) => update("autoSync", event.target.checked)} /></label>
+        <label data-setting-id="pathbranching.bridge.output"><span>Output root</span><input value={settings.outputRoot} onChange={(event) => update("outputRoot", event.target.value)} /></label>
+        <label data-setting-id="pathbranching.bridge.locale"><span>Locale</span><input value={settings.locale} onChange={(event) => update("locale", event.target.value)} /></label>
+        <label data-setting-id="pathbranching.bridge.source"><span>Source folder</span><input value={fileState.universePath ?? "Not opened"} readOnly /></label>
       </div>
       <div className="bridge-actions">
         <button type="button" className="bridge-primary-action" onClick={publish} disabled={status.state !== "connected" || !project}>Publish snapshot</button>
@@ -284,5 +289,5 @@ export function EverendBridgePanel({ project, fileState }: { project?: Branching
       </div>
       {notice ? <p className="bridge-status-note">{notice}</p> : null}
     </div> : null}
-  </section>;
+  </section>, locale);
 }

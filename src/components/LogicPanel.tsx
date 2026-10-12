@@ -1,3 +1,4 @@
+import { useApplicationEffect } from "./useApplicationActivity.js";
 import {
   Boxes,
   CheckCircle2,
@@ -48,8 +49,10 @@ import {
   typeCapability,
   type CanonExplorerProperty,
 } from "../explorerSchema.js";
+import { ExplorerGroup, ExplorerPane, useExplorerOverlayBounds } from "./ExplorerPresentation.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
 import { AccessibleTabs } from "./AccessibleTabs.js";
+import { LogicAuthoringCatalog } from "./LogicAuthoringCatalog.js";
 import { panelUiText, useInterfaceLocale } from "../i18n.js";
 import { useOverlayFocus } from "./useOverlayFocus.js";
 
@@ -88,6 +91,8 @@ export function LogicPanel({
   onUpdateLogicPropertyOverride,
   onUpdateLogicTypeOverride,
   onDeleteLocalExplorerProperty,
+  currentEventId,
+  currentDialogueId,
 }: {
   project: BranchingProject;
   propertiesConfig?: Record<string, unknown>;
@@ -98,6 +103,8 @@ export function LogicPanel({
   selected?: Selection;
   onSelect: (selection: Selection) => void;
   onOpenInspector: (selection: Selection) => void;
+  currentEventId?: string;
+  currentDialogueId?: string;
   onCreateProperty: (
     label: string,
     valueType: LocalExplorerProperty["valueType"],
@@ -129,7 +136,7 @@ export function LogicPanel({
 }) {
   const locale = useInterfaceLocale();
   const t = (text: string) => panelUiText(locale, text);
-  const [tab, setTab] = useState<"properties" | "variables">("properties");
+  const [tab, setTab] = useState<"properties" | "variables" | "actions" | "rules">("properties");
   const [propertySearch, setPropertySearch] = useState("");
   const [collapsedCanonTypes, setCollapsedCanonTypes] = useState<Set<string>>(() => {
     const canonPropertyTypes = canonExplorerPropertyTypes(propertiesConfig);
@@ -159,6 +166,8 @@ export function LogicPanel({
   });
   const editorRef = useRef<HTMLDivElement>(null);
   const createPropertyRef = useRef<HTMLDivElement | null>(null);
+  useExplorerOverlayBounds(editorRef, Boolean(propertyEditor));
+  useExplorerOverlayBounds(createPropertyRef, Boolean(createPropertyMenu));
   useOverlayFocus(editorRef, Boolean(propertyEditor), () => setPropertyEditor(undefined));
   useOverlayFocus(createPropertyRef, Boolean(createPropertyMenu), () => setCreatePropertyMenu(undefined));
   const pendingInspectorClickRef = useRef<{ propertyId: string; source: PropertySource; timer: number } | undefined>(undefined);
@@ -183,7 +192,7 @@ export function LogicPanel({
     ? typeCapability(project, propertyEditor.source, editingTypeId)
     : undefined;
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!propertyEditor) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (event.target instanceof Node && !editorRef.current?.contains(event.target)) {
@@ -201,7 +210,7 @@ export function LogicPanel({
     };
   }, [propertyEditor]);
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!createPropertyMenu) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (event.target instanceof Node && !createPropertyRef.current?.contains(event.target)) {
@@ -484,10 +493,9 @@ export function LogicPanel({
   const panelTitle = t("Logic");
 
   return (
-    <WorkspaceSidePanel title={panelTitle} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
-      <AccessibleTabs className="explorer-view-tabs logic-view-tabs" ariaLabel={t("Logic views")} value={tab} onChange={(value) => setTab(value as typeof tab)} tabs={[{id:"properties",label:t("Properties")},{id:"variables",label:t("Variables")}]} />
-      {tab === "properties" ? (
-        <>
+    <WorkspaceSidePanel onboardingTarget="pathbranching.logic" title={panelTitle} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
+      <AccessibleTabs className="explorer-view-tabs logic-view-tabs" ariaLabel={t("Logic views")} value={tab} onChange={(value) => setTab(value as typeof tab)} tabs={[{id:"properties",label:t("Properties")},{id:"variables",label:t("Variables")},{id:"actions",label:locale === "es" ? "Acciones" : "Actions"},{id:"rules",label:locale === "es" ? "Reglas" : "Rules"}]} />
+      <ExplorerPane active={tab === "properties"}>
           <div className="explorer-toolbar">
             <label className="explorer-search">
               <Search size={14} />
@@ -671,9 +679,8 @@ export function LogicPanel({
           </div>
         </details>
       </div> : null}
-        </>
-      ) : (
-        <>
+      </ExplorerPane>
+      <ExplorerPane active={tab === "variables"}>
           <div className="panel-toolbar"><strong>{t("Variables")}</strong><button type="button" onClick={addGroup}><Plus size={14} /> {t("Group")}</button></div>
           <div className="logic-groups">{groups.map((group, index) => <section className="logic-group" key={group.id}>
             <header>
@@ -690,8 +697,8 @@ export function LogicPanel({
             </div>)}
             <button type="button" className="logic-add-variable" onClick={() => addVariable(group.id)}><Plus size={13} /> {t("Variable")}</button>
           </section>)}</div>
-        </>
-      )}
+      </ExplorerPane>
+      {(["actions", "rules"] as const).map(kind => <ExplorerPane key={kind} active={tab === kind}><LogicAuthoringCatalog kind={kind} project={project} propertiesConfig={propertiesConfig} selected={selected} currentEventId={currentEventId} currentDialogueId={currentDialogueId} onUpdate={onUpdate} onOpenInspector={onOpenInspector} /></ExplorerPane>)}
     {createPropertyMenu ? (
       <div ref={createPropertyRef} className="logic-property-editor explorer-create-menu" style={{ top: createPropertyMenu.top, left: createPropertyMenu.left }} role="dialog" aria-modal="true" aria-label={t("Create new property")} >
         <header className="logic-property-editor-header">
@@ -700,7 +707,7 @@ export function LogicPanel({
           <button type="button" className="icon-only" aria-label={t("Close create property menu")} onClick={() => setCreatePropertyMenu(undefined)}><X size={15} /></button>
         </header>
         <div className="modal-body" style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
-            <label className="field-label">
+            <ExplorerGroup id="property-basic" title={locale === "es" ? "Información básica" : "Basic information"} defaultOpen><label className="field-label">
               <span>{t("Label")}</span>
               <input
                 type="text"
@@ -729,6 +736,8 @@ export function LogicPanel({
                 placeholder={t("Optional description")}
               />
             </label>
+            </ExplorerGroup>
+            <ExplorerGroup id="property-advanced" title={locale === "es" ? "Configuración avanzada" : "Advanced settings"}>
             <label className="logic-property-checkbox">
               <input
                 type="checkbox"
@@ -768,9 +777,9 @@ export function LogicPanel({
                 </label>
               </>
             ) : null}
+            </ExplorerGroup>
             {(newPropertyState.valueType === "select" || newPropertyState.valueType === "multiselect") ? (
-              <div className="field-label">
-                <span>{t("Options")}</span>
+              <ExplorerGroup id="property-options" title={t("Options")} defaultOpen><div className="field-label">
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   {newPropertyState.options.map((option, index) => (
                     <div key={index} style={{ display: "flex", gap: "4px" }}>
@@ -824,8 +833,9 @@ export function LogicPanel({
                     {t("Add option")}
                   </button>
                 </div>
-              </div>
+              </div></ExplorerGroup>
             ) : null}
+            <ExplorerGroup id="property-scope" title={locale === "es" ? "Ámbito y referencias" : "Scope and references"}>
             {(newPropertyState.valueType === "entity-ref" || newPropertyState.valueType === "entity-ref-list") ? (
               <label className="field-label">
                 <span>{t("Target entity types")}</span>
@@ -852,6 +862,7 @@ export function LogicPanel({
                 placeholder={t("Leave blank for all types")}
               />
             </label>
+            </ExplorerGroup>
           </div>
           <footer className="modal-footer">
             <button type="button" onClick={() => setCreatePropertyMenu(undefined)}>{t("Cancel")}</button>

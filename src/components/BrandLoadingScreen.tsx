@@ -2,7 +2,7 @@ import pathbranchingIcon from "../assets/pathbranching-icon.png";
 
 export function BrandLoadingScreen({ message = "Preparing your story flow…" }: { message?: string }) {
   return (
-    <main className="brand-loading brand-loading-pathbranching" role="status" aria-live="polite" aria-busy="true">
+    <main className="brand-loading brand-loading-pathbranching" role="status" aria-live="polite" aria-busy="true" data-tauri-drag-region="deep">
       <div className="brand-loading-orbit" aria-hidden="true" />
       <div className="brand-loading-content">
         <div className="brand-loading-mark" aria-hidden="true">

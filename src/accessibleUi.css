@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 /* Authoring chrome only. Canvas node sizes and persisted layout are untouched. */
 :is(.app-shell, .settings-modal, .onboarding-guide, .interaction-tutorial-dialog) :is(button, input, select, textarea, a, [tabindex]):focus-visible {
   outline: 2px solid var(--wn-accent);
@@ -51,4 +53,6 @@
     animation: none;
     transition: none;
   }
+}
+
 }

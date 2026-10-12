@@ -1,23 +1,26 @@
+import { hasInteractions } from './interactions.js';
+import { stringify } from 'yaml';
 import type { BranchingProject, RuntimePackage } from "./domain.js";
 import { exportInkProject, exportSinpoGameData, type InkProjectExport, type SinpoGameDataExport } from "./exportFormats.js";
 import { exportRuntimePackage } from "./exportRuntime.js";
 import { exportTwineHtml } from "./twineFormat.js";
 
-export type ExportPreviewMode = "runtime" | "runtimeLegacy" | "ink" | "gameData" | "twine";
+export type ExportPreviewMode = "runtime" | "runtimeYaml" | "runtimeLegacy" | "ink" | "gameData" | "twine";
 
 export type ExportPreviewBundle = {
   mode: ExportPreviewMode;
   runtimePackage: RuntimePackage;
   inkExport: InkProjectExport;
-  gameDataExport: SinpoGameDataExport;
+  gameDataExport?: SinpoGameDataExport;
   content: string;
   defaultName: string;
 };
 
 export function buildExportPreview(project: BranchingProject, mode: ExportPreviewMode): ExportPreviewBundle {
+  if (hasInteractions(project) && ['gameData', 'twine'].includes(mode)) throw new Error('interactions-v1: this format cannot execute interactions or wait barriers. Use Enhanced.');
   const runtimePackage = exportRuntimePackage(project, {profile:mode==="runtimeLegacy"?"legacy":"enhanced"});
   const inkExport = exportInkProject(project);
-  const gameDataExport = exportSinpoGameData(project);
+  const gameDataExport = hasInteractions(project) ? undefined : exportSinpoGameData(project);
   const inkContent = inkExport.files.map((file) => `// ${file.path}\n${file.content}`).join("\n\n");
 
   if (mode === "ink") {
@@ -59,7 +62,7 @@ export function buildExportPreview(project: BranchingProject, mode: ExportPrevie
     runtimePackage,
     inkExport,
     gameDataExport,
-    content: `${JSON.stringify(runtimePackage, null, 2)}\n`,
-    defaultName: "runtime-package.json",
+    content: mode === 'runtimeYaml' ? stringify(runtimePackage) : `${JSON.stringify(runtimePackage, null, 2)}\n`,
+    defaultName: mode === 'runtimeYaml' ? 'runtime-package.yaml' : "runtime-package.json",
   };
 }

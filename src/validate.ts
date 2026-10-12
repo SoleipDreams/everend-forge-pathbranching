@@ -1,3 +1,4 @@
+import { validateInteractions } from './interactionValidation.js';
 import { conditionStructureIssues, conditionValueMatchesType } from "./conditionEvaluation.js";
 import type { BranchingProject, ConditionInput, Consequence, EntityInstance, EntityOwner, EventNode, InstanceEffect, InstanceQuery, LogicEffect, LogicPredicate, NarrativeEffect, ScriptBlock, ValidationFinding } from "./domain.js";
 import { effectiveConditions, orderedTransitions, conditionInputsFromConsequences, walkConditions } from "./logic.js";
@@ -147,6 +148,11 @@ function validateConditionRefs(
   structureIssues.forEach(issue => findings.push(finding('invalid_condition', 'error', `${context} ${issue.path}: ${issue.message}`, {id:ownerId})));
   if (structureIssues.length) return;
   walkConditions(conditions, (condition, path) => {
+    if (condition.type === 'interactionResult') {
+      const use = projectRefs.project.events.flatMap(event => (event.interactionUses ?? []).map(use => ({ use, event }))).find(item => item.use.id === condition.useId);
+      if (!use || !use.event.interactionDefinitions?.find(d => d.id === use.use.definitionId)?.results.some(r => r.id === condition.resultId) || !['==','!='].includes(String(condition.operator))) findings.push(finding('invalid_condition','error',`${context} references an invalid interaction result`,{id:ownerId}));
+      return;
+    }
     if (condition.type === 'instanceQuery') {
       const query = condition as InstanceQuery;
       if (query.entityId && !entityDefinition(projectRefs.project, query.entityId)) findings.push(finding('invalid_condition','error',`${context} references missing copy entity "${query.entityId}".`,{id:ownerId,ref:query.entityId}));
@@ -521,14 +527,6 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       }
     }
 
-    if (isTerminalEventType(project, event.type) && event.transitions?.length) {
-      findings.push(
-        finding("invalid_final_transition", "error", `Terminal event "${event.id}" has outgoing transition(s).`, {
-          id: event.id,
-        }),
-      );
-    }
-
     if (event.script && !scriptIds.has(event.script.id)) {
       findings.push(
         finding("missing_script", "warning", `Event "${event.id}" references script "${event.script.id}" that is not listed in project scripts.`, {
@@ -569,7 +567,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
 
     const presentEntityIds = event.presentEntityRefs ?? event.canonRefs ?? [];
     presentEntityIds.forEach((canonRef) => {
-      validateCanonRef(findings, canonIds, event.id, canonRef, `Event "${event.id}" present entity`);
+      if (!project.localExplorerEntities?.some(entity => entity.id === canonRef)) validateCanonRef(findings, canonIds, event.id, canonRef, `Event "${event.id}" present entity`);
     });
     event.dialogueStarts?.forEach((start) => {
       const source = start.source;
@@ -744,6 +742,8 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     });
 
     const internalNodeIds = new Set([
+      ...(event.interactionUses ?? []).filter(u => !u.ownerNodeId).map(u => `interaction:${event.id}:${u.id}`),
+      ...(event.interactionBarriers ?? []).map(b => `barrier:${event.id}:${b.id}`),
       event.id,
       ...(event.childEventIds ?? []),
       ...(event.decisions ?? []).flatMap((decision) => [
@@ -762,6 +762,24 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
           ...(project.events.find((candidate) => candidate.id === event.parentEventId)?.childEventIds ?? []),
         ])
       : new Set<string>();
+    const localHierarchyEventIds = new Set([
+      event.id,
+      ...(event.parentEventId ? [event.parentEventId] : []),
+      ...(event.childEventIds ?? []),
+    ]);
+    if (
+      isTerminalEventType(project, event.type) &&
+      event.transitions?.some((transition) =>
+        eventIds.has(transition.to) && !localHierarchyEventIds.has(transition.to),
+      )
+    ) {
+      findings.push(
+        finding("invalid_final_transition", "error", `Terminal event "${event.id}" has outgoing transition(s).`, {
+          id: event.id,
+        }),
+      );
+    }
+
     const transitionGroups = new Map<string, NonNullable<typeof event.transitions>>();
     event.transitions?.forEach((transition) => {
       transitionGroups.set(transition.from, [...(transitionGroups.get(transition.from) ?? []), transition]);
@@ -975,7 +993,10 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     if (owner.logic?.repeat && !['once','each-entry'].includes(owner.logic.repeat)) findings.push(finding('invalid_consequence','error','Invalid effect repeat policy.',{id:owner.id}));
   }
   validateAuthoringDefinitions(findings,projectRefs,canonIds);
-  return findings;
+  for (const event of project.events) for (const definition of event.interactionDefinitions ?? []) for (const result of definition.results) {
+    validateNarrativeEffects(findings, projectRefs, canonIds, result.id, result.effects);
+  }
+  return [...findings, ...validateInteractions(project)];
 }
 
 function authoredCopies(project: BranchingProject): EntityInstance[] {

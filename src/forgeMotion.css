@@ -1,0 +1,22 @@
+@keyframes pb-surface-enter {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+:is(.pathbranching-topbar, .pb-desktop-menu) [role="menu"],
+.authoring-workspace, .workspace-drawer-content, .pb-explorer-section:not([hidden]),
+.event-inspector-body, .markdown-tab-stack [role="tab"], .modal-dialog, .pathbranching-settings-modal {
+  animation: pb-surface-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:is(.inspector-subtabs, .story-outline-tabs, .pb-explorer-tabs, .authoring-workspace) [role="tab"],
+.dock-icon-button {
+  transition: background-color 140ms ease-out, color 140ms ease-out, border-color 140ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.pathbranching-topbar, .pb-desktop-menu) [role="menu"],
+  .authoring-workspace, .workspace-drawer-content, .pb-explorer-section:not([hidden]),
+  .event-inspector-body, .markdown-tab-stack [role="tab"], .modal-dialog, .pathbranching-settings-modal { animation: none; }
+  :is(.inspector-subtabs, .story-outline-tabs, .pb-explorer-tabs, .authoring-workspace) [role="tab"],
+  .dock-icon-button { transition: none; }
+}

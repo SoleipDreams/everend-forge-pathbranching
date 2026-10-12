@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { setNarrativeNamingLocale } from './narrativeNaming.js';
 import {
   resolveLocale,
   setDocumentLocale,
@@ -12,6 +13,7 @@ export type { Locale, LocalePreference };
 // Interface state is shared by the standalone app and Suite chrome. It never
 // enters the narrative document or changes the story's content locale.
 let interfaceLocale: Locale = resolveLocale("system");
+setNarrativeNamingLocale(interfaceLocale);
 const localeListeners = new Set<() => void>();
 
 function subscribeToInterfaceLocale(listener: () => void) {
@@ -33,6 +35,7 @@ export function resolveInterfaceLocale(preference: LocalePreference): Locale {
 
 export function applyInterfaceLocale(preference: LocalePreference): Locale {
   const locale = resolveInterfaceLocale(preference);
+  setNarrativeNamingLocale(locale);
   setDocumentLocale(locale);
   if (locale !== interfaceLocale) {
     interfaceLocale = locale;
@@ -72,11 +75,11 @@ export function inspectorUiCopy(locale: Locale) {
   return locale === "es" ? {
     overview: "Resumen del evento", description: "Descripción", noDescription: "Sin descripción todavía.",
     cover: "Imagen de portada", noCover: "Sin imagen de portada", category: "Categoría", eventType: "Tipo de evento",
-    branch: "Rama", noBranch: "Sin rama", decisions: "Decisiones", outcomes: "Opciones", dialogues: "Elementos de diálogo", untitled: "Evento sin nombre",
+    branch: "Rama", noBranch: "Sin rama", decisions: "Decisiones", outcomes: "Opciones", dialogues: "Conversaciones", untitled: "Evento sin nombre",
   } : {
     overview: "Event overview", description: "Description", noDescription: "No description yet.",
     cover: "Cover image", noCover: "No cover image", category: "Category", eventType: "Event type",
-    branch: "Branch", noBranch: "No branch", decisions: "Decisions", outcomes: "Outcomes", dialogues: "Dialogue elements", untitled: "Untitled event",
+    branch: "Branch", noBranch: "No branch", decisions: "Decisions", outcomes: "Options", dialogues: "Conversations", untitled: "Untitled event",
   };
 }
 
@@ -185,7 +188,7 @@ const panelSpanish: Record<string, string> = {
   "Entities of this type can be granted/removed as a consequence and checked as a condition": "Las entidades de este tipo pueden otorgarse o retirarse como consecuencia y comprobarse como condición",
   "Available in conditions": "Disponible en condiciones", "Can be used in conditions and logic checks": "Puede utilizarse en condiciones y comprobaciones de lógica",
   "Writable in actions": "Modificable en acciones", "Can be modified by story actions": "Las acciones de la historia pueden modificarla",
-  "Present as entity": "Mostrar como entidad", "Dialogue trigger source": "Origen de activación de diálogo", "Can start dialogue based on property value": "Puede iniciar diálogos según el valor de la propiedad",
+  "Present as entity": "Mostrar como entidad", "Dialogue trigger source": "Origen del inicio de conversación", "Can start dialogue based on property value": "Puede iniciar conversaciones según el valor de la propiedad",
   "Values can appear as characters/items in events": "Sus valores pueden aparecer como personajes u objetos en los eventos",
   "Can relate to": "Puede relacionarse con", "Schema fields": "Campos del esquema", "Value type": "Tipo de valor", "Applies to types": "Se aplica a tipos", "All types": "Todos los tipos",
   "Target entity types": "Tipos de entidad de destino", "All entities": "Todas las entidades", "Description": "Descripción", "Required": "Obligatorio",

@@ -6,6 +6,14 @@ Current milestone: [Authoring cycle closure](AUTHORING_CLOSURE.md). Unity live
 synchronization is deferred while the authoring, persistence and export loop is
 validated.
 
+Windows desktop debugging: [Tauri + Playwright](TAURI_DEBUG.md).
+
+Conversation writing, topology protections and native verification:
+[Conversation authoring](CONVERSATION_AUTHORING.md).
+
+Optional inspector tabs and grouped child conversations:
+[Inspector modules](INSPECTOR_MODULES.md).
+
 Current UI refinement and verification: [Authoring UX results](UX_REFINEMENT.md).
 Browser checks are recorded separately from pending manual Tauri acceptance.
 

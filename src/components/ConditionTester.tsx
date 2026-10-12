@@ -5,7 +5,7 @@ import { conditionValueMatchesType, effectiveConditions, evaluateConditionDetail
 import { isConditionSet, type NarrativeEvaluationState } from '../logic.js';
 import { grantableEntities } from '../explorerSchema.js';
 import { conditionDiagnosticMessage, conditionExpressionAtPath, conditionPredicateLabel, conditionRouteResolution, conditionTestControls, conditionTreeSummary, conditionUiCopy, narrativeTargetLabel, type ConditionTestControl, type ConditionUiLocale } from '../conditionPresentation.js';
-import { entityDefinition, initialAuthoringState, instanceOwnerIssue } from '../authoringEntities.js';
+import { entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey } from '../authoringEntities.js';
 import { EntityOwnerPicker } from './EntityOwnerPicker.js';
 import { InstancePropertyFields } from './NarrativeEffectEditor.js';
 import { useInterfaceLocale } from '../i18n.js';
@@ -41,7 +41,7 @@ function updateControlState(state: NarrativeEvaluationState, control: ConditionT
     const subject = state.context?.[s.role];
     return subject ? updateControlState(state, { ...control, predicate: { ...predicate, subject } as LogicPredicate }, value, project) : state;
   }
-  if (s.kind === 'instance') return { ...state, entityInstances: (state.entityInstances ?? project.entityInstances ?? []).map(instance => instance.id === s.instanceId ? { ...instance, ...(predicate.type === 'state' ? { states: { ...instance.states, [predicate.stateId]: Boolean(value) } } : predicate.type === 'property' ? { properties: { ...instance.properties, [predicate.propertyId]: value } } : {}) } : instance) };
+  if (s.kind === 'instance') return { ...state, entityInstances: (state.entityInstances ?? project.entityInstances ?? []).map(instance => instance.id === s.instanceId ? { ...instance, ...(predicate.type === 'state' && predicate.stateId === 'owned' ? { owner: value ? instance.owner ?? { kind: 'profile' as const, profileId: state.context?.profileId ?? 'default' } : undefined } : predicate.type === 'state' ? { states: { ...instance.states, [predicate.stateId]: Boolean(value) } } : predicate.type === 'property' ? { properties: { ...instance.properties, [predicate.propertyId]: value } } : {}) } : instance) };
   if (s.kind === 'progress') {
     const visited = new Set(state.visited ?? []);
     visited.delete(s.targetId); visited.delete(`${s.targetType}:${s.targetId}`);
@@ -49,6 +49,16 @@ function updateControlState(state: NarrativeEvaluationState, control: ConditionT
     return {...state, visited: [...visited]};
   }
   if (s.kind === 'entity') {
+    if (predicate.type === 'state' && predicate.stateId === 'owned') {
+      const copies = state.entityInstances ?? project.entityInstances ?? [];
+      const profileId = state.context?.profileId ?? 'default';
+      const isOwnedHere = (copy: EntityInstance) => copy.entityId === s.entityId && (ownerKey(copy.owner) === `profile:${profileId}` || state.context?.actor?.kind === 'entity' && ownerKey(copy.owner) === `entity:${state.context.actor.entityId}`);
+      if (!value) return { ...state, entityInstances: copies.map(copy => isOwnedHere(copy) ? { ...copy, owner: undefined } : copy) };
+      if (copies.some(isOwnedHere)) return state;
+      const available = copies.find(copy => copy.entityId === s.entityId && !copy.owner);
+      const owner = { kind: 'profile' as const, profileId };
+      return { ...state, entityInstances: available ? copies.map(copy => copy.id === available.id ? { ...copy, owner } : copy) : [...copies, { id: `instance:test:${crypto.randomUUID()}`, entityId: s.entityId, properties: {}, owner }] };
+    }
     const old = state.entityStates?.[s.entityId];
     const part = predicate.type === 'state' ? 'states' : 'properties';
     const key = predicate.type === 'state' ? predicate.stateId : predicate.type === 'property' ? predicate.propertyId : '';

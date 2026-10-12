@@ -2,6 +2,7 @@ import type { BranchingProject, ConditionInput, LogicPredicate, LogicMoment, Con
 import type { InkProjectExport } from './exportFormats.js';
 import { combineConditions, conditionStructureIssues, conditionValueMatchesType, conditionValueType, effectiveConditions, resolveConditionValue } from './conditionEvaluation.js';
 import { migrateConditionInput, migrateConsequence, orderedTransitions } from './logic.js';
+import { modularExportDiagnostics } from './exportCompatibility.js';
 
 /** Injective symbols: punctuation and Unicode IDs cannot alias each other. */
 export const inkSymbol = (id: string) => `pb_${Array.from(id).map(c=>c.codePointAt(0)!.toString(16)).join('_')}`;
@@ -14,7 +15,8 @@ const literal = (v: unknown, type?: string): string => type==='date' ? String(Nu
 const text = (s: string) => s.replace(/[\\{}\[\]#*+~<>|]/g,'\\$&').replace(/^(\s*)[-=]/gm,'$1\\$&');
 
 export function exportInkProject(project: BranchingProject): InkProjectExport {
-  const diagnostics: NonNullable<InkProjectExport['diagnostics']> = [];
+  const diagnostics: NonNullable<InkProjectExport['diagnostics']> = modularExportDiagnostics(project);
+  if (diagnostics.length) return { format: 'ink', diagnostics, symbols: {}, files: [] };
   const declarations = new Map<string,string>(), symbols: Record<string,string> = {};
   const block = (location:string,message:string): never => { throw new Error(`${location}\n${message}`); };
   const capture = (location:string, fn:()=>string[]): string[] => {

@@ -30,3 +30,7 @@ export * from "./conditionEditing.js";
 export * from "./authoringEngine.js";
 export * from "./authoringEntities.js";
 export * from "./authoringDrafts.js";
+
+export * from './interactions.js';
+export * from './interactionMutations.js';
+export * from './interactionValidation.js';

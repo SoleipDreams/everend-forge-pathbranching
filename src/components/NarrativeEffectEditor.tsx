@@ -13,9 +13,9 @@ export function NarrativeEffectEditor({ project, value = [], onChange, draftId, 
   const replace = (index: number, next: NarrativeEffect[]) => onChange([...value.slice(0,index),...next,...value.slice(index+1)]);
   const update = (index: number, patch: Partial<InstanceEffect>) => replace(index,[{ ...value[index], ...patch } as InstanceEffect]);
   const reorder = (index: number, direction: number) => { const next=[...value];[next[index],next[index+direction]]=[next[index+direction],next[index]];onChange(next); };
-  return <section className="authoring-effects" aria-label={es?'Consecuencias en orden':'Ordered effects'}>
-    {value.map((raw,index) => <div className="authoring-effect-row" role="group" aria-label={`${es?'Consecuencia':'Effect'} ${index+1}`} key={`${draftId ?? 'effects'}:${index}`}><strong>{es?'Consecuencia':'Effect'} {index+1}</strong>
-      <div className="authoring-row-actions"><button type="button" disabled={index===0} aria-label={es?'Subir consecuencia':'Move effect up'} onClick={()=>reorder(index,-1)}>↑</button><button type="button" disabled={index===value.length-1} aria-label={es?'Bajar consecuencia':'Move effect down'} onClick={()=>reorder(index,1)}>↓</button></div>
+  return <section className="authoring-effects" aria-label={es?'Cambios en orden':'Ordered changes'}>
+    {value.map((raw,index) => <div className="authoring-effect-row" role="group" aria-label={`${es?'Cambio':'Change'} ${index+1}`} key={`${draftId ?? 'effects'}:${index}`}><strong>{es?'Cambio':'Change'} {index+1}</strong>
+      <div className="authoring-row-actions"><button type="button" disabled={index===0} aria-label={es?'Subir cambio':'Move change up'} onClick={()=>reorder(index,-1)}>↑</button><button type="button" disabled={index===value.length-1} aria-label={es?'Bajar cambio':'Move change down'} onClick={()=>reorder(index,1)}>↓</button></div>
       {raw.type !== 'instanceEffect' ? <LogicEffectEditor project={project} draftId={draftId ? `${draftId}:effect:${index}`:undefined} value={[raw as Consequence]} onChange={next=>replace(index,next ?? [])} /> : (()=>{
         const effect=raw as InstanceEffect;
         const scope=effect.selection==='all'?'all':effect.instanceIds?'selected':'one';
@@ -32,12 +32,12 @@ export function NarrativeEffectEditor({ project, value = [], onChange, draftId, 
           {effect.operation==='create'||effect.operation==='move'?<EntityOwnerPicker project={project} value={effect.owner ?? undefined} context onChange={owner=>update(index,{owner:owner ?? null})}/>:null}
           {effect.operation==='create'?<AuthoringTextField projectId={project.projectId} elementId={draftId ?? `effect:${index}`} field="copy-name" label={es?'Nombre de la nueva copia':'New copy name'} value={effect.name ?? ''} onCommit={name=>update(index,{name})}/>:null}
           {effect.operation==='create'||effect.operation==='modify'?<InstancePropertyFields project={project} draftId={`${draftId ?? 'effect'}:${index}`} instance={{id:effect.instanceId ?? '',entityId:templateId ?? effect.query?.entityId ?? '',properties:effect.properties,states:effect.states}} onChange={patch=>update(index,patch)} />:null}
-          <button type="button" className="danger" onClick={()=>replace(index,[])}>{es?'Eliminar consecuencia':'Remove effect'}</button>
+          <button type="button" className="danger" onClick={()=>replace(index,[])}>{es?'Eliminar cambio':'Remove effect'}</button>
         </>;
       })()}
     </div>)}
-    <LogicEffectEditor project={project} draftId={draftId ? `${draftId}:new`:undefined} value={[]} label={es?'Añadir consecuencia de estado o propiedad':'Add state or property effect'} onChange={next=>{if(next?.length)onChange([...value,...next]);}}/>
-    <button type="button" onClick={()=>onChange([...value,{type:'instanceEffect',operation:'create',entityId:entities[0],owner:{kind:'context',role:'actor'}}])}>{es?'Añadir consecuencia de copia':'Add copy effect'}</button>
+    <LogicEffectEditor project={project} draftId={draftId ? `${draftId}:new`:undefined} value={[]} label={es?'Añadir cambio de estado o propiedad':'Add state or property change'} onChange={next=>{if(next?.length)onChange([...value,...next]);}}/>
+    <button type="button" onClick={()=>onChange([...value,{type:'instanceEffect',operation:'create',entityId:entities[0],owner:{kind:'context',role:'actor'}}])}>{es?'Añadir cambio de copia':'Add copy change'}</button>
   </section>;
 }
 

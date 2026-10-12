@@ -433,3 +433,10 @@ export async function exportTextDialog(content: string, defaultName: string): Pr
   });
   return result ?? undefined;
 }
+
+/** Read profile metadata without reconciling or replacing the open narrative document. */
+export async function readUniverseProfileSource(path: string): Promise<string | undefined> {
+  const browser = currentBrowserUniverse(path);
+  const files = browser ? await readBrowserUniverse(browser) : (await invoke<UniverseReadResult>("read_universe_folder", {path})).files;
+  return files.find(file => file.relativePath.replaceAll("\\", "/") === ".everend/universe.json")?.content;
+}

@@ -1,3 +1,4 @@
+import { hasInteractions } from './interactions.js';
 import type { BranchingProject, EventNode, Outcome, Transition } from "./domain.js";
 import { normalizeProject } from "./projectSerialization.js";
 
@@ -214,6 +215,7 @@ function twinePassageContent(event: EventNode, project: BranchingProject) {
 }
 
 export function exportTwineHtml(project: BranchingProject) {
+  if (hasInteractions(project)) throw new Error('interactions-v1: Twine cannot execute interactions or wait barriers. Use Enhanced.');
   const events = project.events;
   const entryEventId = project.sequences.find((sequence) => sequence.id === project.entrySequenceId)?.entryEventId ?? events[0]?.id;
   const entries = events.map((event, index) => {

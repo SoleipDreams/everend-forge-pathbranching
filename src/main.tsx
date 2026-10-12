@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@xyflow/react/dist/style.css";
 import "./app.css";
 import { StoryTestDetached, storyTestWindowKind } from "./components/StoryTestDetached.js";
+import { WindowChromeSetup } from "./components/WindowTitleControls.js";
 
 const App = lazy(async () => ({ default: (await import("./App.js")).App }));
 const storyTestKind = storyTestWindowKind();
@@ -15,6 +16,9 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    {storyTestKind ? <StoryTestDetached kind={storyTestKind} /> : <Suspense fallback={null}><App /></Suspense>}
+    <>
+      {storyTestKind ? <StoryTestDetached kind={storyTestKind} /> : <Suspense fallback={null}><App /></Suspense>}
+      {!storyTestKind ? <WindowChromeSetup /> : null}
+    </>
   </StrictMode>,
 );

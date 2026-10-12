@@ -1,7 +1,9 @@
-export type ThemeFamily = "worldnotion" | "github" | "one" | "dracula" | "owl" | "material";
+export type ThemeFamily = "forge-mono" | "worldnotion" | "github" | "one" | "dracula" | "owl" | "material";
 export type ThemeMode = "light" | "dark";
 
 export type ThemeId =
+  | "forge-mono-light"
+  | "forge-mono-dark"
   | "worldnotion-light"
   | "worldnotion-dark"
   | "github"
@@ -26,6 +28,8 @@ export type ThemeDefinition = {
 export const THEMES: ThemeDefinition[] = [
   { id: "worldnotion-light", label: "WorldNotion Light", isDark: false, family: "worldnotion", mode: "light" },
   { id: "worldnotion-dark", label: "WorldNotion Dark", isDark: true, family: "worldnotion", mode: "dark" },
+  { id: "forge-mono-light", label: "Everend Forge Light", isDark: false, family: "forge-mono", mode: "light" },
+  { id: "forge-mono-dark", label: "Everend Forge Dark", isDark: true, family: "forge-mono", mode: "dark" },
   { id: "github", label: "GitHub Light", isDark: false, family: "github", mode: "light" },
   { id: "github-dark", label: "GitHub Dark", isDark: true, family: "github", mode: "dark" },
   { id: "one-light-pro", label: "One Light Pro", isDark: false, family: "one", mode: "light" },

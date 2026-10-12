@@ -1,0 +1,19 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
+.logic-view-tabs { overflow-x: auto; }
+.logic-view-tabs > button { flex: 1 0 auto; min-width: 0; }
+.logic-authoring-catalog .panel-toolbar { flex-wrap: wrap; }
+.logic-authoring-catalog .panel-toolbar > strong { font-size: .76rem; }
+.logic-catalog-count { color: var(--wn-muted); font-weight: 400; }
+.logic-catalog-scope { display: grid; gap: 5px; padding: 8px; color: var(--wn-muted); font-size: .68rem; border-bottom: 1px solid var(--wn-border); }
+.logic-catalog-scope select { min-width: 0; width: 100%; min-height: 28px; border: 1px solid var(--wn-border); border-radius: 5px; background: var(--wn-panel); color: var(--wn-text); }
+.logic-catalog-list { display: grid; gap: 6px; padding: 8px; }
+.logic-catalog-item { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 8px; text-align: start; border: 1px solid var(--wn-border); border-radius: 6px; background: var(--wn-panel); color: var(--wn-text); }
+.logic-catalog-item:hover, .logic-catalog-item.active { border-color: var(--wn-accent); }
+.logic-catalog-item > svg { flex: 0 0 auto; margin-top: 2px; color: var(--wn-accent); }
+.logic-catalog-item-content { min-width: 0; display: grid; gap: 3px; }
+.logic-catalog-item-content > strong { font-size: .76rem; overflow-wrap: anywhere; }
+.logic-catalog-item-content > span, .logic-catalog-item-content > small { color: var(--wn-muted); font-size: .67rem; overflow-wrap: anywhere; }
+.logic-catalog-item-content > .logic-catalog-indicators { color: var(--wn-accent); }
+
+}

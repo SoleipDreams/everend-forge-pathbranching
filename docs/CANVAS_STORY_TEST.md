@@ -1,4 +1,4 @@
-# Story testing in the canvas
+# Play Mode in the canvas
 
 Story testing belongs beside the canvas layer controls, rather than in a
 workspace tab or side panel. The writer and canvas remain operable throughout a
@@ -28,17 +28,30 @@ state, trace or window geometry into the narrative document.
 
 ## Preview and debug
 
-The compact preview begins at the minimap's lower-left position. It shows title,
-speaker, content, choices, Continue and the existing parameterized actions.
+The playback window is named `Play Mode [Story name]` and begins at the minimap's
+lower-left position. It presents a simple story screen with a scene heading,
+character portrait, speaker, dialogue box, numbered selectable responses,
+Continue and the existing parameterized actions. Narration uses the dialogue box
+without a character placeholder.
 Unavailable responses retain their configured visible/hidden behavior and
 explanations. Locate reveals the current position in the canvas. Long content
 scrolls inside the preview; moving or resizing it does not affect node layout.
 
-Debug is a separate floating inspector for the position, diagnostics, trace,
+Debug opens attached to Play Mode by default: beside the story at larger widths,
+or below it in smaller windows. Undock Debug moves it into the editor's shared
+inspector; Attach to Play Mode returns it to the playback surface, including a
+detached native playback window. It shows position, diagnostics, trace,
 conditions, effects, priorities, copies, inventories and temporary state. It
 retains Back, scenario preparation and explicit saving of a temporary state as
 an initial scenario. Incomplete debug drafts survive closing or moving a surface
 for the lifetime of its session.
+
+Portraits use the universe schema's declared portrait presentation property and
+the speech block's selected character variant. Local characters can use the same
+schema property with an image path or an imported image asset ID. Missing or
+unreadable portraits show an accessible character fallback. Presentation reads
+the run's fixed document revision; portrait URLs and Debug attachment stay out
+of runtime exports.
 
 Copy property additions and inheritance changes remain drafts until Apply, for
 both the running state and scenario preparation. Typed drafts, inherited property
@@ -52,6 +65,7 @@ Both surfaces can move and resize inside the canvas, without a scrim, or detach
 into separate native windows on Tauri. Native windows have no system title bar
 and are owned by the main editor window; they do not become globally topmost or
 modal. A small themed grip provides dragging and an explicit return to the canvas.
+The native header also provides a maximize/restore control.
 A detached surface presents the same
 owner-controlled session; closing its native window returns it to the editor
 without restarting. Stop or changing stories ends the session and closes its
@@ -69,6 +83,9 @@ queued edits only for the discarded scope, so an old window cannot restore them.
 Native windows
 must be ready before their integrated counterpart is removed. Opening failures
 leave the integrated presentation available.
+Attaching native Debug drains pending drafts before closing its separate window.
+Typing and attachment intents can retry after a concurrent snapshot rejection;
+narrative effects are never retried automatically.
 
 Auxiliary windows load presentation entries with minimal Tauri permissions. They
 do not load another universe, editor, updater or save system. UI geometry and
@@ -82,7 +99,7 @@ remain separate work.
 ## Verification record
 
 On 2026-10-08, `npm run build:core` passed and
-`node scripts/verify-story-test-controller.mjs` passed all 24 behavioral cases
+`node scripts/verify-story-test-controller.mjs` passed all 30 behavioral cases
 with no failures, skips or cancellations.
 These cover manual playback and pause gating, scenario/selection entry,
 once-per-run copy creation on returns, parameterized transfer and dialogue
@@ -94,6 +111,22 @@ copy property types without an explicit schema, explicit scenario saving with th
 run's effective actor, rejection of a dangling actor copy, typed property addition
 and inheritance drafts in both scopes, reference selector equivalence, bounded
 transport snapshots, document/export immutability and subscription cleanup.
+The additional Play Mode regressions cover attachment without changing the run,
+drafts or runtime export, fixed-revision speaker presentation, missing portrait
+fallbacks, schema portrait roles, character variants and local image asset IDs.
+Explicit Debug requests restore the shared inspector after selecting content;
+ordinary run commands and duplicate IPC requests do not steal its focus.
+
+The Play Mode update was also exercised through Playwright CLI in the real
+standalone Tauri WebView2 using the already-open universe. Loaded character
+portraits, numbered and locked responses, native playback with side-by-side
+Debug, native Debug separation/attachment, a draft retained during concurrent
+pause/typing, pause gating, subsequent dialogue and maximize/restore were checked.
+The document remained Saved. Private captures and the acceptance log are under
+`output/playwright/play-mode-*`, outside the public source. `typecheck`,
+`verify:core`, standalone and Suite source builds, and Rust checks passed. This
+update's native UI acceptance is for standalone; Suite's source build and scoped
+window capabilities were checked separately.
 
 Fixed-revision regressions also cover a data schema changing from number to text,
 changes to external functions, profiles, simulation, active profile, scenarios,

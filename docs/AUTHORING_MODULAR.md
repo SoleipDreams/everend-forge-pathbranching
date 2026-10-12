@@ -6,6 +6,57 @@ inside PathBranching. Export compilation and Unity synchronization remain a
 separate milestone. The wider [authoring closure](AUTHORING_CLOSURE.md) checklist
 must not be marked complete from this delivery alone.
 
+## Inspector integration — 2026-10-08
+
+The current authoring entry point is the existing inspector. **Write story /
+Escribir historia** opens its narrative section, and Inspect, writing shortcuts,
+logic shortcuts and references use the same navigation. The original vertical
+stack of object tabs is retained, including saved groups and close-above/below/
+others menus. One object is expanded at a time; the other object headers remain
+available. Expanding height uses the useful editing height independently of
+expanding width. Opening a stacked object restores its last valid section
+without locating it or changing canvas zoom.
+
+Event Path and Dialogue Narrative sequence now use **Conversation**; speech
+Content uses the same row editor. See [Conversation authoring](CONVERSATION_AUTHORING.md)
+for safe segments, keyboard input, shared blocks and the native checks.
+
+Writing belongs to **Conversation / Content**, responses to
+**Choices**, and continuations, ordered routes, Else and returns to
+**Connections**. **Overview**, **Conditions** and **Consequences** retain their
+object-specific responsibilities. Conditions and effects are available in both
+Visual and Logic. Choices includes TEXT/ICON presentation, per-response icons,
+ordering, locked/hidden behavior and unavailable text such as `????`.
+The modular narrative builder remains primary; **Source** is its advanced
+Apply/Revert subview. No separate Story authoring panel is mounted.
+
+**Assets** opens entities and their configured uses, capabilities, inheritance
+and initial copies in this inspector. **Logic** provides searchable Actions and
+Rules lists with creation, then opens their complete forms in the same inspector
+sections. These forms preserve scopes, priorities, overrides and returns.
+Missing focused references produce a diagnostic rather than selecting the first
+available object. Targets are resolved from the document even outside the
+visible canvas. Incomplete fields retain the existing recoverable draft keys.
+
+Both canvas modes retain node type, name and context. Logic summaries represent
+actual conditions and effects; empty states belong to inspection. Ordered gates
+include routes with effects but no condition, keep Else last and identify their
+destinations. Returns remain distinct. Changing mode preserves manual layout,
+node IDs and connection handles.
+
+Focused standalone Tauri checks used Playwright CLI attached to the actual
+WebView2. An invalid action-name draft survived section/object changes and reload;
+two stacked objects retained one expanded editor, section memory and unchanged
+zoom. Native read-only loading of the current SINPO document passed 23 saved
+scenarios and 125 assertions. TypeScript checking passed after the response
+presentation/order controls and missing-rule diagnostic were added.
+
+The full Tauri interaction and viewport acceptance for this integration remain
+pending: 1440 × 900, 1280 × 720 and 900 × 700, in EN/ES and light/dark, including
+the test-panel layout, authoring, groups, drafts, undo, save and reopen. Existing
+verification records below describe the 2026-10-07 modular delivery and do not
+substitute for this pass. Export features and Unity remain outside this UX work.
+
 ## Use the editor
 
 Open a universe and select an event or dialogue on the canvas, then choose
@@ -172,6 +223,10 @@ console logs and CLI flow scripts. The synthetic vaults are
 no production universe edits and are kept local rather than committed.
 
 ## Remaining boundaries
+
+- [Authoring export preservation](AUTHORING_EXPORTS.md) now retains the modular
+  model in Enhanced and diagnoses unsupported Ink execution. The execution
+  equivalence limitation below still applies to the existing export consumers.
 
 - New modular authoring logic has no promised equivalence in existing exports.
   Export/flag compilation and Unity are deferred. Existing export tests remain

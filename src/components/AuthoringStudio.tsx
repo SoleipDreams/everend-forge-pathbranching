@@ -45,7 +45,7 @@ function OverrideSelect({ label, value, inherited, onChange }: { label: string; 
 
 }
 
-export function EntityUsesEditor({ project, onMutation, initialEntityId, onLocate }: { project: BranchingProject; onMutation: AuthoringMutation; initialEntityId?: string; onLocate?: (id:string)=>void }) {
+export function EntityUsesEditor({ project, onMutation, initialEntityId, initialCopyId, onLocate, section, focused = false }: { project: BranchingProject; onMutation: AuthoringMutation; initialEntityId?: string; initialCopyId?: string; onLocate?: (id:string)=>void; section?: "uses" | "copies" | "connections"; focused?: boolean }) {
 
   const es = useInterfaceLocale() === "es";
 
@@ -55,13 +55,13 @@ export function EntityUsesEditor({ project, onMutation, initialEntityId, onLocat
 
   useEffect(()=>{ if(initialEntityId)setChosen(initialEntityId); },[initialEntityId]);
 
-  const entityId = all.includes(chosen) ? chosen : all[0];
+  const entityId = focused ? initialEntityId : all.includes(chosen) ? chosen : all[0];
 
   const [error, setError] = useState("");
 
   const entity = entityId ? entityDefinition(project, entityId) : undefined;
 
-  if (!entity || !entityId) return <p>{es ? "Crea o importa una entidad desde Recursos para configurar sus usos." : "Create or import an entity from Resources to configure its uses."}</p>;
+  if (!entity || !entityId) return <p role="status">{focused ? es ? "Esta referencia de entidad ya no existe." : "This entity reference no longer exists." : es ? "Crea o importa una entidad desde Recursos para configurar sus usos." : "Create or import an entity from Resources to configure its uses."}</p>;
 
   const override = project.entityOverrides?.find(o => o.entityId === entityId);
 
@@ -104,11 +104,11 @@ export function EntityUsesEditor({ project, onMutation, initialEntityId, onLocat
 
   return <section className="authoring-studio" data-authoring-id={entityId} tabIndex={-1} aria-label={es ? "Usos en esta historia" : "Uses in this story"}>
 
-    <label className="field-label">{es ? "Entidad" : "Entity"}<select value={entityId} onChange={e => { setChosen(e.target.value); setError(""); }}>{all.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
+    {!focused ? <label className="field-label">{es ? "Entidad" : "Entity"}<select value={entityId} onChange={e => { setChosen(e.target.value); setError(""); }}>{all.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label> : null}
 
     <p className="authoring-origin">{es ? "Origen" : "Origin"}: {entity.source === "canon" ? "Canon" : es ? "Local de esta historia" : "Local to this story"} · {typeId ?? (es ? "Sin tipo" : "No type")}</p>
 
-    <details><summary>{es ? "Configurar el tipo reutilizable" : "Configure reusable type"}</summary><p>{es ? "Afecta a las entidades de este tipo en esta historia; las excepciones individuales prevalecen." : "Applies to this type in this story; individual exceptions take precedence."}</p>
+    {!section || section === "uses" ? <><details><summary>{es ? "Configurar el tipo reutilizable" : "Configure reusable type"}</summary><p>{es ? "Afecta a las entidades de este tipo en esta historia; las excepciones individuales prevalecen." : "Applies to this type in this story; individual exceptions take precedence."}</p>
 
       {(["grantable", "container", "location"] as const).map(key => <label className="field-label" key={key}><input type="checkbox" checked={type?.[key] ?? false} onChange={e => void configureType({[key]:e.target.checked})} />{es ? ({ grantable: "Puede poseerse", container: "Puede contener copias", location: "Puede ser ubicación" })[key] : key}</label>)}
 
@@ -136,11 +136,11 @@ export function EntityUsesEditor({ project, onMutation, initialEntityId, onLocat
 
       return <fieldset key={propertyId}><legend>{project.localExplorerProperties?.find(p => p.id === propertyId)?.label ?? key}</legend>{(["conditionReadable", "actionWritable"] as const).map(flag => <div key={flag}><label className="field-label"><input type="checkbox" checked={base?.[flag] ?? false} onChange={e=>void configureProperty(propertyId,flag,e.target.checked)}/>{flag==='conditionReadable'?es?'Habilitar consulta compartida':'Enable shared reading':es?'Habilitar modificación compartida':'Enable shared writing'}</label><OverrideSelect label={flag === "conditionReadable" ? es ? "Consultar en condiciones" : "Read in conditions" : es ? "Cambiar con consecuencias" : "Write in effects"} value={own?.[flag]} inherited={base?.[flag] === true} onChange={value => void update({ properties: { ...override?.properties, [propertyId]: { ...own, [flag]: value } } })} /></div>)}</fieldset>;
 
-    })}</details>
+    })}</details></> : null}
 
-    <fieldset><legend>{es ? "Copias iniciales" : "Initial copies"}</legend>
+    {!section || section === "copies" ? <fieldset><legend>{es ? "Copias iniciales" : "Initial copies"}</legend>
 
-      {copies.map(copy => <details key={copy.id} data-authoring-id={copy.id} tabIndex={-1} open={copy.id===initialEntityId}><summary>{copy.name ?? entity.name}</summary><AuthoringTextField projectId={project.projectId} elementId={copy.id} field="name" label={es?'Nombre de la copia':'Copy name'} value={copy.name ?? ''} onCommit={name=>editCopy(copy.id,{name})}/><EntityOwnerPicker project={project} value={copy.owner} onChange={owner => editCopy(copy.id, { owner })} /><InstancePropertyFields project={project} instance={copy} draftId={copy.id} onChange={patch => editCopy(copy.id, patch)} />
+      {copies.filter(copy => !initialCopyId || copy.id === initialCopyId).map(copy => <details key={copy.id} data-authoring-id={copy.id} tabIndex={-1} open={copy.id===initialCopyId}><summary>{copy.name ?? entity.name}</summary><AuthoringTextField projectId={project.projectId} elementId={copy.id} field="name" label={es?'Nombre de la copia':'Copy name'} value={copy.name ?? ''} onCommit={name=>editCopy(copy.id,{name})}/><EntityOwnerPicker project={project} value={copy.owner} onChange={owner => editCopy(copy.id, { owner })} /><InstancePropertyFields project={project} instance={copy} draftId={copy.id} onChange={patch => editCopy(copy.id, patch)} />
 
         <UsageReferences project={project} id={copy.id} onLocate={onLocate} />
 
@@ -148,19 +148,19 @@ export function EntityUsesEditor({ project, onMutation, initialEntityId, onLocat
 
       </details>)}
 
-      <button type="button" onClick={() => void onMutation(current => ({ ...current, entityInstances: [...(current.entityInstances ?? []), { id: `instance:${crypto.randomUUID()}`, entityId, name: `${entity.name} ${copies.length + 1}` }] }))}>{es ? "Crear copia inicial" : "Create initial copy"}</button>
+      {!initialCopyId ? <button type="button" onClick={() => void onMutation(current => ({ ...current, entityInstances: [...(current.entityInstances ?? []), { id: `instance:${crypto.randomUUID()}`, entityId, name: `${entity.name} ${copies.length + 1}` }] }))}>{es ? "Crear copia inicial" : "Create initial copy"}</button> : null}
 
-    </fieldset>
+    </fieldset> : null}
 
     {error ? <p className="condition-field-error" role="alert">{conditionDiagnosticMessage(error, es ? "es" : "en")}</p> : null}
 
-    <UsageReferences project={project} id={entityId} onLocate={onLocate} />
+    {!section || section === "connections" ? <UsageReferences project={project} id={initialCopyId ?? entityId} onLocate={onLocate} /> : null}
 
   </section>;
 
 }
 
-export function ActionsEditor({ project, onMutation, targets, initialId }: { project: BranchingProject; onMutation: AuthoringMutation; targets: AuthoringTarget[]; initialId?: string }) {
+export function ActionsEditor({ project, onMutation, targets, initialId, section, focused = false }: { project: BranchingProject; onMutation: AuthoringMutation; targets: AuthoringTarget[]; initialId?: string; section?: "overview" | "conditions" | "connections"; focused?: boolean }) {
 
   const es = useInterfaceLocale() === "es";
 
@@ -170,7 +170,7 @@ export function ActionsEditor({ project, onMutation, targets, initialId }: { pro
 
   const actions = project.narrativeActions ?? [];
 
-  const action = actions.find(a => a.id === active) ?? actions[0];
+  const action = actions.find(a => a.id === (focused ? initialId : active)) ?? (focused ? undefined : actions[0]);
 
   const update = (patch: Partial<NarrativeAction>) => { if (action) void onMutation(current => ({ ...current, narrativeActions: current.narrativeActions?.map(a => a.id === action.id ? { ...a, ...patch } : a) })); };
 
@@ -180,9 +180,9 @@ export function ActionsEditor({ project, onMutation, targets, initialId }: { pro
 
   const types = [...new Set(entities.map(id => entityDefinition(project, id)?.typeId).filter((id): id is string => Boolean(id)))];
 
-  return <section className="authoring-studio" data-authoring-id={action?.id} tabIndex={-1}><div className="authoring-action-templates">{(es ? ["Hablar", "Examinar", "Usar", "Entregar"] : ["Talk", "Examine", "Use", "Give"]).map(name => <button type="button" key={name} onClick={() => create(name)}>{name} +</button>)}<button type="button" onClick={() => create(es ? "Nueva acción" : "New action")}>{es ? "Acción propia +" : "Custom action +"}</button></div>
+  return <section className="authoring-studio" data-authoring-id={action?.id} tabIndex={-1}>{!focused ? <div className="authoring-action-templates">{(es ? ["Hablar", "Examinar", "Usar", "Entregar"] : ["Talk", "Examine", "Use", "Give"]).map(name => <button type="button" key={name} onClick={() => create(name)}>{name} +</button>)}<button type="button" onClick={() => create(es ? "Nueva acción" : "New action")}>{es ? "Acción propia +" : "Custom action +"}</button></div> : null}
 
-    {action ? <><label className="field-label">{es ? "Acción" : "Action"}<select value={action.id} onChange={e => setActive(e.target.value)}>{actions.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label><AuthoringTextField projectId={project.projectId} elementId={action.id} field="name" label={es ? "Nombre de la acción" : "Action name"} value={action.name} validate={value => value.trim() ? undefined : es ? "El nombre es obligatorio." : "A name is required."} onCommit={name => update({ name })} />
+    {action ? <>{!focused ? <label className="field-label">{es ? "Acción" : "Action"}<select value={action.id} onChange={e => setActive(e.target.value)}>{actions.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label> : null}{!section || section === "overview" ? <><AuthoringTextField projectId={project.projectId} elementId={action.id} field="name" label={es ? "Nombre de la acción" : "Action name"} value={action.name} validate={value => value.trim() ? undefined : es ? "El nombre es obligatorio." : "A name is required."} onCommit={name => update({ name })} />
 
       <label className="field-label">{es ? "Disponible para" : "Available for"}<select value={action.entityId ? `entity:${action.entityId}` : action.typeId ? `type:${action.typeId}` : ""} onChange={e => update(e.target.value.startsWith("entity:") ? { entityId: e.target.value.slice(7), typeId: undefined } : { entityId: undefined, typeId: e.target.value.slice(5) || undefined })}><option value="">{es ? "Cualquier entidad" : "Any entity"}</option><optgroup label={es ? "Tipos" : "Types"}>{types.map(id => <option key={id} value={`type:${id}`}>{id.replace(/^type:/, "")}</option>)}</optgroup><optgroup label={es ? "Entidad concreta" : "Specific entity"}>{entities.map(id => <option key={id} value={`entity:${id}`}>{entityDefinition(project, id)?.name ?? id}</option>)}</optgroup></select></label>
 
@@ -192,20 +192,20 @@ export function ActionsEditor({ project, onMutation, targets, initialId }: { pro
 
       <label className="field-label"><input type="checkbox" checked={action.requiresTarget ?? false} onChange={e => update({ requiresTarget: e.target.checked })} />{es ? "Elegir destinatario al ejecutarla" : "Choose recipient when running"}</label>
 
-      <LogicConditionEditor project={project} draftId={action.id} value={action.when} onChange={when => update({ when })} label={es ? "Cuándo está disponible" : "Availability"} />
+      </> : null}
+      {!section || section === "conditions" ? <>
+        <LogicConditionEditor project={project} draftId={action.id} value={action.when} onChange={when => update({ when })} label={es ? "Disponible si" : "Available if"} />
+        <details open={Boolean(action.effects?.length)}><summary>{es ? "Cambios al ejecutar la acción" : "Changes when the action runs"}</summary><NarrativeEffectEditor project={project} draftId={action.id} contextEntityId={action.entityId ?? entities.find(id => entityDefinition(project, id)?.typeId?.replace(/^type:/, "") === action.typeId?.replace(/^type:/, ""))} value={action.effects} onChange={effects => update({ effects })} /><RepeatPicker value={action.repeat} onChange={repeat => update({ repeat })} /></details>
+      </> : null}
 
-      <NarrativeEffectEditor project={project} draftId={action.id} contextEntityId={action.entityId ?? entities.find(id => entityDefinition(project, id)?.typeId?.replace(/^type:/, "") === action.typeId?.replace(/^type:/, ""))} value={action.effects} onChange={effects => update({ effects })} />
-
-      <TargetPicker targets={targets} value={action.targetNodeId} onChange={targetNodeId => update({ targetNodeId })} />
+      {!section || section === "connections" ? <><TargetPicker targets={targets} value={action.targetNodeId} onChange={targetNodeId => update({ targetNodeId })} />
 
       {action.targetNodeId ? <label className="field-label">{es ? "Al terminar" : "On completion"}<select value={action.navigation ?? "call"} onChange={e => update({ navigation: e.target.value as "call" | "jump" })}><option value="call">{es ? "Volver al punto interrumpido" : "Return to interrupted point"}</option><option value="jump">{es ? "Continuar por el nuevo camino" : "Continue on the new path"}</option></select></label> : null}
 
-      <RepeatPicker value={action.repeat} onChange={repeat => update({ repeat })} />
+      <UsageReferences project={project} id={action.id} /></> : null}
+      {!section || section === "overview" ? <details><summary>{es ? "Más opciones" : "More options"}</summary><button type="button" className="danger" disabled={entityUsages(project, action.id).length > 0} onClick={() => void onMutation(current => ({ ...current, narrativeActions: current.narrativeActions?.filter(a => a.id !== action.id) }))}>{es ? "Eliminar acción" : "Remove action"}</button></details> : null}
 
-      <UsageReferences project={project} id={action.id} />
-      <button type="button" className="danger" disabled={entityUsages(project, action.id).length > 0} onClick={() => void onMutation(current => ({ ...current, narrativeActions: current.narrativeActions?.filter(a => a.id !== action.id) }))}>{es ? "Eliminar acción" : "Remove action"}</button>
-
-    </> : <p>{es ? "Crea una acción para dar comportamientos reutilizables a tus entidades." : "Create an action to give entities reusable behavior."}</p>}
+    </> : <p>{focused ? es ? "Esta referencia de acción ya no existe." : "This action reference no longer exists." : es ? "Crea una acción para dar comportamientos reutilizables a tus entidades." : "Create an action to give entities reusable behavior."}</p>}
 
   </section>;
 
@@ -215,7 +215,7 @@ export function TargetPicker({ targets, value, onChange }: { targets: AuthoringT
 
   const es = useInterfaceLocale() === "es";
 
-  return <label className="field-label">{es ? "Diálogo o destino" : "Dialogue or destination"}<select value={value ?? ""} onChange={e => onChange(e.target.value || undefined)}><option value="">{es ? "Mantener el camino actual" : "Keep current path"}</option>{value && !targets.some(t => t.id === value) ? <option value={value}>{es ? "Destino desaparecido" : "Missing destination"} · {value}</option> : null}{targets.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></label>;
+  return <label className="field-label">{es ? "Conversación o destino" : "Conversation or destination"}<select value={value ?? ""} onChange={e => onChange(e.target.value || undefined)}><option value="">{es ? "Mantener el camino actual" : "Keep current path"}</option>{value && !targets.some(t => t.id === value) ? <option value={value}>{es ? "Destino desaparecido" : "Missing destination"} · {value}</option> : null}{targets.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select></label>;
 
 }
 
@@ -227,7 +227,7 @@ export function RepeatPicker({ value, onChange }: { value?: "once" | "each-entry
 
 }
 
-export function RulesEditor({ project, eventId, dialogueId, targets, onMutation, initialId }: { project: BranchingProject; eventId?: string; dialogueId?: string; targets: AuthoringTarget[]; onMutation: AuthoringMutation; initialId?: string }) {
+export function RulesEditor({ project, eventId, dialogueId, targets, onMutation, initialId, section, focused = false }: { project: BranchingProject; eventId?: string; dialogueId?: string; targets: AuthoringTarget[]; onMutation: AuthoringMutation; initialId?: string; section?: "overview" | "conditions" | "connections"; focused?: boolean }) {
 
   const es = useInterfaceLocale() === "es";
 
@@ -237,26 +237,26 @@ export function RulesEditor({ project, eventId, dialogueId, targets, onMutation,
 
   const rules = [...(project.narrativeRules ?? [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 
-  const rule = rules.find(r => r.id === active) ?? rules[0];
+  const rule = rules.find(r => r.id === (focused ? initialId : active)) ?? (focused ? undefined : rules[0]);
 
   const update = (patch: Partial<NarrativeRule>) => { if (rule) void onMutation(current => ({ ...current, narrativeRules: current.narrativeRules?.map(r => r.id === rule.id ? { ...r, ...patch } : r) })); };
 
-  return <section className="authoring-studio" data-authoring-id={rule?.id} tabIndex={-1}><button type="button" onClick={() => { const id = `rule:${crypto.randomUUID()}`; void onMutation(current => ({ ...current, narrativeRules: [...(current.narrativeRules ?? []), { id, name: es ? "Nueva regla" : "New rule", trigger: "enter", scope: dialogueId ? { kind: "dialogue", id: dialogueId } : eventId ? { kind: "event", id: eventId } : { kind: "global" }, priority: rules.length, repeat: "once" }] })); setActive(id); }}>{es ? "Añadir regla" : "Add rule"}</button>
+  return <section className="authoring-studio" data-authoring-id={rule?.id} tabIndex={-1}>{!focused ? <button type="button" onClick={() => { const id = `rule:${crypto.randomUUID()}`; void onMutation(current => ({ ...current, narrativeRules: [...(current.narrativeRules ?? []), { id, name: es ? "Nueva regla" : "New rule", trigger: "enter", scope: dialogueId ? { kind: "dialogue", id: dialogueId } : eventId ? { kind: "event", id: eventId } : { kind: "global" }, priority: rules.length, repeat: "once" }] })); setActive(id); }}>{es ? "Añadir regla" : "Add rule"}</button> : null}
 
-    {rule ? <><label className="field-label">{es ? "Regla · prioridad" : "Rule · priority"}<select value={rule.id} onChange={e => setActive(e.target.value)}>{rules.map(r => <option key={r.id} value={r.id}>{r.priority ?? 0} · {r.name}</option>)}</select></label><AuthoringTextField projectId={project.projectId} elementId={rule.id} field="name" label={es ? "Nombre de la regla" : "Rule name"} value={rule.name} validate={value => value.trim() ? undefined : es ? "El nombre es obligatorio." : "A name is required."} onCommit={name => update({ name })} />
+    {rule ? <>{!focused ? <label className="field-label">{es ? "Regla · prioridad" : "Rule · priority"}<select value={rule.id} onChange={e => setActive(e.target.value)}>{rules.map(r => <option key={r.id} value={r.id}>{r.priority ?? 0} · {r.name}</option>)}</select></label> : null}{!section || section === "overview" ? <><AuthoringTextField projectId={project.projectId} elementId={rule.id} field="name" label={es ? "Nombre de la regla" : "Rule name"} value={rule.name} validate={value => value.trim() ? undefined : es ? "El nombre es obligatorio." : "A name is required."} onCommit={name => update({ name })} />
 
       <label className="field-label">{es ? "Momento" : "Trigger"}<select value={rule.trigger} onChange={e => update({ trigger: e.target.value as NarrativeRule["trigger"] })}><option value="enter">{es ? "Al entrar" : "On entry"}</option><option value="continue">{es ? "Al continuar" : "On continue"}</option><option value="stateChanged">{es ? "Al cambiar inventario o estado" : "On inventory or state change"}</option></select></label>
 
       <label className="field-label">{es ? "Alcance" : "Scope"}<select value={JSON.stringify(rule.scope)} onChange={e => update({ scope: JSON.parse(e.target.value) as NarrativeRule["scope"] })}><option value={JSON.stringify({ kind: "global" })}>{es ? "Toda la historia · global explícita" : "Whole story · explicit global"}</option>{project.events.map(e => <option key={e.id} value={JSON.stringify({ kind: "event", id: e.id })}>{e.name}</option>)}{targets.filter(target => target.kind !== "event" && target.kind !== "dialogue").map(target => <option key={target.id} value={JSON.stringify({kind:"node",id:target.id})}>{target.label}</option>)}{project.events.flatMap(e => (e.dialogues ?? []).map(d => <option key={`${e.id}:${d.id}`} value={JSON.stringify({ kind: "dialogue", id: d.id })}>{e.name} / {d.title}</option>))}</select></label>
 
-      <AuthoringValueField project={project} elementId={rule.id} field="priority" label={es ? "Prioridad · menor primero" : "Priority · lowest first"} type="number" value={rule.priority ?? 0} onCommit={priority => update({ priority: priority as number })} /><RepeatPicker value={rule.repeat} onChange={repeat => update({ repeat })} />
+      <AuthoringValueField project={project} elementId={rule.id} field="priority" label={es ? "Prioridad · menor primero" : "Priority · lowest first"} type="number" value={rule.priority ?? 0} onCommit={priority => update({ priority: priority as number })} /><RepeatPicker value={rule.repeat} onChange={repeat => update({ repeat })} /></> : null}
 
-      <LogicConditionEditor project={project} draftId={rule.id} value={rule.when} onChange={when => update({ when })} label={es ? "Si se cumple" : "When satisfied"} /><NarrativeEffectEditor project={project} draftId={rule.id} value={rule.effects} onChange={effects => update({ effects })} /><TargetPicker targets={targets} value={rule.targetNodeId} onChange={targetNodeId => update({ targetNodeId })} />
+      {!section || section === "conditions" ? <><LogicConditionEditor project={project} draftId={rule.id} value={rule.when} onChange={when => update({ when })} label={es ? "Si se cumple" : "When satisfied"} /><details open={Boolean(rule.effects?.length)}><summary>{es ? "Cambios cuando se aplica la regla" : "Changes when the rule applies"}</summary><NarrativeEffectEditor project={project} draftId={rule.id} value={rule.effects} onChange={effects => update({ effects })} /></details></> : null}{!section || section === "connections" ? <><TargetPicker targets={targets} value={rule.targetNodeId} onChange={targetNodeId => update({ targetNodeId })} />
 
-      <UsageReferences project={project} id={rule.id} />
-      <button type="button" className="danger" disabled={entityUsages(project, rule.id).length > 0} onClick={() => void onMutation(current => ({ ...current, narrativeRules: current.narrativeRules?.filter(r => r.id !== rule.id) }))}>{es ? "Eliminar regla" : "Remove rule"}</button>
+      <UsageReferences project={project} id={rule.id} /></> : null}
+      {!section || section === "overview" ? <details><summary>{es ? "Más opciones" : "More options"}</summary><button type="button" className="danger" disabled={entityUsages(project, rule.id).length > 0} onClick={() => void onMutation(current => ({ ...current, narrativeRules: current.narrativeRules?.filter(r => r.id !== rule.id) }))}>{es ? "Eliminar regla" : "Remove rule"}</button></details> : null}
 
-    </> : <p>{es ? "Las reglas cambian estados y caminos en momentos explícitos." : "Rules change states and routes at explicit moments."}</p>}
+    </> : focused ? <p className="authoring-field-error" role="alert">{es ? "Referencia de regla desaparecida" : "Missing rule reference"} · {initialId}</p> : <p>{es ? "Las reglas cambian estados y caminos en momentos explícitos." : "Rules change states and routes at explicit moments."}</p>}
 
   </section>;
 

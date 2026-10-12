@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
+import { useApplicationActive } from "./useApplicationActivity.js";
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), summary';
 
 /** Modal focus handling, or Escape/restoration for a non-modal guide. */
 export function useOverlayFocus(
@@ -10,19 +11,32 @@ export function useOverlayFocus(
   modal = true,
   initialFocusSelector?: string,
 ) {
+  const applicationActive = useApplicationActive();
+  const applicationActiveRef = useRef(applicationActive);
+  applicationActiveRef.current = applicationActive;
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!active || !container) return;
+    if (!applicationActive || !active || !container) return;
     let restoreTarget = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
     let receivedFocus = modal;
+    const visible = (element: HTMLElement) => {
+      if (!element.getClientRects().length || element.closest("[hidden]")) return false;
+      for (let parent = element.parentElement; parent && parent !== container; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement && !parent.open && !parent.querySelector(":scope > summary")?.contains(element)) return false;
+      }
+      return true;
+    };
     const focusableElements = () => Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE))
-      .filter((element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true");
-    const focusFirst = () => (container.querySelector<HTMLElement>(initialFocusSelector ?? "[data-overlay-focus]") ?? focusableElements()[0] ?? container).focus();
+      .filter((element) => visible(element) && element.getAttribute("aria-hidden") !== "true");
+    const focusFirst = () => {
+      const preferred = container.querySelector<HTMLElement>(initialFocusSelector ?? "[data-overlay-focus]");
+      (preferred && visible(preferred) ? preferred : focusableElements()[0] ?? container).focus();
+    };
 
     const handleFocus = (event: FocusEvent) => {
       if (container.contains(event.target as Node)) {
@@ -59,7 +73,7 @@ export function useOverlayFocus(
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("focusin", handleFocus, true);
-      if (receivedFocus && restoreTarget?.isConnected) restoreTarget.focus();
+      if (applicationActiveRef.current && receivedFocus && restoreTarget?.isConnected) restoreTarget.focus();
     };
-  }, [containerRef, active, modal, initialFocusSelector]);
+  }, [containerRef, active, applicationActive, modal, initialFocusSelector]);
 }

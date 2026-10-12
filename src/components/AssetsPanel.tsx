@@ -1,7 +1,9 @@
+import { useApplicationEffect } from "./useApplicationActivity.js";
 import { BookOpen, ChevronDown, ChevronRight, CircleDot, FileImage, FileText, Film, FolderUp, MapPin, MoreHorizontal, Music, Package, Plus, Search, Trash2, UserRound, X } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { Selection } from "../appTypes.js";
 import type { AssetKind, BranchingProject, CanonRef, LocalExplorerEntity, ProjectAsset, ProjectDataObject } from "../domain.js";
+import { ExplorerMenu, ExplorerPane, useExplorerOverlayBounds } from "./ExplorerPresentation.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
 import { AccessibleTabs } from "./AccessibleTabs.js";
 import { panelUiText, useInterfaceLocale } from "../i18n.js";
@@ -116,6 +118,7 @@ export function AssetsPanel({
   const [createEntityMenu, setCreateEntityMenu] = useState<{ top: number; left: number } | undefined>();
   const [newEntityName, setNewEntityName] = useState("");
   const createEntityRef = useRef<HTMLDivElement | null>(null);
+  useExplorerOverlayBounds(createEntityRef, Boolean(createEntityMenu));
   useOverlayFocus(createEntityRef, Boolean(createEntityMenu), () => setCreateEntityMenu(undefined));
   const pendingInspectorClickRef = useRef<{ rowId: string; timer: number } | undefined>(undefined);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -176,7 +179,7 @@ export function AssetsPanel({
     }
   }, [explorerGroups, isInitialized]);
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!createEntityMenu) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (event.target instanceof Node && !createEntityRef.current?.contains(event.target)) {
@@ -194,7 +197,7 @@ export function AssetsPanel({
     };
   }, [createEntityMenu]);
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!actionsForId) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Node | null;
@@ -255,11 +258,10 @@ export function AssetsPanel({
   return (
     <WorkspaceSidePanel title={t("Assets")} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
       <AccessibleTabs className="explorer-view-tabs" ariaLabel={t("Asset views")} value={view} onChange={(value) => setView(value as "entities" | "files")} tabs={[{id:"entities",label:t("Entities")},{id:"files",label:t("Files")}]} />
-      {view === "entities" ? (
-        <>
+      <ExplorerPane active={view === "entities"}>
           <div className="explorer-toolbar">
             <label className="explorer-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search entities")} placeholder={t("Search entities")} /></label>
-            <button type="button" title={t("New local entity")} onClick={(event) => {
+            <button type="button" aria-label={t("New local entity")} title={t("New local entity")} onClick={(event) => {
               if (createEntityMenu) {
                 setCreateEntityMenu(undefined);
                 return;
@@ -274,8 +276,8 @@ export function AssetsPanel({
                 left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
               });
             }}><Plus size={15} /></button>
-            <button type="button" title={t("Expand all entities")} onClick={expandAllAssets}><ChevronDown size={15} /></button>
-            <button type="button" title={t("Collapse all entities")} onClick={collapseAllAssets}><ChevronRight size={15} /></button>
+            <button type="button" aria-label={t("Expand all entities")} title={t("Expand all entities")} onClick={expandAllAssets}><ChevronDown size={15} /></button>
+            <button type="button" aria-label={t("Collapse all entities")} title={t("Collapse all entities")} onClick={collapseAllAssets}><ChevronRight size={15} /></button>
           </div>
           <AccessibleTabs className="explorer-filter-row" ariaLabel={t("Entity origin filter")} value={itemFilter} onChange={(value) => setItemFilter(value as typeof itemFilter)} tabs={(["all", "canon", "local", "data"] as const).map((id) => ({id,label:t(id === "all" ? "All" : id === "data" ? "Data" : id === "canon" ? "Canon" : "Local")}))} />
           <div className="explorer-tree asset-explorer-tree">
@@ -306,7 +308,7 @@ export function AssetsPanel({
                           </button>
                           {row.kind === "local" ? (
                             <div className="explorer-row-actions">
-                              <button type="button" className="icon-only" title={`${t("Actions for")} ${row.label}`} onClick={(event) => {
+                              <button type="button" className="icon-only" aria-label={`${t("Actions for")} ${row.label}`} aria-haspopup="menu" aria-expanded={actionsForId?.id === row.id} title={`${t("Actions for")} ${row.label}`} onClick={(event) => {
                                 if (actionsForId?.id === row.id) { setActionsForId(undefined); return; }
                                 const rect = event.currentTarget.getBoundingClientRect();
                                 const width = 180;
@@ -322,12 +324,12 @@ export function AssetsPanel({
                                 <MoreHorizontal size={15} />
                               </button>
                               {actionsForId?.id === row.id ? (
-                                <div className="explorer-row-menu" style={{ top: actionsForId.top, left: actionsForId.left }}>
-                                  <button type="button" onClick={() => { onOpenInspector(explorerSelection(row)); setActionsForId(undefined); }}>{t("Open inspector")}</button>
-                                  <button type="button" className="danger" onClick={() => { onDeleteEntity(row.id); setActionsForId(undefined); }}>
+                                <ExplorerMenu label={`${t("Actions for")} ${row.label}`} style={{ top: actionsForId.top, left: actionsForId.left }} onClose={() => setActionsForId(undefined)}>
+                                  <button type="button" role="menuitem" onClick={() => { onOpenInspector(explorerSelection(row)); setActionsForId(undefined); }}>{t("Open inspector")}</button>
+                                  <button type="button" role="menuitem" className="danger" onClick={() => { onDeleteEntity(row.id); setActionsForId(undefined); }}>
                                     <Trash2 size={13} /> {t("Delete local entity")}
                                   </button>
-                                </div>
+                                </ExplorerMenu>
                               ) : null}
                             </div>
                           ) : null}
@@ -402,9 +404,8 @@ export function AssetsPanel({
               </footer>
             </div>
           ) : null}
-        </>
-      ) : (
-        <>
+      </ExplorerPane>
+      <ExplorerPane active={view === "files"}>
           <div className="panel-toolbar asset-toolbar">
             <label className="asset-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search assets")} placeholder={t("Search assets")} /></label>
             <button type="button" onClick={onImport}><FolderUp size={14} /> {t("Import")}</button>
@@ -414,7 +415,7 @@ export function AssetsPanel({
               {kinds.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
             </select>
             <select value={origin} onChange={(event) => setOrigin(event.target.value as "all" | ProjectAsset["origin"])} aria-label={t("Asset origin")} >
-              <option value="all">Canon + UnCanon</option><option value="canon">Canon</option><option value="uncanon">UnCanon</option>
+              <option value="all">{t("All")}</option><option value="canon">Canon</option><option value="uncanon">UnCanon</option>
             </select>
           </div>
           <div className="asset-list">
@@ -424,8 +425,7 @@ export function AssetsPanel({
             </article>)}
             {assets.length === 0 ? <p className="panel-empty">{t("No matching assets. Imported files remain UnCanon until an explicit publication flow exists.")}</p> : null}
           </div>
-        </>
-      )}
+      </ExplorerPane>
     </WorkspaceSidePanel>
   );
 }

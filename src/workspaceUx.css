@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 .adaptive-workspace { position: relative; min-width: 0; }
 .workspace-panel-slot, .workspace-inline-content { min-width: 0; height: 100%; overflow: hidden; }
 .workspace-panel-slot .side-panel, .workspace-panel-slot .side-rail { height: 100%; width: 100%; box-sizing: border-box; }
@@ -29,3 +31,5 @@
 .app-shell > .topbar { flex: 0 0 auto; }
 .workspace-error-banner { display: flex; gap: 12px; padding: 8px 12px; color: var(--wn-danger); background: var(--wn-panel); border-bottom: 1px solid var(--wn-border); font-size: 12px; }
 .workspace-error-banner span { flex: 1; }
+
+}

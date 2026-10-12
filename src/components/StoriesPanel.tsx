@@ -1,5 +1,7 @@
+import { useExplorerOverlayBounds } from "./ExplorerPresentation.js";
+import { useApplicationEffect } from "./useApplicationActivity.js";
 import { BookOpen, FilePlus2, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { useInterfaceLocale } from "../i18n.js";
 import "../authoringControls.css";
 
@@ -25,12 +27,14 @@ function StoryActions({ label, renameLabel, deleteLabel, canRename, canDelete, o
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useExplorerOverlayBounds(menuRef, open);
   const close = (restore = false) => { setOpen(false); if (restore) triggerRef.current?.focus(); };
   const focusMenu = (last = false) => window.requestAnimationFrame(() => {
     const items = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
     (last ? items[items.length - 1] : items[0])?.focus();
   });
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
     document.addEventListener("pointerdown", outside);
@@ -56,7 +60,7 @@ function StoryActions({ label, renameLabel, deleteLabel, canRename, canDelete, o
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); focusMenu(event.key === "ArrowUp"); }
       if (event.key === "Escape") close(true);
     }}><MoreHorizontal size={16} aria-hidden="true" /></button>
-    {open ? <div id={id} role="menu" aria-label={label} className="pb-story-menu" onKeyDown={menuKey}>
+    {open ? <div ref={menuRef} id={id} role="menu" aria-label={label} className="pb-story-menu" style={{ top: Math.max(8, Math.min((triggerRef.current?.getBoundingClientRect().bottom ?? 8) + 4, window.innerHeight - 100)), right: Math.max(8, window.innerWidth - (triggerRef.current?.getBoundingClientRect().right ?? window.innerWidth - 8)), maxHeight: "calc(100vh - 16px)" }} onKeyDown={menuKey}>
       <button type="button" role="menuitem" disabled={!canRename} onClick={() => { close(true); onRename(); }}><Pencil size={14} />{renameLabel}</button>
       <button type="button" role="menuitem" className="danger" disabled={!canDelete} onClick={() => { close(true); onDelete(); }}><Trash2 size={14} />{deleteLabel}</button>
     </div> : null}

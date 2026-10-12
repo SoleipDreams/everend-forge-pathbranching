@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useApplicationEffect } from "./useApplicationActivity.js";
+import { useMemo, useState } from "react";
 import { ExternalLink, MessageSquareText, X } from "lucide-react";
 import { feedbackUrl } from "../feedback.js";
 
@@ -12,7 +13,7 @@ export function FeedbackModal({ screen, onClose, onOpenExternal }: FeedbackModal
   const [frameError, setFrameError] = useState(false);
   const sourceUrl = useMemo(() => feedbackUrl(screen), [screen]);
 
-  useEffect(() => {
+  useApplicationEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };

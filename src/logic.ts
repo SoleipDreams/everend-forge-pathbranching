@@ -44,6 +44,7 @@ export function orderedMomentEffects(moment?: LogicMoment, fallback?: Consequenc
 }
 
 export type NarrativeEvaluationState = {
+  interactionResults?: PlayerSimulationState['interactionResults'];
   externalResults?: Record<string, boolean>;
   variables?: Record<string, unknown>;
   canonStates?: Record<string, Record<string, unknown>>;
@@ -513,6 +514,7 @@ export function inferredTransitionRole(transition: Transition, siblingCount = 1)
 }
 
 export function conditionLabel(condition: Condition): string {
+  if (condition.type === 'interactionResult') return `${condition.useId} ${condition.operator} ${condition.resultId}`;
   if ("subject" in condition) {
     const predicate = condition as LogicPredicate;
     const subject = predicate.subject;

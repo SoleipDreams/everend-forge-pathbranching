@@ -512,6 +512,7 @@ export function serializeEventEvpathDetailed(
   const category = project.eventCategories?.find((item) => item.id === event.type);
 
   lines.push(`=== ${event.name || event.id} === #^${event.id}`);
+  if (event.interactionUses?.length || event.interactionBarriers?.length) lines.push('# Interactions and wait barriers are preserved in the JSON sidecar; edit them in the inspector.');
   if (event.type !== "normal") {
     lines.push(`# category: ${category?.label ?? event.type}`);
   }
@@ -1017,6 +1018,8 @@ export function applyEvpathToEvent(
 
   const warnings: string[] = [];
   const errors: EvpathParseError[] = [];
+  if ((event.interactionUses?.length || event.interactionBarriers?.length) && text.trim() === serializeEventEvpath(project, eventId).trim()) return { project, changed: false, warnings: [], errors: [] };
+  if ((event.interactionUses?.length || event.interactionBarriers?.length)) return { project, changed: false, warnings: [], errors: [{ line: 1, message: 'Este evento contiene interacciones. Edita mediante el inspector; la proyección Source no puede reconciliarlas sin pérdida.' }] };
   const { registry } = serializeEventEvpathDetailed(project, eventId);
   const primary = primaryLocaleOf(project);
 

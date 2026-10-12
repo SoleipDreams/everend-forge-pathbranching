@@ -344,6 +344,7 @@ export type LogicTypeOverride = {
 };
 
 export type PlayerSimulationState = {
+  interactionResults?: Record<string, { executionId: string; resultId: string; total?: number; rolls?: number[]; forced: boolean }>;
   inventory?: string[];
   unlockedCanonRefs?: string[];
   variables?: Record<string, unknown>;
@@ -680,6 +681,10 @@ export type EventNode = {
   logic?: LogicMoment;
   availability?: ConditionInput;
   decisions?: Decision[];
+  /** Gameplay interactions are authored data, independent of canvas placement. */
+  interactionDefinitions?: InteractionDefinition[];
+  interactionUses?: InteractionUse[];
+  interactionBarriers?: InteractionBarrier[];
   /** Optional pacing target displayed on each speech beat in this event. */
   speechBeatLengthTarget?: SpeechBeatLengthTarget;
   /** Narrative beats authored directly on the event canvas. */
@@ -691,6 +696,33 @@ export type EventNode = {
   transitions?: Transition[];
   legacyUnity?: Record<string, unknown>;
 };
+
+export type InteractionValueSource =
+  | { kind: "variable"; variableId: string }
+  | { kind: "property"; subject: LogicSubject; propertyId: string };
+export type InteractionMechanic =
+  | { kind: "dice"; count: number; sides: number; modifier: number }
+  | { kind: "skillcheck"; skill: InteractionValueSource; difficulty: number; modifier: number; dice?: { count: number; sides: number } }
+  | { kind: "qte"; key: string; durationMs: number }
+  | { kind: "custom"; description: string; parameters?: Record<string, unknown> };
+export type InteractionResult = {
+  id: string;
+  name: string;
+  /** Inclusive total ranges for dice; keys success/failure/timeout for checks and QTE. */
+  key?: "success" | "failure" | "timeout";
+  range?: { min: number; max: number };
+  effects?: NarrativeEffect[];
+};
+export type InteractionDefinition = { id: string; name: string; prompt?: StoryTextBlock & { translations?: Record<string, string> }; mechanic: InteractionMechanic; results: InteractionResult[] };
+export type InteractionUse = {
+  id: string;
+  definitionId: string;
+  dialogueId?: string;
+  /** Absent owner means an independent interaction node. */
+  ownerNodeId?: string;
+  moment: "before" | "during" | "after";
+};
+export type InteractionBarrier = { id: string; name: string; dialogueId?: string; useIds: string[] };
 
 export type DecisionType = "dialogue" | "dice" | "qte" | string;
 export type OutcomePresentationStyle = "visibleText" | "iconOnly";
@@ -722,6 +754,10 @@ export type DialogueNode = {
   availability?: ConditionInput;
   consequences?: Consequence[];
   canonRefs?: string[];
+  /** Characters present in this conversation; independent from its owning event. */
+  presentEntityRefs?: string[];
+  /** Starting place for this conversation; independent from its owning event. */
+  locationRef?: string;
 };
 
 export type DialogueMemberRef =
@@ -780,6 +816,9 @@ export type Outcome = {
   logic?: LogicMoment;
   availability?: ConditionInput;
   unavailableBehavior?: "locked" | "hidden";
+  /** Replaces the response label while unavailable; blank keeps the normal label. */
+  unavailableText?: StoryTextBlock;
+  /** Optional explanation displayed beneath a locked response. */
   lockText?: StoryTextBlock;
   conditions?: ConditionInput;
   consequences?: Consequence[];
@@ -787,6 +826,7 @@ export type Outcome = {
 
 export type Condition =
   | LogicPredicate
+  | { type: "interactionResult"; useId: string; resultId: string; operator: "==" | "!=" }
   | {
       type: "canonEntryUnlocked";
       ref: string;
@@ -965,6 +1005,8 @@ export type CanvasNodeAuthoringState = {
     x: number;
     y: number;
   };
+  /** Route gates follow their outgoing nodes until the author moves one by hand. */
+  manual?: boolean;
   collapsed?: boolean;
   auxiliaryPanels?: {
     directorNote?: boolean;
@@ -977,6 +1019,8 @@ export type CanvasNodeAuthoringState = {
 export type ScopedCanvasAuthoringState = {
   nodes?: Record<string, CanvasNodeAuthoringState>;
   routeGateSources?: string[];
+  /** Empty Entry ports explicitly added by the author in an event subcanvas. */
+  entrySlots?: string[];
   /** Empty End ports explicitly added by the author in an event subcanvas. */
   exitSlots?: string[];
   workspace?: {
@@ -1156,7 +1200,8 @@ export type ValidationFinding = {
     | "missing_event_cover_image"
     | "invalid_event_cover_image"
     | "invalid_dialogue_trigger"
-    | "invalid_scope_transition";
+    | "invalid_scope_transition"
+    | "invalid_interaction";
   severity: ValidationSeverity;
   message: string;
   id?: string;

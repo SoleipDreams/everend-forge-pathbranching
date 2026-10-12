@@ -82,6 +82,7 @@ export function initialAuthoringState(project: BranchingProject, scenario?: impo
   };
   // Player v0.4 keyed some values by their display name. IDs are authoritative.
   for (const v of project.logicVariables ?? []) if (!(v.id in (scenario?.state?.variables ?? {})) && Object.prototype.hasOwnProperty.call(base.variables ?? {}, v.name)) state.variables![v.id] = base.variables![v.name];
+  delete state.interactionResults;
   return structuredClone(migrateLegacyInstances(project, state, profileId));
 }
 export function entityUsages(project: BranchingProject, id: string): { path: string; value: unknown }[] {

@@ -254,12 +254,12 @@ function beatPathNode(
 ): PathTreeNode {
   const block = scriptBlockForBeat(project, beat);
   const content = block?.content.trim();
-  const kindLabel = beat.kind === "speech" ? "Speech Beat" : "Direction";
+  const kindLabel = beat.kind === "speech" ? "Dialogue" : "Stage direction";
   return {
     id: `beat:${event.id}:${beat.id}`,
     kind: "beat",
     label: content ? content.slice(0, 80) : `${kindLabel} ${index + 1}`,
-    subtitle: `${kindLabel}${dialogueId ? " · Dialogue" : ""}`,
+    subtitle: `${kindLabel}${dialogueId ? " · Conversation" : ""}`,
     badges: block?.characterRef || block?.speakerRef ? [block.characterRef ?? block.speakerRef ?? ""] : [],
     scope,
     selectId: `beat:${event.id}:${beat.id}`,
@@ -297,7 +297,7 @@ function decisionPathNode(
     id: `decision:${event.id}:${decision.id}`,
     kind: "decision",
     label: decision.name,
-    subtitle: `${decision.outcomes.length} outcome${decision.outcomes.length === 1 ? "" : "s"}`,
+    subtitle: `${decision.outcomes.length} option${decision.outcomes.length === 1 ? "" : "s"}`,
     badges: [decision.type],
     scope,
     selectId: `decision:${event.id}:${decision.id}`,
@@ -325,7 +325,7 @@ function buildEventPathNode(project: BranchingProject, event: EventNode, scope: 
         : start.source?.kind === "dataObject"
           ? project.projectDataObjects?.find((item) => item.id === start.source?.id)?.name ?? start.source.id
           : "Choose an interactable source",
-      subtitle: "Dialogue Trigger",
+      subtitle: "Conversation start",
       badges: start.availability ? ["conditional"] : [],
       scope: nestedScope,
       selectId: `dialogue-start:${event.id}:${start.id}`,
@@ -342,7 +342,7 @@ function buildEventPathNode(project: BranchingProject, event: EventNode, scope: 
         id: `dialogue:${event.id}:${dialogue.id}`,
         kind: "dialogue",
         label: dialogue.title,
-        subtitle: `${dialogueBeats.length} beat${dialogueBeats.length === 1 ? "" : "s"}`,
+        subtitle: `${dialogueBeats.length} line${dialogueBeats.length === 1 ? "" : "s"}`,
         badges: dialogueDecisions.length ? [`${dialogueDecisions.length} decisions`] : [],
         scope: dialogueScope,
         selectId: `dialogue-boundary:${event.id}:${dialogue.id}:input`,
@@ -363,7 +363,7 @@ function buildEventPathNode(project: BranchingProject, event: EventNode, scope: 
     badges: [
       childEvents.length ? `${childEvents.length} nested` : "",
       event.decisions?.length ? `${event.decisions.length} decisions` : "",
-      event.dialogues?.length ? `${event.dialogues.length} dialogues` : "",
+      event.dialogues?.length ? `${event.dialogues.length} conversations` : "",
     ].filter((badge): badge is string => Boolean(badge)),
     scope,
     selectId: event.id,

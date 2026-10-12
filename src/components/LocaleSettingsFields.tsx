@@ -1,3 +1,4 @@
+import { settingsContent } from "../SettingsFrame";
 import { useMemo, useState } from "react";
 import {
   customLocaleId,
@@ -25,9 +26,11 @@ function normalize(settings: LocalizationSettings): LocalizationSettings {
 
 export function LocaleSettingsFields({
   value,
+  locale = "en",
   fallbackLocale,
   onChange,
 }: {
+  locale?: "en" | "es";
   value?: LocalizationSettings;
   fallbackLocale: string;
   onChange: (value: LocalizationSettings) => void;
@@ -40,7 +43,7 @@ export function LocaleSettingsFields({
   );
   const update = (next: LocalizationSettings) => onChange(normalize(next));
 
-  return <div className="locale-settings-fields">
+  return settingsContent(<div className="locale-settings-fields">
     <label>
       <span>Primary language</span>
       <select
@@ -109,5 +112,5 @@ export function LocaleSettingsFields({
         Add invented language
       </button>
     </div>
-  </div>;
+  </div>, locale);
 }

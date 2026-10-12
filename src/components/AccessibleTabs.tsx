@@ -1,11 +1,11 @@
 import { useId, useRef, type ReactNode } from "react";
 import "../accessibleUi.css";
 
-export type AccessibleTab = { id: string; label: ReactNode; disabled?: boolean };
+export type AccessibleTab = { id: string; label: ReactNode; title?: string; disabled?: boolean };
 
 /** Automatic-activation tabs: one tab stop, arrow keys, Home and End. */
 export function AccessibleTabs({
-  value, tabs, onChange, ariaLabel, className, panelId,
+  value, tabs, onChange, ariaLabel, className, panelId, orientation = "horizontal", onTabContextMenu,
 }: {
   value: string;
   tabs: readonly AccessibleTab[];
@@ -13,18 +13,21 @@ export function AccessibleTabs({
   ariaLabel: string;
   className?: string;
   panelId?: string;
+  orientation?: "horizontal" | "vertical";
+  onTabContextMenu?: (id: string) => void;
 }) {
   const id = useId();
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const enabled = tabs.filter((tab) => !tab.disabled);
   const selected = enabled.some((tab) => tab.id === value) ? value : enabled[0]?.id;
   return (
-    <nav className={className} role="tablist" aria-label={ariaLabel} aria-orientation="horizontal">
+    <nav className={className} role="tablist" aria-label={ariaLabel} aria-orientation={orientation}>
       {tabs.map((tab) => (
         <button
           key={tab.id}
           id={`${id}-${tab.id}`}
           type="button"
+          title={tab.title}
           role="tab"
           aria-selected={selected === tab.id}
           aria-controls={panelId}
@@ -36,13 +39,19 @@ export function AccessibleTabs({
             else tabRefs.current.delete(tab.id);
           }}
           onClick={() => onChange(tab.id)}
+          onContextMenu={onTabContextMenu ? event => { event.preventDefault(); onTabContextMenu(tab.id); } : undefined}
           onKeyDown={(event) => {
-            if (!enabled.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            if (onTabContextMenu && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+              event.preventDefault(); onTabContextMenu(tab.id); return;
+            }
+            const previousKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+            const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
+            if (!enabled.length || ![previousKey, nextKey, "Home", "End"].includes(event.key)) return;
             event.preventDefault();
             const index = enabled.findIndex((candidate) => candidate.id === tab.id);
             const nextIndex = event.key === "Home" ? 0
               : event.key === "End" ? enabled.length - 1
-              : (index + (event.key === "ArrowRight" ? 1 : -1) + enabled.length) % enabled.length;
+              : (index + (event.key === nextKey ? 1 : -1) + enabled.length) % enabled.length;
             const next = enabled[nextIndex];
             tabRefs.current.get(next.id)?.focus();
             onChange(next.id);

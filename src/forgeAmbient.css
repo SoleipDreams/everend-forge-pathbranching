@@ -1,0 +1,41 @@
+/* Ambient visual trial. Kept local so standalone apps never depend on Suite.
+   Only frame/canvas backgrounds change; editing surfaces keep their contrast. */
+.pathbranching-app[data-theme] {
+  --ef-star-guide: color-mix(in srgb, var(--ef-text) 40%, var(--ef-muted));
+  /* Broad, soft colour fields and a cached 192px grain tile; no moving/filter layer. */
+  --ef-ambient-field:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .055 0'/%3E%3C/filter%3E%3Cpath fill='white' filter='url(%23g)' d='M0 0h192v192H0z'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at 12% 8%, color-mix(in srgb, var(--ef-accent) 16%, transparent), transparent 57%),
+    radial-gradient(ellipse at 84% 26%, color-mix(in srgb, var(--ef-blue, var(--wn-blue, var(--fm-blue, var(--ef-accent)))) 13%, transparent), transparent 52%),
+    radial-gradient(ellipse at 38% 88%, color-mix(in srgb, var(--ef-accent) 11%, transparent), transparent 55%),
+    radial-gradient(ellipse at 68% 64%, color-mix(in srgb, var(--ef-muted) 7%, transparent), transparent 44%);
+  --ef-ambient-size: 192px 192px, 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+  background-color: var(--ef-bg);
+  background-image: var(--ef-ambient-field);
+  background-size: var(--ef-ambient-size);
+}
+
+.pathbranching-app[data-theme] :is(.app-shell, .home-shell, .pb-authoring-workspace) {
+  background: transparent;
+}
+.pathbranching-app[data-theme] .pb-canvas-stage .react-flow {
+  background-color: var(--wn-editor-bg);
+  background-image: var(--ef-ambient-field);
+  background-size: var(--ef-ambient-size);
+}
+.pathbranching-app .react-flow__background {
+  --xy-background-color: transparent;
+  background-color: transparent;
+}
+
+.pathbranching-app[data-theme][data-ambient-background="false"] {
+  --ef-ambient-field: none;
+  background-image: none;
+}
+
+@media (forced-colors: active) {
+  .pathbranching-app[data-theme] {
+    --ef-ambient-field: none;
+    background-image: none;
+  }
+}

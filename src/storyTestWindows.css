@@ -1,3 +1,5 @@
+/* PathBranching scoped UI: safe to embed alongside the other standalone tools. */
+@scope (.pathbranching-app) {
 .story-test-detached-shell {
   height: 100dvh;
   display: flex;
@@ -9,6 +11,13 @@
   color: var(--wn-text);
   overflow: hidden;
 }
+.story-test-detached-shell:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 12px;
+}
 .story-test-detached-header {
   display: flex;
   align-items: center;
@@ -18,8 +27,12 @@
   font-size: 12px;
   user-select: none;
 }
-.story-test-native-grip { flex: 1; cursor: move; color: var(--wn-muted); }
+.story-test-native-grip { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 0; cursor: move; color: var(--wn-muted); }
+.story-test-native-grip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .story-test-detached-header button { font-size: 12px; padding: 3px 7px; }
+.story-test-detached-controls { flex-shrink: 0; }
+.story-test-detached-controls .story-test-controls { flex-wrap: wrap; }
+.story-test-detached-controls .story-test-settings { left: 0; right: auto; transform: none; }
 .story-test-detached-shell fieldset {
   padding: 0;
   margin: 0;
@@ -39,4 +52,6 @@
 .story-test-detached-shell > [role="status"] {
   margin: 0;
   color: var(--wn-muted);
+}
+
 }

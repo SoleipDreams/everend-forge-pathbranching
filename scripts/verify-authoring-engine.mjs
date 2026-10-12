@@ -111,10 +111,95 @@ test('story branching, shared paths and once-per-run entry effects survive retur
   const p2=fixture();p2.events[0].dialogues[0].beats.find(b=>b.id==='reward').logic.repeat='each-entry';
   let r=createAuthoringSession(p2);r=doCommand(p2,r,'setState',{state:{variables:{...r.state.variables,strength:5}}});r=doCommand(p2,r,'continue');r=doCommand(p2,r,'choose',{outcomeId:'open'});r=doCommand(p2,r,'continue');r=doCommand(p2,r,'continue');r=doCommand(p2,r,'choose',{outcomeId:'open'});assert.equal(r.state.entityInstances.length,4);
 });
+test('an unavailable dialogue is skipped through its ordered outgoing route and Play traces the choice',()=>{
+  const p=fixture(),dialogue=p.events[0].dialogues.find(item=>item.id==='scene');
+  dialogue.availability=strength(5);
+  p.events[0].transitions.push({id:'scene-exit',from:'dialogue:room:scene',to:'hall',mode:'fallback'});
+  const skipped=createAuthoringSession(p);
+  assert.equal(skipped.nodeId,'hall');
+  assert.equal(skipped.status,'ready');
+  assert.equal(skipped.trace.some(item=>item.kind==='enter'&&item.nodeId==='beat:room:intro'),false,'Unavailable dialogue content must not be entered.');
+  assert.ok(skipped.trace.some(item=>item.kind==='condition'&&item.nodeId==='dialogue:room:scene'&&item.message.includes('Content skipped')));
+  assert.ok(skipped.trace.some(item=>item.kind==='route'&&item.id==='scene-exit'));
+
+  const shown=createAuthoringSession(p,{id:'strong',name:'Strong',state:{variables:{strength:5}}});
+  assert.equal(shown.nodeId,'beat:room:intro','A satisfied dialogue condition keeps its authored entry.');
+});
+test('an unavailable dialogue without an outgoing route stops with an actionable Play diagnostic',()=>{
+  const p=fixture();
+  p.events[0].dialogues.find(item=>item.id==='scene').availability=strength(5);
+  const session=createAuthoringSession(p);
+  assert.equal(session.status,'blocked');
+  assert.match(session.message,/Dialogue condition failed and no outgoing route/);
+});
+test('Play traces worldbuilding properties and local visit variables on dialogue availability',()=>{
+  const p=fixture(),dialogue=p.events[0].dialogues.find(item=>item.id==='scene');
+  p.canonRefs.push({id:'canon:aahir',label:'Aahir',properties:{origin:'Aahir'}});
+  dialogue.availability={all:[
+    {type:'canonProperty',ref:'canon:aahir',property:'origin',operator:'==',value:'Aahir'},
+    {type:'variable',name:'visits',operator:'>=',value:2},
+  ]};
+  p.events[0].transitions.push({id:'scene-exit',from:'dialogue:room:scene',to:'hall',mode:'fallback'});
+
+  const returned=createAuthoringSession(p,{id:'returned-to-aahir',name:'Returned to Aahir',state:{variables:{visits:2}}});
+  assert.equal(returned.nodeId,'beat:room:intro','Matching worldbuilding data and a satisfied local visit count enter the dialogue.');
+
+  for(const [id,values,reason] of [
+    ['unknown-world', {variables:{visits:2},entityStates:{'canon:aahir':{properties:{origin:'Elsewhere'}}}}, 'Aahir worldbuilding property'],
+    ['first-visit', {variables:{visits:1}}, 'local visit variable'],
+  ]){
+    const session=createAuthoringSession(p,{id,name:id,state:values});
+    assert.equal(session.nodeId,'hall',`${reason} routes around the unavailable dialogue.`);
+    assert.equal(session.trace.some(item=>item.kind==='enter'&&item.nodeId==='beat:room:intro'),false,`${reason} does not enter dialogue content.`);
+    assert.ok(session.trace.some(item=>item.kind==='condition'&&item.nodeId==='dialogue:room:scene'&&item.message.includes('Content skipped')));
+    assert.ok(session.trace.some(item=>item.kind==='route'&&item.id==='scene-exit'));
+  }
+});
 test('blocked responses stay visible by default and can be hidden per response',()=>{
   const p=fixture();let s=createAuthoringSession(p);s=doCommand(p,s,'continue');const open=s.view.choices.find(c=>c.id==='open');assert.equal(open.status,'unsatisfied');assert.equal(open.hidden,false);
   assert.equal(doCommand(p,s,'choose',{outcomeId:'open'}).status,'blocked');
   p.events[0].decisions[0].outcomes[0].unavailableBehavior='hidden';s=createAuthoringSession(p);s=doCommand(p,s,'continue');assert.equal(s.view.choices.find(c=>c.id==='open').hidden,true);
+});
+
+test('masked responses reveal their real text only after conditions pass and mask again on return',()=>{
+  const p=fixture(),outcome=p.events[0].decisions[0].outcomes[0];
+  outcome.visibleText='Return to the village';outcome.unavailableText={format:'plain',content:'????'};
+  let s=doCommand(p,createAuthoringSession(p),'continue');
+  let choice=s.view.choices.find(c=>c.id==='open');
+  assert.equal(choice.text,'????');assert.equal(choice.masked,true);assert.equal(choice.hidden,false);assert.equal(choice.reason,undefined);
+  const denied=doCommand(p,s,'choose',{outcomeId:'open'});assert.equal(denied.status,'blocked');assert.deepEqual(denied.state,s.state);
+  s=doCommand(p,s,'setState',{state:{variables:{...s.state.variables,strength:5}}});
+  choice=s.view.choices.find(c=>c.id==='open');assert.equal(choice.text,'Return to the village');assert.equal(choice.masked,false);assert.equal(choice.status,'satisfied');
+  s=doCommand(p,s,'setState',{state:{variables:{...s.state.variables,strength:0}}});
+  choice=s.view.choices.find(c=>c.id==='open');assert.equal(choice.text,'????');assert.equal(choice.masked,true);
+  s=doCommand(p,s,'back');assert.equal(s.view.choices.find(c=>c.id==='open').text,'Return to the village');
+  assert.equal(outcome.visibleText,'Return to the village','Preview must never overwrite the authored response.');
+});
+
+test('mask keeps authored explanations separate and never treats unresolved or invalid conditions as available',()=>{
+  for(const status of ['unsatisfied','unresolved','invalid']){
+    const p=fixture(),outcome=p.events[0].decisions[0].outcomes[0];
+    outcome.unavailableText={format:'plain',content:'????'};outcome.lockText={format:'plain',content:'Discover more before choosing.'};
+    if(status==='unresolved'){p.externalFunctions=[{name:'ready',kind:'condition'}];outcome.conditions={type:'external',subject:{kind:'external',functionId:'ready'},operator:'has'};}
+    if(status==='invalid')outcome.conditions={type:'value',subject:{kind:'variable',variableId:'missing'},operator:'==',value:1};
+    const s=doCommand(p,createAuthoringSession(p),'continue'),choice=s.view.choices.find(c=>c.id==='open');
+    assert.equal(choice.status,status);assert.equal(choice.text,'????');assert.equal(choice.masked,true);assert.equal(choice.reason,outcome.lockText.content);
+    assert.equal(doCommand(p,s,'choose',{outcomeId:'open'}).status,'blocked');
+  }
+  const p=fixture(),outcome=p.events[0].decisions[0].outcomes[0];outcome.unavailableText={format:'plain',content:'  '};
+  const choice=doCommand(p,createAuthoringSession(p),'continue').view.choices.find(c=>c.id==='open');assert.equal(choice.text,'Open');assert.equal(choice.masked,false);
+});
+
+test('edited masked responses survive JSON and modular .evpath save/reopen with stable condition and identity',()=>{
+  const p=normalizeProject(fixture()),outcome=p.events[0].decisions[0].outcomes[0];
+  outcome.visibleText='Return to the village';outcome.unavailableText={format:'plain',content:'????'};outcome.lockText={format:'plain',content:'Discover more before choosing.'};
+  const json=parseProject(serializeProject(p));assert.deepEqual(json.events[0].decisions[0].outcomes[0],outcome);
+  const story={id:'masked-responses',name:p.name,path:storyPath('masked-responses')};
+  const files=serializeModularStoryFiles(json,story);files.push({relativePath:'.everend/.pathbranching/manifest.json',content:JSON.stringify({version:'0.2',activeStoryId:story.id,stories:[story]})});
+  const loaded=loadPathBranchingWorkspace(files);assert.equal(loaded.saveBlocked,false,JSON.stringify(loaded.loadWarnings));
+  const reopened=loaded.activeProject;assert.deepEqual(reopened.events[0].decisions[0].outcomes[0],outcome);
+  let s=doCommand(reopened,createAuthoringSession(reopened),'continue');assert.equal(s.view.choices.find(c=>c.id==='open').text,'????');
+  s=doCommand(reopened,s,'setState',{state:{variables:{...s.state.variables,strength:5}}});assert.equal(s.view.choices.find(c=>c.id==='open').text,outcome.visibleText);
 });
 test('explicit stateChanged rules use rising edges, context scope and stable priority',()=>{
   const p=fixture();p.narrativeRules=[{id:'first',name:'First',trigger:'stateChanged',scope:{kind:'global'},when:strength(5),targetNodeId:'hall',priority:0},{id:'second',name:'Second',trigger:'stateChanged',scope:{kind:'global'},when:strength(5),targetNodeId:'beat:room:reward',priority:1}];

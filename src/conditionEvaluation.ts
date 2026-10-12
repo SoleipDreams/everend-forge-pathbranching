@@ -177,7 +177,7 @@ export function conditionStructureIssues(input: unknown, path = 'conditions', de
   if (groups.length > 1 || groups.length && own(value,'type')) return [{path,message:'Condition must have exactly one expression kind'}];
   if (!groups.length && ['state','value','property','external'].includes(String(value.type)) && (!value.subject || typeof value.subject!=='object' || !('kind' in value.subject))) return [{path,message:'Missing condition subject'}];
   if (!groups.length && value.type === 'instanceQuery') return conditionStructureIssues(value.filters, `${path}.filters`, depth + 1);
-  if (!groups.length) return typeof value.type === 'string' && ['state','value','property','visited','external','variable','canonState','canonProperty','canonUnlocked','runtimeItem','dataObjectField','dataObjectExists','externalFunction'].includes(value.type) ? [] : [{path,message:'Unsupported predicate type; original JSON preserved'}];
+  if (!groups.length) return typeof value.type === 'string' && ['state','value','property','visited','external','interactionResult','variable','canonState','canonProperty','canonUnlocked','runtimeItem','dataObjectField','dataObjectExists','externalFunction'].includes(value.type) ? [] : [{path,message:'Unsupported predicate type; original JSON preserved'}];
   const key = groups[0], children = key === 'not' ? [value.not] : value[key];
   if (!Array.isArray(children) || !children.length || children.some(x=>x === undefined)) return [{path,message:'Condition group must not be empty'}];
   return children.flatMap((x,i)=>conditionStructureIssues(x,`${path}.${key}${key === 'not' ? '' : `[${i}]`}`,depth+1));
@@ -185,6 +185,15 @@ export function conditionStructureIssues(input: unknown, path = 'conditions', de
 function evaluateTree(input: unknown, project: ConditionProject, state: NarrativeEvaluationState, path: string): ConditionEvaluationResult {
   if (input === undefined || Array.isArray(input) && !input.length) return {status:'satisfied',path,message:'Always'};
   const value = input as Record<string, unknown>;
+  if (value.type === 'interactionResult') {
+    const use = project.events?.flatMap(e => (e.interactionUses ?? []).map(use => ({ use, event: e }))).find(item => item.use.id === value.useId);
+    const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
+    if (!use || !definition?.results.some(r => r.id === value.resultId) || !['==', '!='].includes(String(value.operator))) return { status: 'invalid', path, message: 'Missing interaction use/result or invalid operator' };
+    const actual = state.interactionResults?.[String(value.useId)];
+    if (!actual) return { status: 'unresolved', path, message: 'Wait for the interaction result' };
+    const equal = actual.resultId === value.resultId;
+    return { status: (value.operator === '==' ? equal : !equal) ? 'satisfied' : 'unsatisfied', path, message: `Interaction ${value.useId}: ${actual.resultId}`, actual: actual.resultId };
+  }
   const key = Array.isArray(input) ? 'all' : own(value,'all') ? 'all' : own(value,'any') ? 'any' : own(value,'not') ? 'not' : undefined;
   if (!key) return value.type === 'instanceQuery' ? evaluateInstanceQuery(input as InstanceQuery, project, state, path) : evaluatePredicate(input as LogicPredicate,project,state,path);
   const source = Array.isArray(input) ? input : key === 'not' ? [value.not] : value[key] as unknown[];

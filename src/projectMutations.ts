@@ -23,6 +23,7 @@ import {
   migrateLogicMoment,
   walkConditions,
 } from "./logic.js";
+import { authoringNodeExists } from "./authoringEngine.js";
 import { scriptBlockTextKey } from "./localization.js";
 import { canvasScopeKey } from "./storySelection.js";
 import { automaticEventName, automaticNarrativeName } from "./narrativeNaming.js";
@@ -121,7 +122,15 @@ function synchronizeLogicOwner<T extends LogicOwnerShape>(
         ...(has("consequences") ? { then } : {}),
       }
     : current.logic;
-  return { ...current, ...updates, logic } as T;
+  // Older documents can carry the same condition in more than one legacy
+  // field. Clear or update those aliases together so a removed condition
+  // cannot reappear through a fallback such as conditions ?? availability.
+  const synchronizedConditions: Partial<LogicOwnerShape> = {
+    ...(updatesWhen && (has("availability") || current.availability !== undefined) ? { availability: when } : {}),
+    ...(updatesWhen && (has("conditions") || current.conditions !== undefined) ? { conditions: when } : {}),
+    ...(updatesWhen && (has("displayCondition") || current.displayCondition !== undefined) ? { displayCondition: when } : {}),
+  };
+  return { ...current, ...synchronizedConditions, ...updates, logic } as T;
 }
 
 export function normalizeTransitionRoles(
@@ -332,7 +341,7 @@ export function createSequence(
   );
   const newEvent: EventNode = {
     id: eventId,
-    name: "Opening Event",
+    name: automaticEventName({ ...project, events: [], sequences: [] }, "normal"),
     type: "normal",
     text: { format: "plain", content: "" },
     canonRefs: [],
@@ -377,6 +386,25 @@ export function deleteSequence(
       )
       .map((branch) => branch.id),
   ]);
+  for (const branch of project.branches) {
+    if (deletedBranchIds.has(branch.id)) {
+      branch.eventIds.forEach((eventId) => deletedEventIds.add(eventId));
+    }
+  }
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const event of project.events) {
+      const belongsToDeletedContent =
+        deletedBranchIds.has(event.branchRef ?? "") ||
+        deletedEventIds.has(event.parentEventId ?? "") ||
+        event.childEventIds?.some((eventId) => deletedEventIds.has(eventId));
+      if (belongsToDeletedContent && !deletedEventIds.has(event.id)) {
+        deletedEventIds.add(event.id);
+        expanded = true;
+      }
+    }
+  }
   const deletedDialogueIds = new Set(
     project.events
       .filter((event) => deletedEventIds.has(event.id))
@@ -391,7 +419,38 @@ export function deleteSequence(
     }));
   const nextSequenceId = nextSequences[0]?.id;
   const currentEntrySequenceId = project.entrySequenceId ?? project.sequences[0]?.id;
-  const removedNodeIds = new Set([...deletedEventIds, ...deletedBranchIds]);
+  const removedNodeIds = new Set([
+    sequenceId,
+    ...deletedEventIds,
+    ...deletedBranchIds,
+    ...project.events
+      .filter((event) => deletedEventIds.has(event.id))
+      .flatMap((event) => [
+        ...(event.dialogues ?? []).flatMap((dialogue) => [dialogue.id, `dialogue:${event.id}:${dialogue.id}`]),
+        ...(event.dialogueBeats ?? []).flatMap((beat) => [beat.id, `beat:${event.id}:${beat.id}`]),
+        ...(event.dialogueStarts ?? []).map((start) => `dialogue-start:${event.id}:${start.id}`),
+        ...(event.interactionUses ?? []).flatMap((use) => [use.id, `interaction:${event.id}:${use.id}`]),
+        ...(event.interactionBarriers ?? []).flatMap((barrier) => [barrier.id, `barrier:${event.id}:${barrier.id}`]),
+        ...(event.decisions ?? []).flatMap((decision) => [
+          decision.id,
+          `decision:${event.id}:${decision.id}`,
+          ...decision.outcomes.flatMap((outcome) => [outcome.id, `outcome:${event.id}:${decision.id}:${outcome.id}`]),
+        ]),
+      ]),
+  ]);
+  const belongsToDeletedEvent = (nodeId: string) => Array.from(deletedEventIds).some((id) =>
+    nodeId.startsWith(`boundary:${id}:`) || nodeId.startsWith(`dialogue-boundary:${id}:`),
+  );
+  const isRemovedNodeId = (nodeId: string) => removedNodeIds.has(nodeId) || belongsToDeletedEvent(nodeId);
+  const deletedDataObjectIds = new Set(
+    (project.projectDataObjects ?? [])
+      .filter((item) =>
+        item.scope?.sequenceId === sequenceId ||
+        deletedBranchIds.has(item.scope?.branchId ?? "") ||
+        deletedEventIds.has(item.scope?.eventId ?? ""),
+      )
+      .map((item) => item.id),
+  );
   const nextScopes = Object.fromEntries(
     Object.entries(project.canvas?.scopes ?? {}).filter(([scopeKey]) =>
       scopeKey !== canvasScopeKey({ kind: "sequence", id: sequenceId }) &&
@@ -400,34 +459,221 @@ export function deleteSequence(
     ),
   );
 
-  return {
-    project: {
-      ...project,
-      entrySequenceId: currentEntrySequenceId === sequenceId ? nextSequenceId : currentEntrySequenceId,
-      sequences: nextSequences,
-      branches: project.branches.filter((branch) => !deletedBranchIds.has(branch.id)),
-      events: project.events
-        .filter((event) => !deletedEventIds.has(event.id))
-        .map((event) => ({
-          ...event,
-          branchRef: deletedBranchIds.has(event.branchRef ?? "") ? undefined : event.branchRef,
-          parentEventId: deletedEventIds.has(event.parentEventId ?? "") ? undefined : event.parentEventId,
-          childEventIds: event.childEventIds?.filter((eventId) => !deletedEventIds.has(eventId)),
-          transitions: event.transitions?.filter((transition) => !deletedEventIds.has(transition.to)),
-        })),
-      canvas: {
-        ...project.canvas,
-        activeSequenceId: nextSequenceId,
-        activeScope: nextSequenceId ? { kind: "sequence", id: nextSequenceId } : undefined,
-        nodes: Object.fromEntries(
-          Object.entries(project.canvas?.nodes ?? {}).filter(([id]) => !removedNodeIds.has(id)),
-        ),
-        scopes: nextScopes,
-      },
+  const nextProjectBeforePruning: BranchingProject = {
+    ...project,
+    entrySequenceId: currentEntrySequenceId === sequenceId ? nextSequenceId : currentEntrySequenceId,
+    sequences: nextSequences,
+    branches: project.branches.filter((branch) => !deletedBranchIds.has(branch.id)),
+    events: project.events
+      .filter((event) => !deletedEventIds.has(event.id))
+      .map((event) => ({
+        ...event,
+        branchRef: deletedBranchIds.has(event.branchRef ?? "") ? undefined : event.branchRef,
+        parentEventId: deletedEventIds.has(event.parentEventId ?? "") ? undefined : event.parentEventId,
+        childEventIds: event.childEventIds?.filter((eventId) => !deletedEventIds.has(eventId)),
+        transitions: event.transitions?.filter((transition) => !isRemovedNodeId(transition.from) && !isRemovedNodeId(transition.to)),
+        boundaryBindings: event.boundaryBindings?.filter((binding) => !isRemovedNodeId(binding.nodeId) && !isRemovedNodeId(binding.portId)),
+      })),
+    projectDataObjects: project.projectDataObjects?.filter((item) => !deletedDataObjectIds.has(item.id)),
+    canvas: {
+      ...project.canvas,
+      activeSequenceId: nextSequenceId,
+      activeScope: nextSequenceId ? { kind: "sequence", id: nextSequenceId } : undefined,
+      nodes: Object.fromEntries(
+        Object.entries(project.canvas?.nodes ?? {}).filter(([id]) => !isRemovedNodeId(id)),
+      ),
+      scopes: nextScopes,
     },
+  };
+  const nextProject = pruneDanglingNarrativeMetadata({
+    ...nextProjectBeforePruning,
+    events: nextProjectBeforePruning.events.map((event) => ({
+      ...event,
+      transitions: event.transitions?.filter((transition) => !hasMissingNarrativeReference(nextProjectBeforePruning, transition)),
+    })),
+  });
+
+  return {
+    project: nextProject,
     selection: nextSequenceId ? { type: "node", id: nextSequenceId } : undefined,
     message: `Deleted sequence "${sequence.name}" and ${deletedEventIds.size} event${deletedEventIds.size === 1 ? "" : "s"}.`,
   };
+}
+
+/**
+ * Deletes a branch while keeping events that still belong to a sequence.
+ * Event files left outside every sequence are removed with the branch that
+ * still owns them, even when branch.eventIds was already lost or cleared.
+ */
+export function deleteBranch(
+  project: BranchingProject,
+  branchId: string,
+): MutationResult {
+  const branch = project.branches.find((item) => item.id === branchId);
+  if (!branch) return { project, message: "Branch not found." };
+
+  const sequenceEventIds = new Set(project.sequences.flatMap((sequence) => sequence.eventIds));
+  const deletedEventIds = new Set(
+    [...branch.eventIds, ...project.events.filter((event) => event.branchRef === branchId).map((event) => event.id)]
+      .filter((eventId) => !sequenceEventIds.has(eventId)),
+  );
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const event of project.events) {
+      if (sequenceEventIds.has(event.id) || deletedEventIds.has(event.id)) continue;
+      if (deletedEventIds.has(event.parentEventId ?? "") || event.childEventIds?.some((id) => deletedEventIds.has(id))) {
+        deletedEventIds.add(event.id);
+        expanded = true;
+      }
+    }
+  }
+
+  const deletedDialogueIds = new Set(
+    project.events.filter((event) => deletedEventIds.has(event.id)).flatMap((event) => (event.dialogues ?? []).map((dialogue) => dialogue.id)),
+  );
+  const removedNodeIds = new Set([
+    branchId,
+    ...deletedEventIds,
+    ...project.events.filter((event) => deletedEventIds.has(event.id)).flatMap((event) => [
+      ...(event.dialogues ?? []).flatMap((dialogue) => [dialogue.id, `dialogue:${event.id}:${dialogue.id}`]),
+      ...(event.dialogueBeats ?? []).flatMap((beat) => [beat.id, `beat:${event.id}:${beat.id}`]),
+      ...(event.dialogues ?? []).flatMap((dialogue) => (dialogue.beats ?? []).flatMap((beat) => [beat.id, `beat:${event.id}:${beat.id}`])),
+      ...(event.dialogueStarts ?? []).map((start) => `dialogue-start:${event.id}:${start.id}`),
+      ...(event.interactionUses ?? []).flatMap((use) => [use.id, `interaction:${event.id}:${use.id}`]),
+      ...(event.interactionBarriers ?? []).flatMap((barrier) => [barrier.id, `barrier:${event.id}:${barrier.id}`]),
+      ...(event.decisions ?? []).flatMap((decision) => [
+        decision.id,
+        `decision:${event.id}:${decision.id}`,
+        ...decision.outcomes.flatMap((outcome) => [outcome.id, `outcome:${event.id}:${decision.id}:${outcome.id}`]),
+      ]),
+    ]),
+  ]);
+  const belongsToDeletedEvent = (nodeId: string) => Array.from(deletedEventIds).some((id) =>
+    nodeId.startsWith(`boundary:${id}:`) || nodeId.startsWith(`dialogue-boundary:${id}:`),
+  );
+  const isRemovedNodeId = (nodeId: string) => removedNodeIds.has(nodeId) || belongsToDeletedEvent(nodeId);
+  const baseProject: BranchingProject = {
+    ...project,
+    branches: project.branches
+      .filter((item) => item.id !== branchId)
+      .map((item) => ({ ...item, eventIds: item.eventIds.filter((eventId) => !deletedEventIds.has(eventId)) })),
+    sequences: project.sequences.map((sequence) => ({
+      ...sequence,
+      eventIds: sequence.eventIds.filter((eventId) => !deletedEventIds.has(eventId)),
+      branchIds: sequence.branchIds?.filter((id) => id !== branchId),
+    })),
+    events: project.events
+      .filter((event) => !deletedEventIds.has(event.id))
+      .map((event) => ({
+        ...event,
+        branchRef: event.branchRef === branchId ? undefined : event.branchRef,
+        parentEventId: deletedEventIds.has(event.parentEventId ?? "") ? undefined : event.parentEventId,
+        childEventIds: event.childEventIds?.filter((id) => !deletedEventIds.has(id)),
+        transitions: event.transitions?.filter((transition) => !isRemovedNodeId(transition.from) && !isRemovedNodeId(transition.to)),
+        boundaryBindings: event.boundaryBindings?.filter((binding) =>
+          !isRemovedNodeId(binding.nodeId) && !isRemovedNodeId(binding.portId),
+        ),
+      })),
+    projectDataObjects: project.projectDataObjects?.filter((item) =>
+      item.scope?.branchId !== branchId && !deletedEventIds.has(item.scope?.eventId ?? ""),
+    ),
+    canvas: {
+      ...project.canvas,
+      nodes: Object.fromEntries(Object.entries(project.canvas?.nodes ?? {}).filter(([id]) => !isRemovedNodeId(id))),
+      scopes: Object.fromEntries(Object.entries(project.canvas?.scopes ?? {}).filter(([scopeKey]) =>
+        !Array.from(deletedEventIds).some((eventId) => scopeKey === canvasScopeKey({ kind: "event", id: eventId })) &&
+        !Array.from(deletedDialogueIds).some((dialogueId) => scopeKey === `dialogue:${dialogueId}`),
+      )),
+    },
+  };
+  const nextProjectBeforePruning: BranchingProject = {
+    ...baseProject,
+    events: baseProject.events.map((event) => ({
+      ...event,
+      transitions: event.transitions?.filter((transition) => !hasMissingNarrativeReference(baseProject, transition)),
+    })),
+  };
+  const nextProject = pruneDanglingNarrativeMetadata(nextProjectBeforePruning);
+
+  return {
+    project: nextProject,
+    message: `Deleted branch "${branch.title}" and removed ${deletedEventIds.size} orphaned event${deletedEventIds.size === 1 ? "" : "s"}.`,
+  };
+}
+
+function hasMissingNarrativeReference(project: BranchingProject, value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => hasMissingNarrativeReference(project, item));
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  const subject = item.subject && typeof item.subject === "object"
+    ? item.subject as Record<string, unknown>
+    : undefined;
+  if (subject?.kind === "variable" && !(project.logicVariables ?? []).some((variable) => variable.id === subject.variableId)) return true;
+  if (subject?.kind === "dataObject" && !(project.projectDataObjects ?? []).some((dataObject) => dataObject.id === subject.objectId)) return true;
+  if (subject?.kind === "progress") {
+    const targets = subject.targetType === "sequence" ? project.sequences
+      : subject.targetType === "branch" ? project.branches
+        : subject.targetType === "event" ? project.events
+          : subject.targetType === "decision" ? project.events.flatMap((event) => event.decisions ?? [])
+            : subject.targetType === "outcome" ? project.events.flatMap((event) => (event.decisions ?? []).flatMap((decision) => decision.outcomes))
+              : [];
+    if (!targets.some((target) => target.id === subject.targetId)) return true;
+  }
+  if (item.type === "visited" && subject?.kind === "progress") {
+    const target = { kind: "progress", targetType: subject.targetType, targetId: subject.targetId };
+    if (hasMissingNarrativeReference(project, { subject: target })) return true;
+  }
+  if (item.type === "interactionResult" && typeof item.useId === "string") {
+    const use = project.events.flatMap((event) => (event.interactionUses ?? []).map((entry) => ({ event, entry }))).find(({ entry }) => entry.id === item.useId);
+    if (!use || !use.event.interactionDefinitions?.find((definition) => definition.id === use.entry.definitionId)?.results.some((result) => result.id === item.resultId)) return true;
+  }
+  if (typeof item.targetNodeId === "string" && !authoringNodeExists(project, item.targetNodeId)) return true;
+  return Object.values(item).some((child) => hasMissingNarrativeReference(project, child));
+}
+
+function narrativeScopeExists(project: BranchingProject, scope: unknown): boolean {
+  if (!scope || typeof scope !== "object") return true;
+  const value = scope as Record<string, unknown>;
+  if (value.kind === "global") return true;
+  if (value.kind === "event") return project.events.some((event) => event.id === value.id);
+  if (value.kind === "dialogue") return project.events.some((event) => event.dialogues?.some((dialogue) => dialogue.id === value.id));
+  if (value.kind === "node" && typeof value.id === "string") return authoringNodeExists(project, value.id);
+  return false;
+}
+
+export function pruneDanglingNarrativeMetadata(project: BranchingProject): BranchingProject {
+  const narrativeActions = project.narrativeActions?.filter((action) => !hasMissingNarrativeReference(project, action));
+  const narrativeRules = project.narrativeRules?.filter((rule) =>
+    narrativeScopeExists(project, rule.scope) && !hasMissingNarrativeReference(project, rule),
+  );
+  const authoringScenarios = project.authoringScenarios?.filter((scenario) =>
+    (!scenario.startNodeId || authoringNodeExists(project, scenario.startNodeId)) && !hasMissingNarrativeReference(project, scenario),
+  ).map((scenario) => scenario.state?.variables
+    ? { ...scenario, state: { ...scenario.state, variables: Object.fromEntries(Object.entries(scenario.state.variables).filter(([id]) => (project.logicVariables ?? []).some((variable) => variable.id === id))) } }
+    : scenario);
+  return {
+    ...project,
+    ...(narrativeActions ? { narrativeActions } : {}),
+    ...(narrativeRules ? { narrativeRules } : {}),
+    ...(authoringScenarios ? { authoringScenarios } : {}),
+  };
+}
+
+export function canSaveAfterRemovingStaleScenarioReferences(
+  project: BranchingProject,
+  saveBlockReasons: readonly string[] | undefined,
+): boolean {
+  if (!saveBlockReasons?.length || !saveBlockReasons.every((reason) =>
+    reason.includes("has a saved event file and an active scenario reference but is absent from"),
+  )) return false;
+  if ((project.narrativeActions ?? []).some((action) => hasMissingNarrativeReference(project, action))) return false;
+  if ((project.narrativeRules ?? []).some((rule) =>
+    !narrativeScopeExists(project, rule.scope) || hasMissingNarrativeReference(project, rule),
+  )) return false;
+  return !(project.authoringScenarios ?? []).some((scenario) =>
+    Boolean(scenario.startNodeId && !authoringNodeExists(project, scenario.startNodeId)) || hasMissingNarrativeReference(project, scenario),
+  );
 }
 
 export function createBranch(
@@ -662,7 +908,7 @@ export function createDecision(
   );
   const decision: Decision = {
     id: decisionId,
-    name: automaticNarrativeName(project, eventId, "Decision", (event.decisions ?? []).length + 1),
+    name: automaticNarrativeName(project, eventId, "Decision"),
     description: "",
     type: "dialogue",
     optionStyle: "visibleText",
@@ -772,7 +1018,7 @@ export function createOutcome(
   );
   const outcome: Outcome = {
     id: outcomeId,
-    name: automaticNarrativeName(project, eventId, "Option", decision.outcomes.length + 1),
+    name: automaticNarrativeName(project, eventId, "Option", { decisionId }),
     visibleText: "",
     description: "",
     requiredCanonRefs: [],
@@ -846,9 +1092,10 @@ export function createDialogue(
   );
   const dialogue: DialogueNode = {
     id: dialogueId,
-    title: title?.trim() || automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
+    title: title?.trim() || automaticNarrativeName(project, eventId, "Conversation"),
     text: { format: "plain", content: "" },
     canonRefs: [],
+    presentEntityRefs: [],
     beats: [],
     members: [],
   };
@@ -882,7 +1129,7 @@ export function groupDialogueMembers(
   );
   const dialogue: DialogueNode = {
     id: dialogueId,
-    title: title?.trim() || automaticNarrativeName(project, eventId, "Dialogue", (event.dialogues ?? []).length + 1),
+    title: title?.trim() || automaticNarrativeName(project, eventId, "Conversation"),
     text: { format: "plain", content: "" },
     canonRefs: [],
     beats: selectedBeats,
@@ -1367,6 +1614,8 @@ export function deleteDialogue(
   const dialogue = event.dialogues?.find((item) => item.id === dialogueId);
   const removedNodeIds = new Set([
     dialogueNodeId,
+    `dialogue-boundary:${eventId}:${dialogueId}:input`,
+    `dialogue-boundary:${eventId}:${dialogueId}:output`,
     ...(dialogue?.beats ?? []).map((beat) => `beat:${eventId}:${beat.id}`),
   ]);
   return updateEvent(project, eventId, {
@@ -1452,6 +1701,161 @@ export function createInternalTransition(
       ),
     },
     selection: { type: "edge", id: `edge:transition:${transition.id}` },
+  };
+}
+
+/**
+ * Removes an unfinished Entry/End port and any local connections that were
+ * drawn to it. These slots are temporary authoring affordances, so leaving
+ * their scope must not leave dangling boundary transitions behind.
+ */
+export function removeBoundaryPortSlot(
+  project: BranchingProject,
+  eventId: string,
+  direction: "input" | "output",
+  slotId: string,
+  dialogueId?: string,
+): BranchingProject {
+  const scopeKey = dialogueId
+    ? canvasScopeKey({ kind: "dialogue", id: dialogueId, eventId })
+    : canvasScopeKey({ kind: "event", id: eventId });
+  const portId = dialogueId
+    ? `dialogue-boundary:${eventId}:${dialogueId}:${direction}:${slotId}`
+    : `boundary:${eventId}:${direction}:${slotId}`;
+  const scope = project.canvas?.scopes?.[scopeKey];
+  const slots = direction === "input" ? scope?.entrySlots ?? [] : scope?.exitSlots ?? [];
+  const { [portId]: _removedPosition, ...nodes } = scope?.nodes ?? {};
+  const remainingSlots = slots.filter((candidate) => candidate !== slotId);
+  const nextScope = { ...scope, nodes: Object.keys(nodes).length ? nodes : undefined };
+  if (direction === "input") {
+    if (remainingSlots.length) nextScope.entrySlots = remainingSlots;
+    else delete nextScope.entrySlots;
+  } else if (remainingSlots.length) nextScope.exitSlots = remainingSlots;
+  else delete nextScope.exitSlots;
+  const nextScopes = { ...(project.canvas?.scopes ?? {}) };
+  if (!Object.keys(nextScope).some((key) => (nextScope as Record<string, unknown>)[key] !== undefined)) delete nextScopes[scopeKey];
+  else nextScopes[scopeKey] = nextScope;
+  if (dialogueId) {
+    return {
+      ...project,
+      canvas: {
+        ...project.canvas,
+        scopes: nextScopes,
+      },
+    };
+  }
+  return {
+    ...project,
+    events: project.events.map((event) => {
+      const removedBindingIds = new Set(
+        (event.boundaryBindings ?? [])
+          .filter((binding) => binding.portId === portId)
+          .map((binding) => binding.id),
+      );
+      return {
+        ...event,
+        transitions: event.transitions?.filter((transition) =>
+          transition.from !== portId &&
+          transition.to !== portId &&
+          !removedBindingIds.has(transition.id.replace(/^transition:boundary:/, "")),
+        ),
+        boundaryBindings: event.boundaryBindings?.filter((binding) => binding.portId !== portId),
+      };
+    }),
+    canvas: {
+      ...project.canvas,
+      scopes: nextScopes,
+    },
+  };
+}
+
+/**
+ * Turns a temporary subcanvas port into the stable port for its newly-created
+ * external transition, preserving any internal routes already wired to it.
+ */
+export function resolveBoundaryPortSlot(
+  project: BranchingProject,
+  eventId: string,
+  direction: "input" | "output",
+  slotId: string,
+  transitionId: string,
+): BranchingProject {
+  const scopeKey = canvasScopeKey({ kind: "event", id: eventId });
+  const previousPortId = `boundary:${eventId}:${direction}:${slotId}`;
+  const resolvedPortId = `boundary:${eventId}:${direction}:transition:${transitionId}`;
+  const scope = project.canvas?.scopes?.[scopeKey];
+  const slots = direction === "input" ? scope?.entrySlots ?? [] : scope?.exitSlots ?? [];
+  const { [previousPortId]: _removedPosition, ...nodes } = scope?.nodes ?? {};
+  const remainingSlots = slots.filter((candidate) => candidate !== slotId);
+  const nextScope = { ...scope, nodes: Object.keys(nodes).length ? nodes : undefined };
+  if (direction === "input") {
+    if (remainingSlots.length) nextScope.entrySlots = remainingSlots;
+    else delete nextScope.entrySlots;
+  } else if (remainingSlots.length) nextScope.exitSlots = remainingSlots;
+  else delete nextScope.exitSlots;
+  const nextScopes = { ...(project.canvas?.scopes ?? {}) };
+  if (!Object.keys(nextScope).some((key) => (nextScope as Record<string, unknown>)[key] !== undefined)) delete nextScopes[scopeKey];
+  else nextScopes[scopeKey] = nextScope;
+  return {
+    ...project,
+    events: project.events.map((event) => ({
+      ...event,
+      transitions: event.transitions?.map((transition) => ({
+        ...transition,
+        from: transition.from === previousPortId ? resolvedPortId : transition.from,
+        to: transition.to === previousPortId ? resolvedPortId : transition.to,
+      })),
+      boundaryBindings: event.boundaryBindings?.map((binding) =>
+        binding.portId === previousPortId ? { ...binding, portId: resolvedPortId } : binding,
+      ),
+    })),
+    canvas: {
+      ...project.canvas,
+      scopes: nextScopes,
+    },
+  };
+}
+
+/**
+ * Resolves a temporary conversation Entry/End affordance into a persistent
+ * visual port for its route. Incoming routes keep their own entry ports;
+ * outgoing routes converge on the conversation's single movable output.
+ */
+export function resolveDialogueBoundaryPortSlot(
+  project: BranchingProject,
+  eventId: string,
+  dialogueId: string,
+  direction: "input" | "output",
+  slotId: string,
+  transitionId: string,
+): BranchingProject {
+  const scopeKey = canvasScopeKey({ kind: "dialogue", id: dialogueId, eventId });
+  const previousPortId = `dialogue-boundary:${eventId}:${dialogueId}:${direction}:${slotId}`;
+  const resolvedPortId = direction === "output"
+    ? `dialogue-boundary:${eventId}:${dialogueId}:output`
+    : `dialogue-boundary:${eventId}:${dialogueId}:input:transition:${transitionId}`;
+  const scope = project.canvas?.scopes?.[scopeKey];
+  const slots = direction === "input" ? scope?.entrySlots ?? [] : scope?.exitSlots ?? [];
+  const previousPosition = scope?.nodes?.[previousPortId]?.position;
+  const resolvedPosition = previousPosition ?? scope?.nodes?.[resolvedPortId]?.position;
+  const { [previousPortId]: _removedPosition, ...nodes } = scope?.nodes ?? {};
+  if (resolvedPosition) nodes[resolvedPortId] = { ...nodes[resolvedPortId], position: resolvedPosition };
+  const remainingSlots = slots.filter((candidate) => candidate !== slotId);
+  const nextScope = { ...scope, nodes: Object.keys(nodes).length ? nodes : undefined };
+  if (direction === "input") {
+    if (remainingSlots.length) nextScope.entrySlots = remainingSlots;
+    else delete nextScope.entrySlots;
+  } else if (remainingSlots.length) nextScope.exitSlots = remainingSlots;
+  else delete nextScope.exitSlots;
+  const nextScopes = { ...(project.canvas?.scopes ?? {}) };
+  if (!Object.keys(nextScope).some((key) => (nextScope as Record<string, unknown>)[key] !== undefined)) delete nextScopes[scopeKey];
+  else nextScopes[scopeKey] = nextScope;
+  return {
+    ...project,
+    canvas: {
+      ...project.canvas,
+      scopes: nextScopes,
+    },
   };
 }
 

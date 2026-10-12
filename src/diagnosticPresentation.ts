@@ -41,20 +41,33 @@ export function authoringDiagnosticTarget(project: BranchingProject, location?: 
 }
 
 /** Resolve the owning authored object, including IDs embedded in a diagnostic path. */
+const diagnosticCandidates = new WeakMap<BranchingProject, Selection[]>();
 export function diagnosticSelection(project: BranchingProject, location?: string): Selection | undefined {
   if (!location) return;
-  const candidates: Selection[] = [];
   for (const event of project.events) {
-    candidates.push({ type: "node", id: event.id });
-    for (const item of [...(event.decisions ?? []), ...(event.dialogues ?? []), ...(event.decisions ?? []).flatMap((decision) => decision.outcomes ?? [])]) candidates.push({ type: "node", id: item.id });
-    for (const transition of event.transitions ?? []) candidates.push({ type: "edge", id: transition.id });
+    const use = event.interactionUses?.find(u => location === u.id || location === u.definitionId || event.interactionDefinitions?.find(d => d.id === u.definitionId)?.results.some(r => r.id === location));
+    if (use) return { type: 'node', id: use.ownerNodeId ?? `interaction:${event.id}:${use.id}` };
+    const barrier = event.interactionBarriers?.find(b => location === b.id);
+    if (barrier) return { type: 'node', id: `barrier:${event.id}:${barrier.id}` };
+    if (event.interactionDefinitions?.some(d => d.id === location)) return { type: 'node', id: event.id };
   }
-  project.sequences.forEach((item) => candidates.push({ type: "node", id: item.id }));
-  project.branches.forEach((item) => candidates.push({ type: "node", id: item.id }));
-  project.canonRefs.forEach((item) => candidates.push({ type: "canon", id: item.id }));
-  project.localExplorerEntities?.forEach((item) => candidates.push({ type: "explorerEntity", id: item.id }));
-  project.projectDataObjects?.forEach((item) => candidates.push({ type: "dataObject", id: item.id }));
-  return candidates.sort((a, b) => b.id.length - a.id.length).find((item) => location === item.id || location.startsWith(`${item.id}.`) || location.startsWith(`${item.id}:`) || location.startsWith(`${item.id}/`) || location.includes(`"${item.id}"`));
+  let candidates = diagnosticCandidates.get(project);
+  if (!candidates) {
+    const next: Selection[] = [];
+    for (const event of project.events) {
+      next.push({ type: "node", id: event.id });
+      for (const item of [...(event.decisions ?? []), ...(event.dialogues ?? []), ...(event.decisions ?? []).flatMap((decision) => decision.outcomes ?? [])]) next.push({ type: "node", id: item.id });
+      for (const transition of event.transitions ?? []) next.push({ type: "edge", id: transition.id });
+    }
+    project.sequences.forEach((item) => next.push({ type: "node", id: item.id }));
+    project.branches.forEach((item) => next.push({ type: "node", id: item.id }));
+    project.canonRefs.forEach((item) => next.push({ type: "canon", id: item.id }));
+    project.localExplorerEntities?.forEach((item) => next.push({ type: "explorerEntity", id: item.id }));
+    project.projectDataObjects?.forEach((item) => next.push({ type: "dataObject", id: item.id }));
+    candidates = next.sort((a, b) => b.id.length - a.id.length);
+    diagnosticCandidates.set(project, candidates);
+  }
+  return candidates.find((item) => location === item.id || location.startsWith(`${item.id}.`) || location.startsWith(`${item.id}:`) || location.startsWith(`${item.id}/`) || location.includes(`"${item.id}"`));
 }
 
 const findingTitles: Partial<Record<ValidationFinding["code"], [string, string]>> = {
@@ -77,6 +90,7 @@ const findingTitles: Partial<Record<ValidationFinding["code"], [string, string]>
   missing_data_object: ["Data object is missing", "Falta un objeto de datos"],
   missing_required_field: ["A required value is missing", "Falta un valor obligatorio"],
   invalid_condition: ["Review this condition", "Revisa esta condición"],
+  invalid_interaction: ["Review this interaction", "Revisa esta interacción"],
   invalid_consequence: ["Review this consequence", "Revisa esta consecuencia"],
   missing_grantable_entity: ["Inventory entity is missing", "Falta una entidad de inventario"],
   invalid_transition_order: ["Review route priority", "Revisa la prioridad de las rutas"],

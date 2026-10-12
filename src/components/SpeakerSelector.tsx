@@ -1,5 +1,6 @@
+import { useApplicationEffect } from "./useApplicationActivity.js";
 import { ChevronDown, Search, UserRound, Package, GitBranch, Plus } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
 import { useInterfaceLocale } from "../i18n.js";
 
@@ -81,14 +82,14 @@ export function SpeakerSelector({
   const canCreateSpeaker = Boolean(onCreateSpeaker && normalizedSearchTerm && totalResults === 0 && !specialSpeakerMatch);
 
   // Focus search input when opened
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (searchOpen && inputRef.current) {
       inputRef.current.focus();
     }
   }, [searchOpen]);
 
   // Close on escape
-  useEffect(() => {
+  useApplicationEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape" && searchOpen) {
         setSearchOpen(false);
@@ -100,7 +101,7 @@ export function SpeakerSelector({
   }, [searchOpen, onClose]);
 
   // Close on outside click
-  useEffect(() => {
+  useApplicationEffect(() => {
     if (!searchOpen) return;
     const handleClickOutside = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {

@@ -4,6 +4,58 @@ Implementation and browser verification: **2026-10-07**. The canvas, Visual/Logi
 layers, existing themes, side panels and inspector workflow remain the product
 direction. Unity synchronization remains deferred.
 
+## Inspector integration — 2026-10-08
+
+The current PathBranching iteration brings story authoring into the existing
+inspector. It preserves the original vertical stack of object tabs, saved
+groups and close-above/below/others menus. One object expands at a time; opening
+another object does not split the editor into shorter panes. Height expansion
+is separate from width expansion. The active object's identity, context and
+section tabs remain above its scrolling content.
+
+Authoring is distributed across the existing object sections: Overview for
+identity/configuration; Path, Content or Narrative sequence for writing;
+Choices for responses, presentation, ordering and unavailable text such as
+`????`; Connections for destinations and routes; Conditions and Consequences
+for logic in either canvas mode. Source is an advanced narrative subview with
+explicit Apply/Revert. The separate Story authoring surface is removed.
+
+Assets remains the entity entry point. Logic now offers searchable Actions and
+Rules catalogs with creation, while their complete forms open in the same
+inspector. Shared inspector navigation resolves targets from the document,
+including objects outside the visible canvas, and reports missing references
+instead of opening an unrelated event. Per-object sections, groups, dimensions
+and open objects are local workspace state.
+
+Visual and Logic retain recognizable node identities. Logic adds brief summaries
+of actual conditions/effects without repeated empty bands. Gates show numbered
+routes and destinations, including routes with effects only, with Else last.
+Returns are distinct, and selection highlights relevant connections. Mode
+changes preserve authored positions, IDs and handles.
+
+Focused evidence in the real standalone Tauri WebView2, attached through
+Playwright CLI:
+
+- An invalid action-name draft survived section changes, object changes and
+  reload; restoring the saved value cleared the draft.
+- Two objects remained in the original vertical stack with one expanded editor.
+  Returning to an object restored its section without changing canvas zoom.
+- Native read-only loading of the current SINPO universe ran its 23 saved
+  scenarios with 125 assertions passing.
+- TypeScript checking passed after the Choices and missing-rule diagnostic
+  changes.
+
+This is focused evidence, not full acceptance of this iteration. The complete
+Tauri interaction pass and the 1440 × 900, 1280 × 720 and 900 × 700 matrix in
+EN/ES and light/dark remain pending. That pass must cover authoring, groups,
+height/width restoration, routes/returns, undo, save/reopen and coexistence with
+the test panel. Local captures and scripts remain under ignored
+`output/playwright/`; they may contain the currently open private universe.
+Export features, runtime format changes and Unity are outside this iteration.
+
+The dated verification below records the previous UX delivery and does not
+establish acceptance of the inspector integration above.
+
 ## Delivered
 
 - Panel allocation reserves at least 480 px for the canvas. Panels that cannot
@@ -99,7 +151,7 @@ Additional browser evidence:
 
 ## Acceptance boundaries
 
-**Manual Tauri acceptance remains pending.** Chromium used in-memory folder
+**Full desktop authoring acceptance remains pending.** Chromium used in-memory folder
 handles and temporary test responses for the Suite native folder picker and file
 export boundary. Those checks verify UI integration and export payloads, not
 native filesystem dialogs, actual disk exports or a Tauri window. Cargo checks
@@ -115,3 +167,29 @@ unused-import/menu warnings. No engine/player expansion or new format was added.
 Suite integration uses the independent source profile documented in its
 `docs/standalone-sources.md`. Release vendor pins still require intentional
 selection of a reachable upstream commit through the existing vendoring flow.
+
+## Focused Tauri panel regression — 2026-10-07
+
+Side panels are non-modal. They do not shade the canvas or trap Tab. Collapse
+from the header, rail, footer or scoped Escape updates the saved panel preference,
+so increasing the window width cannot silently reopen a collapsed panel. Compact
+panels retain their vertical header/form layout. Panel stacking allows their
+controls to remain accessible when the onboarding guide is present.
+
+Playwright CLI attached to the actual standalone and Suite WebView2 endpoints
+(9222 and 9223), using the independent-source Suite profile. Both passed:
+
+- Opening and collapsing all six panels at a 900 × 700 viewport, with one
+  floating panel and a canvas layout width of at least 480 px.
+- Middle-button canvas pan and wheel zoom while a panel remained open, without
+  a backdrop or modal input interception.
+- Tab leaving the panel; Escape collapsing it and restoring focus to its rail;
+  header collapse; compact panel headers remaining above their forms.
+- Collapse surviving 900 → 1440 → 900 viewport changes and WebView reload.
+
+Read-only native version calls returned 0.3.0 for standalone and 0.2.0 for Suite.
+Captures are local under each repository's ignored `output/playwright/` folder;
+they contain the currently open universe and are not published. No narrative
+editing or native file-dialog automation was part of these focused checks.
+TypeScript, `verify:core`, standalone build and the Suite source build passed.
+This closes the panel regression, not the full authoring acceptance listed above.

@@ -1,3 +1,4 @@
+import { useInterfaceLocale } from "../i18n.js";
 import { Search, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 
@@ -16,6 +17,7 @@ export function ReferencePicker({
   multiple?: boolean;
   onChange: (ids: string[]) => void;
 }) {
+  const es = useInterfaceLocale() === "es";
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const selected = useMemo(
@@ -45,7 +47,7 @@ export function ReferencePicker({
               {option.label}
               <button
                 type="button"
-                title={`Remove ${option.label}`}
+                title={`${es ? "Quitar" : "Remove"} ${option.label}`}
                 onClick={() => onChange(value.filter((id) => id !== option.id))}
               >
                 <X size={12} />
@@ -61,7 +63,8 @@ export function ReferencePicker({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder={`Search ${label.toLowerCase()}`}
+              placeholder={`${es ? "Buscar" : "Search"} ${label.toLowerCase()}`}
+              aria-label={`${es ? "Buscar" : "Search"} ${label.toLowerCase()}`}
             />
           </label>
           {query ? (
@@ -80,7 +83,7 @@ export function ReferencePicker({
                 </button>
               ))}
               {matches.length === 0 ? (
-                <span className="empty-line">No matching references.</span>
+                <span className="empty-line">{es ? "No se encontraron coincidencias." : "No matching references."}</span>
               ) : null}
             </div>
           ) : null}

@@ -1,0 +1,14 @@
+.interactions-editor { display: grid; gap: 12px; min-width: 0; padding: 12px; }
+.interaction-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-color, #80808055); border-radius: 8px; min-width: 0; }
+.interaction-card > summary { cursor: pointer; font-weight: 600; }
+.interaction-card label { display: grid; gap: 5px; }
+.interaction-card input:not([type=checkbox]), .interaction-card select, .interaction-card textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.interaction-card fieldset { min-width: 0; display: grid; gap: 8px; }
+.interaction-run { display: grid; gap: 8px; }
+.interaction-node-results { display: grid; gap: 6px; padding-top: 8px; }
+.interaction-node-result { position: relative; text-align: right; padding: 4px 12px; }
+.interaction-node-result .react-flow__handle { right: -5px; }
+.canvas-interaction-cards { display: grid; gap: 4px; padding: 4px 8px; }
+.canvas-interaction-cards:empty { display: none; }
+.canvas-interaction-cards button { display: flex; gap: 6px; padding: 6px 8px; border: 1px solid var(--border-color, #80808055); border-radius: 6px; font: inherit; font-size: 11px; background: var(--ef-surface-raised, #20252f); color: inherit; cursor: pointer; }
+.canvas-interaction-cards span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

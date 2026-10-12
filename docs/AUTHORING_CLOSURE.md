@@ -53,6 +53,11 @@ Prioritize data loss, save/reopen failures, incorrect branching logic and invali
 exports before cosmetic changes. Record a reproducible case for every blocker.
 Do not mark the milestone complete until the acceptance scenario is evidenced.
 
+Incremental export preservation and its remaining format/desktop boundaries are
+recorded in [Authoring exports](AUTHORING_EXPORTS.md). Modular runtime data is
+retained, while unsupported Ink execution is diagnosed; this is not full export
+equivalence or completion of the scenario above.
+
 ## Deferred
 
 - Unity live pairing, inventory/proposal review and bidirectional synchronization.

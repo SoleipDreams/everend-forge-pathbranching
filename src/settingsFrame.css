@@ -1,0 +1,114 @@
+/* Settings surfaces only. App workspaces and authored content retain their geometry. */
+.ef-settings-backdrop {
+  --settings-panel: var(--ef-panel, var(--wn-panel, var(--cp-panel, #fff)));
+  --settings-soft: var(--ef-panel-soft, var(--wn-panel-2, var(--cp-panel-2, #f4f5f6)));
+  --settings-text: var(--ef-text, var(--wn-text, var(--cp-text, #202522)));
+  --settings-muted: var(--ef-muted, var(--wn-muted, var(--cp-muted, #626b66)));
+  --settings-border: var(--ef-border, var(--wn-border, var(--cp-border, #dcded9)));
+  --settings-accent: var(--ef-accent, var(--wn-accent, var(--cp-accent, #87531e)));
+  position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center;
+  padding: 24px; background: #0008; color: var(--settings-text);
+  font: 14px/1.5 var(--ef-primary-font, var(--ef-ui-font, Inter, system-ui, sans-serif));
+}
+.ef-settings-backdrop[hidden], .ef-settings-content[hidden], .ef-settings-main > [hidden] { display: none !important; }
+.ef-settings-dialog { display: flex; flex-direction: column; width: min(1120px, 100%); height: min(800px, calc(100dvh - 48px)); min-height: 0; overflow: hidden; border: 1px solid var(--settings-border); border-radius: 12px; background: var(--settings-panel); color: var(--settings-text); box-shadow: 0 24px 80px #0005; }
+.ef-settings-dialog *, .ef-settings-content * { box-sizing: border-box; }
+.ef-settings-header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 24px; border-bottom: 1px solid var(--settings-border); }
+.ef-settings-header p { margin: 0 0 3px; font-size: 11px; color: var(--settings-muted); letter-spacing: .08em; text-transform: uppercase; }
+.ef-settings-header h2 { margin: 0; font-size: 21px; font-weight: 600; line-height: 1.3; color: inherit; }
+.ef-settings-layout { display: grid; grid-template-columns: 240px minmax(0,1fr); flex: 1; min-height: 0; }
+.ef-settings-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px 12px; border-right: 1px solid var(--settings-border); background: var(--settings-panel); gap: 12px; }
+.ef-settings-sidebar nav { overflow: auto; min-height: 0; flex: 1; }
+.ef-settings-nav-group { margin-bottom: 18px; }
+.ef-settings-nav-group > p { color: var(--settings-muted); margin: 4px 12px 6px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; }
+.ef-settings-dialog .ef-settings-nav-group > button { width: 100%; display: block; text-align: left; border: 0; background: transparent; padding: 9px 12px; min-height: 36px; font-size: 13px; font-weight: 400; }
+.ef-settings-dialog .ef-settings-nav-group > button[aria-current="page"] { color: var(--settings-accent); background: var(--settings-soft); font-weight: 600; }
+.ef-settings-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--settings-border); border-radius: 6px; padding: 0 10px; color: var(--settings-muted); }
+.ef-settings-dialog .ef-settings-search > input { min-width: 0; width: 100%; border: 0; padding: 9px 0; background: transparent; box-shadow: none; }
+.ef-settings-dialog .ef-settings-search:focus-within { outline: 2px solid var(--settings-accent); outline-offset: 2px; }
+.ef-settings-dialog .ef-settings-help { background: transparent; border-color: transparent; color: var(--settings-muted); font-size: 12px; }
+.ef-settings-mobile { display: none; }
+.ef-settings-main { min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.ef-settings-content, .ef-settings-results { padding: 24px 32px 32px; overflow: auto; min-height: 0; min-width: 0; flex: 1; color: var(--settings-text); }
+.ef-settings-content { font: inherit; background: var(--settings-panel); }
+.ef-settings-page-heading { margin-bottom: 22px; }
+.ef-settings-page-heading > h3, .ef-settings-results > h3 { margin: 0; font-size: 19px; font-weight: 600; color: inherit; }
+.ef-settings-page-heading > p { color: var(--settings-muted); margin: 5px 0 0; max-width: 65ch; }
+.ef-settings-content :is(.settings-panel,.settings-control-panel,.mini-card,.settings-subsection,.about-settings) { background: transparent; border: 0; border-radius: 0; padding: 0; box-shadow: none; min-width: 0; }
+.ef-settings-content .settings-panel > .settings-page-title, .ef-settings-content :is(.settings-page-heading,.appearance-behavior-tabs) { display: none; }
+.ef-settings-content :is(.settings-grid,.settings-control-panel,.universe-profile-fields) { display: flex; flex-direction: column; gap: 0; min-width: 0; width: 100%; max-width: none; }
+.ef-settings-content :is(.settings-grid,.settings-control-panel) > h3 { margin: 24px 0 6px !important; font-size: 13px !important; font-weight: 600; color: var(--settings-text) !important; }
+.ef-settings-content label:not(.image-upload-button,.icon-upload-button,.normalization-row,.plugin-toggle) { display: grid; grid-template-columns: minmax(0,1fr) minmax(150px, 260px); gap: 8px 24px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--settings-border); width: 100%; margin: 0; min-width: 0; font: inherit; color: inherit; }
+.ef-settings-content label > :is(span,strong) { color: var(--settings-text); min-width: 0; font-size: 13px; }
+.ef-settings-content label > :is(input,select,button) { width: 100%; min-width: 0; margin: 0; }
+.ef-settings-content label > input[type="checkbox"] { grid-column: 2; grid-row: 1; justify-self: end; width: 17px; height: 17px; accent-color: var(--settings-accent); }
+.ef-settings-content label > input[type="color"] { justify-self: end; width: 52px; height: 32px; padding: 3px; }
+.ef-settings-content :is(input,select,textarea), .ef-settings-dialog :is(input,select,textarea) { color: var(--settings-text); background: var(--settings-panel); border: 1px solid var(--settings-border); border-radius: 6px; font: inherit; font-size: 13px; padding: 7px 10px; max-width: 100%; min-width: 0; min-height: 34px; }
+.ef-settings-content input[readonly] { background: var(--settings-soft); }
+.ef-settings-content button, .ef-settings-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--settings-border); border-radius: 6px; background: var(--settings-panel); color: var(--settings-text); padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; max-width: 100%; white-space: normal; }
+.ef-settings-dialog button:hover:not(:disabled), .ef-settings-content button:hover:not(:disabled) { background: var(--settings-soft); }
+.ef-settings-dialog button:disabled, .ef-settings-content button:disabled { cursor: default; opacity: .55; }
+.ef-settings-dialog :is(button,input,select,textarea,summary):focus-visible { outline: 2px solid var(--settings-accent); outline-offset: 3px; }
+.ef-settings-content :is(p,small,.muted) { color: var(--settings-muted); }
+.ef-settings-content :is(code,dd,p,small) { overflow-wrap: anywhere; }
+.ef-settings-content :is(.universe-profile-editor,.forge-license-details,.settings-category-list) { background: transparent; border: 0; display: block; padding: 0; }
+.ef-settings-content .universe-profile-editor > .universe-icon-frame { margin: 8px 0; }
+.ef-settings-content .icon-preset-row { display: flex; gap: 8px; align-items: center; padding: 14px 0; }
+.ef-settings-content .icon-preset-row .image-upload-button { display: inline-flex; padding: 8px; width: auto; }
+.ef-settings-content :is(.settings-actions,.settings-inline,.forge-update-actions,.settings-action-list) { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.ef-settings-content .settings-inline { align-items: center; justify-content: space-between; }
+.ef-settings-content .locale-settings-list { padding: 14px 0; }
+.ef-settings-content .locale-settings-list ul { display: flex; gap: 8px; flex-wrap: wrap; list-style: none; padding: 0; }
+.ef-settings-content .locale-settings-list li { display: flex; gap: 8px; align-items: center; }
+.ef-settings-content .locale-invented-language { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.ef-settings-content .locale-invented-language label { flex: 1; }
+.ef-settings-content .category-editor { padding: 16px 0; border-bottom: 1px solid var(--settings-border); }
+.ef-settings-content .scene-choices { margin: 18px 0; max-width: 100%; }
+.ef-settings-content .scene-choice-grid { grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); }
+.ef-settings-content .scene-choice { min-width: 0; }
+.ef-settings-content .plugin-card { box-shadow: none; background: transparent; border-color: var(--settings-border); }
+.ef-settings-content .shortcut-row > input { font-family: ui-monospace, monospace; }
+.ef-settings-draft { position: sticky; bottom: -32px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--settings-panel); border-top: 1px solid var(--settings-border); padding: 14px 0; margin-top: 20px; z-index: 1; }
+.ef-settings-draft > span { margin-right: auto; color: var(--settings-accent); }
+.ef-settings-draft > p { width: 100%; margin: 0; }
+.ef-settings-confirm { flex: none; padding: 18px 24px; border-top: 1px solid var(--settings-border); background: var(--settings-soft); }
+.ef-settings-confirm p { margin: 4px 0 12px; }
+.ef-settings-confirm > div { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.ef-settings-empty { padding: 24px 0; color: var(--settings-muted); }
+.ef-settings-results > p { color: var(--settings-muted); }
+.ef-settings-results section { margin-top: 24px; }
+.ef-settings-results h4 { margin: 0 0 8px; font-size: 12px; color: var(--settings-muted); }
+.ef-settings-results section > button { display: flex; flex-direction: column; width: 100%; align-items: start; text-align: left; padding: 12px; margin: 6px 0; }
+.ef-settings-results small { color: var(--settings-muted); }
+.ef-setting-found { outline: 2px solid var(--settings-accent); outline-offset: 4px; border-radius: 4px; }
+@media (max-width: 760px) {
+  .ef-settings-backdrop { padding: 12px; }
+  .ef-settings-dialog { height: calc(100dvh - 24px); }
+  .ef-settings-header { padding: 16px 20px; }
+  .ef-settings-layout { display: flex; flex-direction: column; }
+  .ef-settings-sidebar { border-right: 0; border-bottom: 1px solid var(--settings-border); padding: 12px 20px; }
+  .ef-settings-sidebar nav { display: none; }
+  .ef-settings-mobile { display: flex; gap: 12px; align-items: center; }
+  .ef-settings-mobile select { flex: 1; min-width: 0; }
+  .ef-settings-help { align-self: start; }
+  .ef-settings-main { flex: 1; }
+  .ef-settings-content,.ef-settings-results { padding: 20px; }
+  .ef-settings-draft { bottom: -20px; }
+}
+@media (max-width: 560px) {
+  .ef-settings-content label:not(.image-upload-button,.icon-upload-button,.normalization-row,.plugin-toggle) { grid-template-columns: minmax(0,1fr); gap: 8px; }
+  .ef-settings-content label:has(> input[type="checkbox"]) { grid-template-columns: minmax(0,1fr) auto; }
+}
+@media (prefers-reduced-motion: reduce) { .ef-settings-dialog *, .ef-settings-content * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+.ef-settings-page-slot { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+
+
+.ef-settings-content .settings-subsection > .settings-page-title {display:block;margin:24px 0 10px;}
+.ef-settings-content .settings-subsection > .settings-page-title h3 {font-size:14px;margin:0 0 4px;}
+.ef-settings-content .settings-subsection > .settings-page-title p {margin:0;}
+.ef-settings-content .ef-scene-grid {grid-template-columns:repeat(auto-fit,minmax(110px,1fr));}
+.ef-settings-content .ef-scene-choice {min-width:0;}
+
+.ef-settings-content .category-editor {margin-bottom:16px;}
+.ef-settings-content .category-editor > :is(span,button) {margin-top:10px;}

@@ -1,0 +1,13 @@
+import { fixture, strength } from './scripts/condition-fixture.mjs';
+import { serializeModularStoryFiles, storyPath } from './lib/pathBranchingWorkspace.js';
+import { writeFileSync } from 'node:fs';
+const p=fixture();p.name='Condition acceptance';
+p.canvas={activeSequenceId:'main',activeScope:{kind:'sequence',id:'main'},scopes:{'sequence:main':{nodes:{a:{position:{x:420,y:200}},b:{position:{x:950,y:200}},c:{position:{x:950,y:600}}}}}};
+const owned={type:'state',subject:{kind:'entity',entityId:'key'},stateId:'owned',operator:'has'};
+const visited={type:'visited',subject:{kind:'progress',targetType:'event',targetId:'b'},operator:'has'};
+p.events[0].logic={when:{all:[{any:[owned,strength]},{not:visited}]}};
+p.events[0].availability=p.events[0].logic.when;
+const story={id:'main',name:'Condition acceptance',path:storyPath('main')};
+const files=serializeModularStoryFiles(p,story);
+files.push({relativePath:'.everend/.pathbranching/manifest.json',content:JSON.stringify({version:'0.2',activeStoryId:'main',stories:[story]})},{relativePath:'Items/Key.md',content:'---\nid: key\ntype: item\nname: Key\n---\n'});
+writeFileSync('output/playwright/acceptance-files.json',JSON.stringify(files));

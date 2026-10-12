@@ -1,13 +1,106 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import ts from 'typescript';
 import { fixture, strength } from './condition-fixture.mjs';
+import { initialAuthoringState, instanceOwnerIssue, ownerKey } from '../lib/authoringEntities.js';
 import { buildStoryCanvasModel } from '../lib/canvas/storyCanvasModel.js';
+import { evaluateConditionDetailed, externalConditionKey, resolveConditionValue } from '../lib/conditionEvaluation.js';
 import { conditionExpressionAtPath, conditionFieldIssues, conditionRouteResolution, conditionTestControls, conditionTreeSummary, groupedConditionPresentation, narrativeTargetLabel } from '../lib/conditionPresentation.js';
 import { resolveFirstValidTransition } from '../lib/logic.js';
 
 const key = {type: 'state', subject: {kind: 'entity', entityId: 'key'}, stateId: 'owned', operator: 'has'};
 const visited = {type: 'visited', subject: {kind: 'progress', targetType: 'event', targetId: 'b'}, operator: 'has'};
 const tree = {all: [{any: [key, strength]}, {not: visited}]};
+
+// Compile the component's actual pure reducer without importing React or its CSS.
+// Assertions below use the independent condition evaluator and owner validation.
+const testerSource = ts.createSourceFile('ConditionTester.tsx', readFileSync(new URL('../src/components/ConditionTester.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const reducer = testerSource.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'updateControlState');
+assert.ok(reducer, 'ConditionTester must expose its state reducer to this focused regression check.');
+const compiledReducer = ts.transpileModule(reducer.getText(testerSource), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const updateControlState = new Function('externalConditionKey', 'ownerKey', `${compiledReducer}\nreturn updateControlState;`)(externalConditionKey, ownerKey);
+const setOwned = (project, state, value, predicate = key) => updateControlState(state, { predicate }, value, project);
+
+test('owned controls change normalized empty inventories and the selected route without modifying the project', () => {
+  const project = fixture();
+  const before = JSON.stringify(project);
+  const initial = initialAuthoringState(project);
+  const initialBefore = JSON.stringify(initial);
+  assert.deepEqual(initial.entityInstances, []);
+  const routes = [{ id: 'has-key', from: 'a', to: 'b', conditions: key }, { id: 'no-key', from: 'a', to: 'c', mode: 'fallback' }];
+  assert.equal(conditionRouteResolution(project, routes, initial).selected.id, 'no-key');
+  const owned = setOwned(project, initial, true);
+  assert.equal(resolveConditionValue(key, project, owned).value, true);
+  assert.equal(conditionRouteResolution(project, routes, owned).selected.id, 'has-key');
+  assert.equal(owned.entityInstances.length, 1);
+  assert.equal(instanceOwnerIssue(project, owned.entityInstances, owned.entityInstances[0]), undefined);
+  assert.equal(evaluateConditionDetailed({ type: 'instanceQuery', entityId: 'key', owner: { kind: 'profile', profileId: 'default' }, quantifier: 'count', operator: '==', value: 1 }, project, owned).status, 'satisfied');
+  assert.equal(setOwned(project, owned, true), owned, 'Repeated Yes must not create additional copies.');
+  const released = setOwned(project, owned, false);
+  assert.equal(resolveConditionValue(key, project, released).value, false);
+  assert.equal(conditionRouteResolution(project, routes, released).selected.id, 'no-key');
+  assert.equal(released.entityInstances[0].id, owned.entityInstances[0].id, 'No releases ownership without destroying the copy.');
+  const reclaimed = setOwned(project, released, true);
+  assert.equal(reclaimed.entityInstances.length, 1, 'A released copy is reused on the next Yes.');
+  assert.equal(reclaimed.entityInstances[0].id, owned.entityInstances[0].id);
+  assert.equal(JSON.stringify(initial), initialBefore);
+  assert.equal(JSON.stringify(project), before);
+});
+
+test('No releases only the current profile and actor copies, preserving their contents and other owners', () => {
+  const project = fixture();
+  project.localExplorerEntities.push({ id: 'actor', name: 'Actor', type: 'character' }, { id: 'other-actor', name: 'Other actor', type: 'character' });
+  project.playerProfiles = [{ id: 'me', name: 'Me', simulation: {} }, { id: 'other', name: 'Other', simulation: {} }];
+  const state = { context: { profileId: 'me', actor: { kind: 'entity', entityId: 'actor' } }, entityInstances: [
+    { id: 'mine', entityId: 'key', owner: { kind: 'profile', profileId: 'me' }, properties: { wear: 3 } },
+    { id: 'actor-key', entityId: 'key', owner: { kind: 'entity', entityId: 'actor' }, states: { discovered: true } },
+    { id: 'other-profile', entityId: 'key', owner: { kind: 'profile', profileId: 'other' } },
+    { id: 'other-actor-key', entityId: 'key', owner: { kind: 'entity', entityId: 'other-actor' } },
+    { id: 'contents', entityId: 'relic', owner: { kind: 'instance', instanceId: 'mine' } },
+    { id: 'other-item', entityId: 'relic', owner: { kind: 'profile', profileId: 'me' } },
+  ] };
+  const before = JSON.stringify(state);
+  assert.equal(setOwned(project, state, true), state, 'An actor-owned copy already satisfies ownership.');
+  const released = setOwned(project, state, false);
+  assert.equal(resolveConditionValue(key, project, released).value, false);
+  assert.equal(released.entityInstances.length, state.entityInstances.length);
+  assert.deepEqual(released.entityInstances[0], { ...state.entityInstances[0], owner: undefined });
+  assert.deepEqual(released.entityInstances[1], { ...state.entityInstances[1], owner: undefined });
+  assert.deepEqual(released.entityInstances.slice(2), state.entityInstances.slice(2));
+  assert.equal(JSON.stringify(state), before);
+});
+
+test('Yes prepares a current-profile copy without taking the copies of another owner', () => {
+  const project = fixture();
+  project.playerProfiles = [{ id: 'me', name: 'Me', simulation: {} }, { id: 'other', name: 'Other', simulation: {} }];
+  const elsewhere = { id: 'elsewhere', entityId: 'key', owner: { kind: 'profile', profileId: 'other' }, properties: { wear: 4 } };
+  const state = { context: { profileId: 'me' }, entityInstances: [elsewhere] };
+  const owned = setOwned(project, state, true);
+  assert.equal(resolveConditionValue(key, project, owned).value, true);
+  assert.equal(owned.entityInstances.length, 2);
+  assert.equal(owned.entityInstances[0], elsewhere);
+  assert.deepEqual(owned.entityInstances[1].owner, { kind: 'profile', profileId: 'me' });
+  assert.equal(instanceOwnerIssue(project, owned.entityInstances, owned.entityInstances[1]), undefined);
+  const available = { id: 'available', entityId: 'key', properties: { wear: 7 }, states: { discovered: true } };
+  const reused = setOwned(project, { ...state, entityInstances: [elsewhere, available] }, true);
+  assert.deepEqual(reused.entityInstances[1], { ...available, owner: { kind: 'profile', profileId: 'me' } });
+  assert.equal(reused.entityInstances[0], elsewhere);
+});
+
+test('owned controls for a concrete contextual copy change its owner and preserve unrelated copies', () => {
+  const project = fixture();
+  const selfOwned = { ...key, subject: { kind: 'context', role: 'self' } };
+  const untouched = { id: 'other', entityId: 'key', owner: { kind: 'profile', profileId: 'default' } };
+  const state = { context: { profileId: 'default', self: { kind: 'instance', instanceId: 'selected' } }, entityInstances: [{ id: 'selected', entityId: 'key', properties: { wear: 5 } }, untouched] };
+  const owned = setOwned(project, state, true, selfOwned);
+  assert.equal(resolveConditionValue(selfOwned, project, owned).value, true);
+  assert.equal(instanceOwnerIssue(project, owned.entityInstances, owned.entityInstances[0]), undefined);
+  const released = setOwned(project, owned, false, selfOwned);
+  assert.equal(resolveConditionValue(selfOwned, project, released).value, false);
+  assert.deepEqual(released.entityInstances[0], { ...state.entityInstances[0], owner: undefined });
+  assert.equal(released.entityInstances[1], untouched);
+});
 
 test('canvas and inspector summaries retain OR/NOT grouping and label abbreviation honestly', () => {
   const project = fixture();
