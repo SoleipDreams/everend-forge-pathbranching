@@ -1,4 +1,5 @@
 import type { BranchingProject } from "./domain.js";
+import { canonicalPropertyDescriptors } from './characterStats.js';
 import {
   createEmptyBranchingProjectFromWorldNotionIndex,
   indexWorldNotionVaultFiles,
@@ -644,6 +645,7 @@ export function loadPathBranchingWorkspace(
           ? parseIntegrationConfigFile(files, storyIntegrationConfigPath(activeStory.id))
           : undefined) ?? activeProject.integrationConfigOverride,
       canonRefs: mergeCanonRefs(canonIndex, activeProject),
+      canonPropertyDescriptors: canonicalPropertyDescriptors(canonIndex.propertiesConfig as Record<string, unknown> | undefined),
     }), universeProfile?.localization?.primaryLocale ?? machineLocale()),
     storyModifiedMs: loadedStory?.modifiedMs,
     createdDefaultStory: !activeStory,

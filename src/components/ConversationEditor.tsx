@@ -52,7 +52,7 @@ function SpeakerPicker({ speakers, quickSpeakerIds, value, variantId, portrait, 
   const selected = speakers.find(item => item.id === (value ?? ''));
   const availableVariants = variantsFor(value);
   const variant = availableVariants.find(item => item.id === (variantId ?? 'base'));
-  const displayName = `${selected?.label ?? value ?? (es ? 'Narrador' : 'Narrator')}${value && variant && availableVariants.length > 1 ? ` (${variant.label})` : ''}`;
+  const displayName = `${selected?.label ?? value ?? (es ? 'Narrador' : 'Narrator')}${value && variant && availableVariants.length > 1 ? ` / ${variant.label}` : ''}`;
   const search = query.trim().toLocaleLowerCase();
   const quickIds = [...new Set([value, ...quickSpeakerIds].filter((id): id is string => Boolean(id) && id !== UNKNOWN_SPEAKER_REF))];
   const visible = search

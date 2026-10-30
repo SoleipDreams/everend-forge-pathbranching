@@ -4,7 +4,7 @@ import { MoreHorizontal } from 'lucide-react';
 
 type Option = { label: string; disabled?: boolean; run: () => void; danger?: boolean };
 /** One keyboard-accessible menu shared by the trailing button and row context menu. */
-export function ConversationLineMenu({ label, options, contextPoint, icon }: { label: string; options: Option[]; icon?: ReactNode; contextPoint?: { x: number; y: number; serial: number } }) {
+export function ConversationLineMenu({ label, options, contextPoint, icon, className = 'conversation-line-more' }: { label: string; options: Option[]; icon?: ReactNode; className?: string; contextPoint?: { x: number; y: number; serial: number } }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -29,7 +29,7 @@ export function ConversationLineMenu({ label, options, contextPoint, icon }: { l
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', dismiss); };
   }, [open]);
   return <>
-    <button ref={trigger} className="conversation-line-more" type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => { setPoint(undefined); setOpen(!open); }}>{icon ?? <MoreHorizontal size={17} aria-hidden="true" />}</button>
+    <button ref={trigger} className={className} type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => { setPoint(undefined); setOpen(!open); }}>{icon ?? <MoreHorizontal size={17} aria-hidden="true" />}</button>
     {open ? createPortal(<div ref={menu} id={id} className="conversation-line-menu" role="menu" aria-label={label} style={{ position: 'fixed', ...position }} onContextMenu={event => event.preventDefault()} onKeyDown={event => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(true); }
       else if (event.key === 'Tab') close();

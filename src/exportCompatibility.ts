@@ -1,4 +1,5 @@
 import type { BranchingProject, Consequence, LogicMoment, PlayerSimulationState } from "./domain.js";
+import { interactionDefinitionUsesContextualDice } from './interactionDice.js';
 
 export type ModularExportDiagnostic = {
   feature: string;
@@ -30,6 +31,7 @@ export function modularExportDiagnostics(project: BranchingProject): ModularExpo
   for (const rule of project.narrativeRules ?? []) add("narrative-rules", rule.id, "Triggered narrative rules and their priorities");
   for (const copy of project.entityInstances ?? []) add("entity-instances", copy.id, "Individual copies, their values and ownership");
   for (const override of project.entityOverrides ?? []) {
+    if (override.inventoryModifiers?.length) add('inventory-modifiers', override.entityId, 'Current property values derived from carried or equipped items');
     const { entityId, ...capabilities } = override;
     if (hasValues(capabilities)) add("entity-overrides", entityId, "Individual entity capability exceptions");
   }
@@ -49,11 +51,20 @@ export function modularExportDiagnostics(project: BranchingProject): ModularExpo
     if (scenario.actor || scenario.profileId || scenario.startNodeId || hasState(scenario.state, base?.dataObjects ?? project.projectDataObjects)) add("authoring-scenarios", scenario.id, "Named initial scenarios, their actors and entry points");
   }
   for (const event of project.events) {
-    for (const definition of event.interactionDefinitions ?? []) add('interactions-v1', definition.id, 'Interaction definitions and mechanics');
+    for (const definition of event.interactionDefinitions ?? []) if (event.interactionUses?.some(use => use.definitionId === definition.id)) {
+      add('interactions-v1', definition.id, 'Interaction definitions and mechanics');
+      if (definition.mechanic.kind === 'opposedcheck') add('opposed-interactions-v1', definition.id, 'Opposed checks with independent participant rolls and results');
+      if (interactionDefinitionUsesContextualDice(definition)) add('contextual-dice-v1', definition.id, 'Contextual dice recipes, result intervals, zero-based faces and conditional modifiers');
+      const mechanic = definition.mechanic;
+      if (mechanic.kind === 'dice' && (mechanic.groups?.length ?? 0) > 1 || mechanic.kind === 'skillcheck' && (mechanic.dice?.groups?.length ?? 0) > 1 || mechanic.kind === 'opposedcheck' && ((mechanic.commonDice?.groups?.length ?? 0) > 1 || [mechanic.actor, ...mechanic.rivals].some(participant => (participant.dice?.groups?.length ?? 0) > 1))) add('compound-dice-v1', definition.id, 'Mixed dice pools');
+    }
     for (const use of event.interactionUses ?? []) add('interactions-v1', use.id, 'Gameplay interactions, results and wait barriers');
     for (const barrier of event.interactionBarriers ?? []) add('interactions-v1', barrier.id, 'Interaction wait barriers');
     if (event.parentEventId || event.childEventIds?.length) add("nested-event-structure", event.id, "Nested event entry and parent/child execution");
     if (event.boundaryBindings?.length || event.transitions?.some(route => /^(boundary|dialogue-boundary):/.test(route.from) || /^(boundary|dialogue-boundary):/.test(route.to))) add("boundary-execution", event.id, "Event or dialogue boundary entry and exit routes");
+  }
+  if (project.logicFormats && Object.values(project.logicFormats).some(value => value !== undefined)) {
+    add("logic-formats-v1", "logicFormats", "Project-wide option availability and decision presentation formats");
   }
 
   // The authoring engine defaults entry/route effects to once per run. Ink's

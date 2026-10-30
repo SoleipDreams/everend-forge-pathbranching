@@ -31,7 +31,11 @@ function sequenceNode(sequence: Sequence): StoryFlowNode {
     id: sequence.id,
     kind: "sequence",
     label: sequence.name,
-    canonRefs: sequence.characterRef ? [sequence.characterRef] : [],
+    canonRefs: sequence.characterRefs !== undefined
+      ? sequence.characterRefs
+      : sequence.characterRef
+        ? [sequence.characterRef]
+        : [],
   };
 }
 

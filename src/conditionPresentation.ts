@@ -166,7 +166,10 @@ export function conditionTreeSummary(project: BranchingProject, input: Condition
       if (value.type === 'interactionResult') {
         const use = project.events.flatMap(e => (e.interactionUses ?? []).map(use => ({ use, event: e }))).find(x => x.use.id === value.useId);
         const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
-        return `${definition?.name ?? String(value.useId)} ${String(value.operator)} ${definition?.results.find(r => r.id === value.resultId)?.name ?? String(value.resultId)}`;
+        const rival = value.participantId && definition?.mechanic.kind === 'opposedcheck' ? definition.mechanic.rivals.find(item=>item.id === value.participantId) : undefined;
+        const rivalName = rival?.subject.kind === 'entity' ? entityDefinition(project,rival.subject.entityId)?.name : rival?.subject.kind === 'instance' ? project.entityInstances?.find(copy=>'instanceId' in rival.subject && copy.id===rival.subject.instanceId)?.name : undefined;
+        const scope = value.participantId ? `${locale === 'es' ? 'contra' : 'against'} ${rivalName ?? value.participantId}` : definition?.mechanic.kind === 'opposedcheck' ? locale === 'es' ? 'general' : 'overall' : undefined;
+        return `${definition?.name ?? String(value.useId)}${scope ? ` · ${scope}` : ''} ${String(value.operator)} ${definition?.results.find(r => r.id === value.resultId)?.name ?? String(value.resultId)}`;
       }
       if (value.type === 'instanceQuery') {
         const query = value as InstanceQuery;

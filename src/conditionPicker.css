@@ -1,0 +1,51 @@
+.pathbranching-app .condition-reference-picker { min-width:0; width:100%; }
+.pathbranching-app .condition-reference-picker > .condition-picker-trigger { display:flex; align-items:center; justify-content:flex-start; gap:7px; width:100%; min-width:0; min-height:40px; box-sizing:border-box; margin:0; padding:8px 10px; border:1px solid var(--ef-border); border-radius:var(--ef-radius-control,6px); color:var(--ef-text); background:var(--ef-panel-soft); font:inherit; font-size:13px; line-height:1.3; text-align:left; cursor:pointer; }
+.pathbranching-app .condition-reference-picker > .condition-picker-trigger:hover:not(:disabled),.pathbranching-app .condition-reference-picker.open .condition-picker-trigger { border-color:var(--ef-accent); background:var(--ef-accent-soft); }
+.pathbranching-app .condition-picker-trigger:disabled { opacity:.5; cursor:default; }
+.pathbranching-app .condition-picker-trigger > svg { flex:0 0 auto; color:var(--ef-accent); }
+.pathbranching-app .condition-picker-trigger-text { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pathbranching-app .condition-picker-trigger-text.placeholder { color:var(--ef-muted); }
+.pathbranching-app .condition-picker-trigger > .condition-picker-chevron { margin-left:auto; width:14px; height:14px; color:var(--ef-muted); }
+.pathbranching-app .condition-reference-picker.invalid .condition-picker-trigger { border-color:var(--ef-warning,#d49c4e); }
+.pathbranching-app .condition-picker-selected-chips { display:flex; gap:4px; min-width:0; overflow:hidden; }
+.pathbranching-app .condition-picker-selected-chips > span { min-width:0; max-width:160px; padding:2px 5px; border-radius:4px; background:var(--ef-accent-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pathbranching-app .condition-picker-popover { z-index:1900; display:flex; flex-direction:column; box-sizing:border-box; min-width:0; overflow:hidden; padding:6px; border:1px solid var(--ef-border); border-radius:var(--ef-radius-panel,10px); color:var(--ef-text); background:var(--ef-panel); box-shadow:0 12px 36px #0005; font-family:var(--ef-ui-font,inherit); font-size:13px; }
+.pathbranching-app .condition-picker-search { flex:0 0 auto; display:flex; align-items:center; gap:7px; min-width:0; padding:4px 5px 8px; border-bottom:1px solid var(--ef-border); color:var(--ef-muted); }
+.pathbranching-app .condition-picker-search > svg { flex:0 0 auto; }
+.pathbranching-app .condition-picker-search > input { flex:1; width:0; min-width:0; min-height:34px; box-sizing:border-box; padding:5px 7px; border:1px solid var(--ef-border); border-radius:var(--ef-radius-control,6px); color:var(--ef-text); background:var(--ef-bg); font:inherit; }
+.pathbranching-app .condition-picker-search > button { display:grid; flex:0 0 28px; place-items:center; width:28px; min-height:28px; padding:0; border:0; border-radius:5px; color:var(--ef-muted); background:transparent; cursor:pointer; }
+.pathbranching-app .condition-picker-search > button:hover { color:var(--ef-text); background:var(--ef-accent-soft); }
+.pathbranching-app .condition-picker-leading-action { flex:0 0 auto; padding:6px 0; border-bottom:1px solid var(--ef-border); }
+.pathbranching-app .condition-picker-leading-action > button { display:flex; align-items:center; gap:8px; width:100%; min-height:42px; box-sizing:border-box; padding:8px; border:1px solid var(--ef-accent); border-radius:var(--ef-radius-control,6px); color:var(--ef-accent); background:var(--ef-accent-soft); font:inherit; line-height:1.3; text-align:left; cursor:pointer; }
+.pathbranching-app .condition-picker-leading-action > button:hover:not(:disabled) { background:color-mix(in srgb,var(--ef-accent) 18%,var(--ef-panel)); }
+.pathbranching-app .condition-picker-leading-action > button:disabled { opacity:.5; cursor:default; }
+.pathbranching-app .condition-picker-results { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:4px 0; scrollbar-width:thin; }
+.pathbranching-app .condition-picker-result-group { margin:0; padding:0; border:0; background:transparent; }
+.pathbranching-app .condition-picker-results h4 { margin:8px 8px 4px; padding:0; border:0; color:var(--ef-muted); font:inherit; font-size:11px; font-weight:700; letter-spacing:.025em; }
+.pathbranching-app .condition-picker-result { display:flex; align-items:center; gap:8px; width:100%; min-width:0; min-height:39px; box-sizing:border-box; margin:0; padding:8px; border:1px solid transparent; border-radius:var(--ef-radius-control,6px); color:var(--ef-text); background:transparent; font:inherit; line-height:1.3; text-align:left; cursor:pointer; }
+.pathbranching-app .condition-picker-result:hover,.pathbranching-app .condition-picker-result.selected { background:var(--ef-accent-soft); }
+.pathbranching-app .condition-picker-result-icon { display:grid; flex:0 0 20px; place-items:center; color:var(--ef-accent); }
+.pathbranching-app .condition-picker-result-copy { display:grid; flex:1; gap:3px; min-width:0; }
+.pathbranching-app .condition-picker-result-copy > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pathbranching-app .condition-picker-result-copy > small { margin:0; color:var(--ef-muted); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+.pathbranching-app .condition-picker-result-check { flex:0 0 auto; color:var(--ef-accent); }
+.pathbranching-app .condition-picker-result-subchoice { flex:0 0 auto; margin-left:auto; color:var(--ef-muted); }
+.pathbranching-app .condition-picker-subchoice-header { display:flex; flex:0 0 auto; align-items:center; gap:8px; min-width:0; padding:5px 3px 8px; border-bottom:1px solid var(--ef-border); }
+.pathbranching-app .condition-picker-subchoice-header > button { display:grid; flex:0 0 30px; place-items:center; width:30px; min-height:30px; padding:0; border:1px solid var(--ef-border); border-radius:var(--ef-radius-control,6px); color:var(--ef-muted); background:var(--ef-panel-soft); cursor:pointer; }
+.pathbranching-app .condition-picker-subchoice-header > button:hover { color:var(--ef-text); background:var(--ef-accent-soft); }
+.pathbranching-app .condition-picker-subchoice-header > span { display:grid; gap:2px; min-width:0; }
+.pathbranching-app .condition-picker-subchoice-header strong { overflow:hidden; color:var(--ef-text); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.pathbranching-app .condition-picker-subchoice-header small { color:var(--ef-muted); font-size:11px; }
+.pathbranching-app .condition-picker-footer { display:flex; flex:0 0 auto; flex-wrap:wrap; gap:4px; }
+.pathbranching-app .condition-picker-footer:not(:empty) { padding:5px 0 0; border-top:1px solid var(--ef-border); }
+.pathbranching-app .condition-picker-footer > button { flex:1; display:flex; align-items:center; justify-content:center; gap:5px; min-height:34px; box-sizing:border-box; padding:6px 8px; border:1px solid transparent; border-radius:var(--ef-radius-control,6px); color:var(--ef-accent); background:transparent; font:inherit; cursor:pointer; }
+.pathbranching-app .condition-picker-footer > button:hover { background:var(--ef-accent-soft); }
+.pathbranching-app .condition-picker-footer small { color:var(--ef-muted); font-size:11px; }
+.pathbranching-app .condition-picker-empty { margin:12px 8px; color:var(--ef-muted); font-size:12px; }
+.pathbranching-app .condition-picker-selection-summary { display:flex; flex:0 0 auto; flex-wrap:wrap; gap:4px; max-height:82px; overflow-y:auto; padding:7px 5px; border-bottom:1px solid var(--ef-border); }
+.pathbranching-app .condition-picker-selection-summary > span { max-width:100%; padding:3px 6px; border-radius:4px; color:var(--ef-text); background:var(--ef-accent-soft); font-size:11px; overflow-wrap:anywhere; }
+.pathbranching-app .condition-picker-popover.compact .condition-picker-result-copy > small { font-size:11px; }
+.pathbranching-app .condition-picker-trigger:focus-visible,.pathbranching-app .condition-picker-result:focus-visible,.pathbranching-app .condition-picker-leading-action > button:focus-visible,.pathbranching-app .condition-picker-search > :is(input,button):focus-visible,.pathbranching-app .condition-picker-subchoice-header > button:focus-visible,.pathbranching-app .condition-picker-footer > button:focus-visible { outline:2px solid var(--ef-accent); outline-offset:-2px; }
+@media (forced-colors:active) { .pathbranching-app .condition-picker-result.selected { border-color:Highlight; } }
+
+.pathbranching-app .condition-picker-label-short { display:none; }

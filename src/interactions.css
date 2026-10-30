@@ -1,10 +1,56 @@
-.interactions-editor { display: grid; gap: 12px; min-width: 0; padding: 12px; }
+.interactions-editor { display: grid; gap: 12px; min-width: 0; padding: 12px; container-type: inline-size; }
+.interactions-editor[data-hide-creation=true] > :is(.interaction-fields-row,.narrative-actions) { display:none; }
+.interactions-editor button:not(.condition-picker-field) { font:inherit; color:var(--wn-text,inherit); padding:8px 12px; border:1px solid var(--wn-border,#30333f); border-radius:8px; background:var(--wn-panel-2,#191c25); cursor:pointer; }
+.interactions-editor button:disabled { opacity:.5; cursor:default; }
+.interactions-editor button:focus-visible { outline:2px solid var(--wn-accent,#f6c66a); outline-offset:2px; }
+.interactions-editor > .narrative-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.interactions-editor > .interaction-option-router-note { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--wn-border,#30333f); border-radius:8px; background:var(--wn-panel-2,#191c25); }
+.interactions-editor > .interaction-router-creation { display:grid; gap:10px; }
+.interaction-router-creation > p { margin:0; }
+.interaction-option-router-note p { margin:0; color:var(--wn-muted); }
+.interaction-option-router-note button { flex:0 0 auto; }
+@container (max-width: 520px) { .interactions-editor > .interaction-option-router-note { align-items:stretch; flex-direction:column; } }
+.interaction-card input:not([type=checkbox]),.interaction-card textarea { padding:8px 10px; border:1px solid var(--wn-border,#30333f); border-radius:8px; background:var(--wn-panel-2,#191c25); color:var(--wn-text,inherit); font:inherit; }
 .interaction-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-color, #80808055); border-radius: 8px; min-width: 0; }
+.interactions-editor .interaction-card.interaction-card-inline { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .interaction-card > summary { cursor: pointer; font-weight: 600; }
 .interaction-card label { display: grid; gap: 5px; }
 .interaction-card input:not([type=checkbox]), .interaction-card select, .interaction-card textarea { width: 100%; min-width: 0; box-sizing: border-box; }
 .interaction-card fieldset { min-width: 0; display: grid; gap: 8px; }
+.interaction-consequences-editor { display: grid; gap: 16px; min-width: 0; }
+.interaction-result-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--wn-border, #30333f); }
+.interaction-result-tabs [role="tab"] { max-width: min(260px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interactions-editor .interaction-result-continuation-controls { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; margin-block: 10px; }
+.interaction-consequences-heading { display: grid; gap: 4px; }
+.interaction-consequences-heading h2, .interaction-consequences-heading p { margin: 0; }
+.interaction-consequences-heading p { color: var(--wn-muted); }
+.pathbranching-app .interaction-consequences-editor .logic-composer-row.effect.has-value { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 1fr) 30px; }
+.pathbranching-app .interaction-consequences-editor .logic-composer-row.effect.no-value { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 0.85fr) 30px; }
+.interaction-opposed-layout { display: grid; grid-template-columns: minmax(250px, 0.9fr) minmax(0, 1.6fr); align-items: start; gap: 14px; min-width: 0; }
+.interaction-opposed-actor-card, .interaction-opposed-rivals { min-width: 0; padding: 12px; border: 1px solid var(--wn-border, #30333f); border-radius: 9px; background: color-mix(in srgb, var(--wn-panel-2, #191c25) 48%, transparent); }
+.interaction-opposed-actor-card > legend, .interaction-opposed-rival-card > legend { padding: 0 5px; font-weight: 650; }
+.interaction-opposed-rivals { display: grid; gap: 10px; }
+.interaction-opposed-rivals > header { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+.interaction-opposed-rivals > header h4 { margin: 0; }
+.interaction-opposed-rivals > header label { display: grid; grid-template-columns: auto minmax(150px, 1fr); align-items: center; gap: 8px; }
+.interaction-opposed-rivals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: start; gap: 10px; min-width: 0; }
+.interaction-opposed-rival-card { min-width: 0; padding: 10px; border: 1px solid var(--wn-border, #30333f); border-radius: 8px; }
+.interaction-add-rival { justify-self: start; }
+.interaction-participant-fields { min-width: 0; }
+@media (max-width: 760px) {
+  .interaction-opposed-layout { grid-template-columns: minmax(0, 1fr); }
+  .interaction-opposed-rivals > header { align-items: stretch; flex-direction: column; }
+  .interaction-opposed-rivals > header label { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 680px) {
+  .interaction-opposed-layout { grid-template-columns: minmax(0, 1fr); }
+  .interaction-opposed-rivals > header { align-items: stretch; flex-direction: column; }
+  .interaction-opposed-rivals > header label { grid-template-columns: minmax(0, 1fr); }
+}
 .interaction-run { display: grid; gap: 8px; }
+.interaction-participant-traces { display: grid; gap: 8px; }
+.interaction-participant-trace { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--wn-border, #80808055); border-radius: 8px; background: var(--wn-panel, #111318); }
+.interaction-participant-trace > span { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .interaction-node-results { display: grid; gap: 6px; padding-top: 8px; }
 .interaction-node-result { position: relative; text-align: right; padding: 4px 12px; }
 .interaction-node-result .react-flow__handle { right: -5px; }
@@ -12,3 +58,11 @@
 .canvas-interaction-cards:empty { display: none; }
 .canvas-interaction-cards button { display: flex; gap: 6px; padding: 6px 8px; border: 1px solid var(--border-color, #80808055); border-radius: 6px; font: inherit; font-size: 11px; background: var(--ef-surface-raised, #20252f); color: inherit; cursor: pointer; }
 .canvas-interaction-cards span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interaction-roll-breakdown {
+  display: grid;
+  gap: 0.45rem;
+}
+.interaction-roll-breakdown > span,
+.interaction-roll-breakdown > small {
+  color: var(--text-muted, #aaa);
+}

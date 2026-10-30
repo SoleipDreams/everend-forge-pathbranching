@@ -1,5 +1,5 @@
 import { useApplicationEffect } from "./useApplicationActivity.js";
-import { ChevronDown, Search, UserRound, Package, GitBranch, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Search, UserRound, Package, GitBranch, Plus } from "lucide-react";
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
 import { useInterfaceLocale } from "../i18n.js";
@@ -22,33 +22,40 @@ function entityGroup(kind: string | undefined) {
 
 export function SpeakerSelector({
   value,
+  variantId,
+  selectVariant = false,
   displayLabel,
   options,
   presentEntityIds,
   onChange,
   onCreateSpeaker,
-  onVariantChange,
   onClose,
   onCanvasInteraction,
 }: {
   value?: string;
+  variantId?: string;
+  selectVariant?: boolean;
   displayLabel?: string;
   options: SpeakerOption[];
   presentEntityIds: string[];
-  onChange: (speakerId?: string) => void;
+  onChange: (speakerId?: string, variantId?: string) => void;
   onCreateSpeaker?: (name: string) => void;
-  onVariantChange?: (variantId: string) => void;
   onClose: () => void;
   onCanvasInteraction: (event: React.PointerEvent | React.MouseEvent | React.KeyboardEvent) => void;
 }) {
   const es = useInterfaceLocale() === "es";
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [variantSpeaker, setVariantSpeaker] = useState<SpeakerOption>();
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const selectedSpeaker = options.find((s) => s.id === value);
-  const selectedVariant = selectedSpeaker?.variants.find((v) => v.id === "base");
+  const selectedVariant = selectedSpeaker?.variants.find((v) => v.id === (variantId ?? "base"));
+  const selectedName = speakerLabel(value, selectedSpeaker?.label ?? displayLabel);
+  const triggerLabel = selectVariant && selectedSpeaker && selectedSpeaker.variants.length > 1 && selectedVariant
+    ? `${selectedName} / ${selectedVariant.label}`
+    : selectedName;
 
   const presentSet = useMemo(() => new Set(presentEntityIds), [presentEntityIds]);
 
@@ -114,9 +121,22 @@ export function SpeakerSelector({
   }, [searchOpen, onClose]);
 
   const handleSelectSpeaker = (speakerId?: string) => {
-    onChange(speakerId);
+    onChange(speakerId, selectVariant ? "base" : undefined);
     setSearchOpen(false);
     setSearchTerm("");
+    setVariantSpeaker(undefined);
+    onClose();
+  };
+
+  const chooseSpeaker = (speaker: SpeakerOption) => {
+    if (selectVariant && speaker.variants.length > 1) {
+      setVariantSpeaker(speaker);
+      return;
+    }
+    onChange(speaker.id, selectVariant ? speaker.variants[0]?.id ?? "base" : undefined);
+    setSearchOpen(false);
+    setSearchTerm("");
+    setVariantSpeaker(undefined);
     onClose();
   };
 
@@ -140,16 +160,37 @@ export function SpeakerSelector({
         onPointerDown={onCanvasInteraction}
         onClick={(event) => {
           onCanvasInteraction(event);
-          setSearchOpen(!searchOpen);
+          if (searchOpen) {
+            setSearchOpen(false);
+            setVariantSpeaker(undefined);
+          } else {
+            setSearchTerm("");
+            setVariantSpeaker(undefined);
+            setSearchOpen(true);
+          }
         }}
       >
-        <span title={value}>{speakerLabel(value, selectedSpeaker?.label ?? displayLabel)}</span>
+        <span title={triggerLabel}>{triggerLabel}</span>
         <span className="speech-beat-menu-chevron" aria-hidden="true">⌄</span>
       </button>
 
       {/* Search menu */}
       {searchOpen ? (
         <div className="speaker-selector-menu" role="dialog" aria-label="Select a speaker">
+          {variantSpeaker ? <>
+            <div className="speaker-selector-variant-header">
+              <button type="button" className="speaker-selector-back" onPointerDown={onCanvasInteraction} onClick={(event) => { onCanvasInteraction(event); setVariantSpeaker(undefined); requestAnimationFrame(() => inputRef.current?.focus()); }}>
+                <ChevronLeft size={14} aria-hidden="true" />{es ? "Personajes" : "Characters"}
+              </button>
+              <span><strong>{variantSpeaker.label}</strong><small>{es ? "Elige una variante" : "Choose a variant"}</small></span>
+            </div>
+            <div className="speaker-selector-options" role="group" aria-label={es ? "Variantes del personaje" : "Character variants"}>
+              {variantSpeaker.variants.map((variant) => <button key={variant.id} type="button" role="option" className="speaker-selector-option" aria-selected={variantSpeaker.id === value && variant.id === (variantId ?? "base")} onPointerDown={onCanvasInteraction} onClick={(event) => { onCanvasInteraction(event); onChange(variantSpeaker.id, variant.id); setSearchOpen(false); setSearchTerm(""); setVariantSpeaker(undefined); onClose(); }}>
+                {variant.portraitUrl || variantSpeaker.portraitUrl ? <img className="speaker-selector-portrait" src={variant.portraitUrl ?? variantSpeaker.portraitUrl} alt="" /> : <span className="speaker-selector-icon"><UserRound size={14} /></span>}
+                <span className="speaker-selector-label">{variant.label}</span>
+              </button>)}
+            </div>
+          </> : <>
           {/* Search input */}
           <div className="speaker-selector-search-container">
             <Search size={16} className="speaker-selector-search-icon" />
@@ -170,7 +211,7 @@ export function SpeakerSelector({
                 if (e.key === "Enter" && totalResults === 1) {
                   const speaker = visibleSpeakers[0];
                   if (speaker) {
-                    handleSelectSpeaker(speaker.id);
+                    chooseSpeaker(speaker);
                   }
                 } else if (e.key === "Enter" && canCreateSpeaker) {
                   e.preventDefault();
@@ -224,7 +265,7 @@ export function SpeakerSelector({
                   aria-selected={speaker.id === value}
                   onClick={(event) => {
                     onCanvasInteraction(event);
-                    handleSelectSpeaker(speaker.id);
+                    chooseSpeaker(speaker);
                   }}
                 >
                   {speaker.portraitUrl ? (
@@ -253,6 +294,7 @@ export function SpeakerSelector({
                       <span className="speaker-selector-source">{speaker.source === "published" ? "Published" : speaker.source === "local" ? "Local" : "Canon"}</span>
                     ) : null}
                   </div>
+                  {selectVariant && speaker.variants.length > 1 ? <ChevronRight size={14} aria-hidden="true" /> : null}
                 </button>
               );
             })
@@ -281,6 +323,7 @@ export function SpeakerSelector({
               ) : null}
             </>
           )}
+          </>}
         </div>
       ) : null}
     </div>

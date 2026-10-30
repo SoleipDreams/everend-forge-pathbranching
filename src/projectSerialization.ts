@@ -20,6 +20,7 @@ import { DEFAULT_INTEGRATION_CONFIG, normalizeIntegrationConfig } from "./integr
 import { migrateProjectTypesToProperties } from "./explorerSchema.js";
 import { inferredTransitionRole, migrateLogicMoment, walkConditions } from "./logic.js";
 import { normalizeAuthoringEntities } from './authoringEntities.js';
+import { propertyReadPermission } from './characterStats.js';
 
 function normalizeLogicCapabilities(project: BranchingProject): {
   logicPropertyOverrides: LogicPropertyOverride[];
@@ -39,7 +40,7 @@ function normalizeLogicCapabilities(project: BranchingProject): {
 
     // Entity types are represented by properties in the current explorer
     // model. Keep their capabilities beside the other property capabilities
-    // so a round-trip cannot detach grantable/location from the property.
+    // so a round-trip cannot detach ownership, inventory or location settings.
     return override;
   });
   return { logicPropertyOverrides: properties, logicTypeOverrides: Array.from(types.values()) };
@@ -384,6 +385,13 @@ function addCompatibilityLogicCapabilities(project: BranchingProject): Branching
     if (!source) return;
     const key = `${source}:${predicateOrEffect.propertyId}`;
     const current = overrides.get(key) ?? { propertyId: predicateOrEffect.propertyId, source };
+    if (capability === 'conditionReadable') {
+      const entityId = predicateOrEffect.subject.entityId;
+      const typeId = project.canonRefs.find(item => item.id === entityId)?.kind
+        ?? project.localExplorerEntities?.find(item => item.id === entityId)?.type;
+      const readPermission = propertyReadPermission(project, source, predicateOrEffect.propertyId, { typeId });
+      if (current.conditionReadableInherited || readPermission.managed || readPermission.value !== undefined) return;
+    }
     if (current[capability] === undefined) overrides.set(key, { ...current, [capability]: true });
   };
   const visited = new Set<object>();
@@ -579,6 +587,7 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
       : undefined,
     logicVariableGroups,
     logicVariables,
+    logicFormats: project.logicFormats,
     logicPropertyOverrides: logicCapabilities.logicPropertyOverrides,
     logicTypeOverrides: logicCapabilities.logicTypeOverrides,
     projectionRules: project.projectionRules ?? [],

@@ -3,6 +3,7 @@ import {
   ensureBrowserUniverseWritePermission,
   pickBrowserUniverse,
   readBrowserUniverse,
+  deleteBrowserUniverseFile,
   writeBrowserUniverseFile,
 } from "../lib/utils/browserUniverse.js";
 import { createDemoBrowserUniverse } from "../lib/utils/demoBrowserUniverse.js";
@@ -14,6 +15,7 @@ try {
   const root = {
     name: "demo",
     async *entries() {},
+    async removeEntry() {},
     async getDirectoryHandle() { return this; },
     async getFileHandle() { throw new Error("not needed"); },
   };
@@ -66,6 +68,12 @@ try {
   assert.equal(
     writtenFiles.find((file) => file.relativePath.endsWith("browser-demo-write.json"))?.content,
     "{\"ok\":true}\n",
+  );
+  await deleteBrowserUniverseFile(demoRoot, ".everend/.pathbranching/browser-demo-write.json");
+  assert.equal(
+    (await readBrowserUniverse(demoRoot)).some((file) => file.relativePath.endsWith("browser-demo-write.json")),
+    false,
+    "browser universe deletion must remove stale story sidecars",
   );
 } finally {
   globalThis.window = originalWindow;

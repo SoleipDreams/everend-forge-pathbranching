@@ -325,7 +325,7 @@ function buildEventPathNode(project: BranchingProject, event: EventNode, scope: 
         : start.source?.kind === "dataObject"
           ? project.projectDataObjects?.find((item) => item.id === start.source?.id)?.name ?? start.source.id
           : "Choose an interactable source",
-      subtitle: "Conversation start",
+      subtitle: "Trigger",
       badges: start.availability ? ["conditional"] : [],
       scope: nestedScope,
       selectId: `dialogue-start:${event.id}:${start.id}`,

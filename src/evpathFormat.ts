@@ -26,6 +26,7 @@ import {
 import { UNDETERMINED_LOCALE, blockValues, localizedValue, updateLocalizedEntry } from "./localization.js";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "./speakerRoles.js";
 import { BASE_VARIANT_ID, canonVariantsForRef } from "./worldnotionVariants.js";
+import { findLocalExplorerPropertyByReference } from "./explorerSchema.js";
 import {
   createDecision,
   createDialogue,
@@ -170,7 +171,7 @@ function entityLabel(project: BranchingProject | undefined, id: string): string 
 }
 
 function propertyLabel(project: BranchingProject | undefined, id: string): string {
-  return project?.localExplorerProperties?.find((item) => item.id === id)?.label ?? id;
+  return project ? findLocalExplorerPropertyByReference(project.localExplorerProperties, id)?.label ?? id : id;
 }
 
 function subjectText(project: BranchingProject | undefined, subject: LogicSubject): string {

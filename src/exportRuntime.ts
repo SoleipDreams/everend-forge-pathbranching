@@ -1,4 +1,5 @@
-import { hasInteractions } from './interactions.js';
+import { hasInteractions, hasOpposedInteractions } from './interactions.js';
+import { hasCompoundDice, hasContextualDice } from './interactionDice.js';
 import type {
   BranchingProject,
   EventNode,
@@ -11,7 +12,7 @@ import { combineConditions, effectiveConditions, orderedTransitions } from "./lo
 import { UNKNOWN_SPEAKER_REF } from "./speakerRoles.js";
 import { modularExportDiagnostics } from "./exportCompatibility.js";
 
-function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[] | undefined {
+function eventChoices(project: BranchingProject, event: EventNode, routers: RuntimeNode[]): RuntimeChoice[] | undefined {
   const outcomeChoices: RuntimeChoice[] = (event.decisions ?? []).flatMap((decision) =>
     decision.outcomes.map((outcome) => {
       const outcomeNodeId = `outcome:${event.id}:${decision.id}:${outcome.id}`;
@@ -19,6 +20,8 @@ function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[]
       const direct = routes.length === 1 && !effectiveConditions(routes[0]) && !routes[0].consequences?.length && !routes[0].logic;
       const routerId = `route:${outcomeNodeId}`;
       if (!direct) routers.push({id:routerId,type:'route',canonRefDetails:[],automaticTransitions:routes.map(route=>({...route,conditions:effectiveConditions(route),consequences:route.logic?.then ?? route.consequences}))});
+      const unavailableText = project.logicFormats?.unavailableText?.trim() ? project.logicFormats.unavailableText : outcome.unavailableText?.content;
+      const lockText = project.logicFormats?.lockText?.trim() ? project.logicFormats.lockText : outcome.lockText?.content;
       return {
         id: outcome.id,
         textKey: `outcome.${outcome.id}.text`,
@@ -27,8 +30,9 @@ function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[]
         consequences: [...(decision.logic?.then ?? []), ...(outcome.logic?.then ?? outcome.consequences ?? [])],
         containerLogic: decision.logic,
         logic: outcome.logic,
-        unavailableBehavior: outcome.unavailableBehavior ?? "locked",
-        lockTextKey: outcome.lockText?.content ? `outcome.${outcome.id}.lock` : undefined,
+        unavailableBehavior: project.logicFormats?.unavailableBehavior ?? outcome.unavailableBehavior ?? "locked",
+        unavailableTextKey: unavailableText ? project.logicFormats?.unavailableText?.trim() ? "logicFormats.unavailableText" : `outcome.${outcome.id}.unavailable` : undefined,
+        lockTextKey: lockText ? project.logicFormats?.lockText?.trim() ? "logicFormats.lockText" : `outcome.${outcome.id}.lock` : undefined,
       };
     }),
   );
@@ -38,6 +42,7 @@ function eventChoices(event: EventNode, routers: RuntimeNode[]): RuntimeChoice[]
 
 export type RuntimeExportProfile = 'enhanced' | 'legacy';
 export function exportRuntimePackage(project: BranchingProject, options: {profile?: RuntimeExportProfile} = {}): RuntimePackage {
+  if (project.events.some(event => event.interactionUses?.some(use => event.interactionDefinitions?.some(definition => definition.id === use.definitionId && definition.mechanicPending)))) throw new Error('Elige una mecánica para cada interacción antes de exportar.');
   const routers: RuntimeNode[] = [];
 
   const entrySequence = project.entrySequenceId
@@ -78,7 +83,8 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
     id: event.id,
     type: "event",
     textKey: `event.${event.id}.name`,
-    choices: eventChoices(event, routers),
+    choices: eventChoices(project, event, routers),
+    decisionOptionStyle: project.logicFormats?.decisionOptionStyle,
     conditions: combineConditions(
       ...project.sequences.filter(s=>s.eventIds.includes(event.id)).map(effectiveConditions),
       ...project.branches.filter(b=>b.eventIds.includes(event.id)).map(effectiveConditions), effectiveConditions(event)),
@@ -175,12 +181,14 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
     const { interactionResults: _temporary, ...authored } = state; return authored;
   };
   const modularRequirements = modularExportDiagnostics(project);
-  const modularExecution = modularRequirements.length > 0 || project.events.some(event =>
+  const usesLogicFormats = Boolean(project.logicFormats && Object.values(project.logicFormats).some(value => value !== undefined));
+  const modularExecution = modularRequirements.some(requirement => requirement.feature !== "logic-formats-v1") || project.events.some(event =>
     event.dialogues?.length || event.dialogueBeats?.length || event.dialogueStarts?.length ||
     event.parentEventId || event.childEventIds?.length || event.boundaryBindings?.length ||
     event.transitions?.some(route => /^(boundary|beat|dialogue|dialogue-start|decision):/.test(route.from) || /^(boundary|beat|dialogue|dialogue-start|decision|outcome):/.test(route.to)));
-  const requiredFeatures = [...(hasInteractions(project) ? ["interactions-v1"] : []), "typed-condition-tree-v1", "ordered-routes-v1", "logic-rules-v1", ...(routers.length ? ["dynamic-choice-routing-v1"] : []), ...(modularExecution ? ["modular-authoring-v1"] : [])];
+  const requiredFeatures = [...(hasInteractions(project) ? ["interactions-v1"] : []), ...(hasOpposedInteractions(project) ? ["opposed-interactions-v1"] : []), ...(hasCompoundDice(project) ? ["compound-dice-v1"] : []), ...(hasContextualDice(project) ? ["contextual-dice-v1"] : []), ...(usesLogicFormats ? ["logic-formats-v1"] : []), "typed-condition-tree-v1", "ordered-routes-v1", "logic-rules-v1", ...(routers.length ? ["dynamic-choice-routing-v1"] : []), ...(modularExecution ? ["modular-authoring-v1"] : [])];
   if (options.profile === "legacy" && modularExecution) throw Error("Legacy runtime cannot preserve modular authoring; use the enhanced profile.");
+  if (options.profile === "legacy" && usesLogicFormats) throw Error("Legacy runtime cannot preserve project-wide logic formats; use the enhanced profile.");
   if (options.profile === "legacy" && (routers.length || JSON.stringify(project).includes('"logic"') || project.events.some(e=>e.transitions?.some(t=>effectiveConditions(t))))) throw Error("Legacy runtime cannot preserve conditional logic; use the enhanced profile.");
 
   const legacyPrimary = {
@@ -191,6 +199,7 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
         [`decision.${decision.id}.prompt`, decision.name] as const,
         ...decision.outcomes.flatMap((outcome) => [
           [`outcome.${outcome.id}.text`, outcome.visibleText?.trim() || outcome.name] as const,
+          ...(outcome.unavailableText?.content ? [[`outcome.${outcome.id}.unavailable`, outcome.unavailableText.content] as const] : []),
           ...(outcome.lockText?.content ? [[`outcome.${outcome.id}.lock`, outcome.lockText.content] as const] : []),
         ]),
       ]),
@@ -199,6 +208,8 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
     ...Object.fromEntries((project.scriptDocuments ?? []).flatMap((script) => script.blocks.map((block) => [block.textKey ?? `script.${script.id}.${block.id}`, block.content] as const))),
   };
   const primaryLocale = project.localizationCatalog?.primaryLocale ?? "und";
+  if (project.logicFormats?.unavailableText) legacyPrimary["logicFormats.unavailableText"] = project.logicFormats.unavailableText;
+  if (project.logicFormats?.lockText) legacyPrimary["logicFormats.lockText"] = project.logicFormats.lockText;
   const locales = project.localizationCatalog?.locales ?? [primaryLocale];
   const localizations = Object.fromEntries(locales.map((locale) => [locale, {
     ...(locale === primaryLocale ? legacyPrimary : {}),
@@ -223,10 +234,12 @@ export function exportRuntimePackage(project: BranchingProject, options: {profil
       ...(modularExecution ? { authoringModelVersion: "0.5" } : {}),
       storyId: project.storyId,
       name: project.name,
+      logicFormats: project.logicFormats,
       logicVariables: project.logicVariables,
       localExplorerEntities: project.localExplorerEntities,
       localExplorerTypes: project.localExplorerTypes,
       localExplorerProperties: project.localExplorerProperties,
+      canonPropertyDescriptors: project.canonPropertyDescriptors,
       logicPropertyOverrides: project.logicPropertyOverrides,
       logicTypeOverrides: project.logicTypeOverrides,
       entityInstances: project.entityInstances,

@@ -12,6 +12,37 @@ const project = normalizeProject({ specVersion: "0.1", projectId: "performance-t
   { id: "e-long", name: "Second event", type: "ending" },
 ], sequences: [{ id: "s", name: "Sequence", eventIds: ["e", "e-long"], entryEventId: "e" }], scripts: [], externalFunctions: [], variables: {} });
 const model = buildStoryCanvasModel(project, { scope: { kind: "sequence", id: "s" } });
+const globalWaypointProject = {
+  ...project,
+  canvas: { ...project.canvas, edgeWaypoints: { "edge:transition:route": [{ x: 420, y: 175 }] } },
+};
+assert.deepEqual(
+  normalizeProject(globalWaypointProject).canvas.edgeWaypoints["edge:transition:route"],
+  [{ x: 420, y: 175 }],
+  "global transition route waypoints survive project normalization for save and reopen",
+);
+assert.deepEqual(
+  buildStoryCanvasModel(globalWaypointProject, { scope: { kind: "sequence", id: "s" } }).edges.find(edge => edge.id === "edge:transition:route").data.waypoints,
+  [{ x: 420, y: 175 }],
+  "transition route waypoints survive canvas model reconstruction",
+);
+const scopedWaypointProject = {
+  ...globalWaypointProject,
+  canvas: {
+    ...globalWaypointProject.canvas,
+    scopes: { "sequence:s": { edgeWaypoints: { "edge:transition:route": [{ x: 610, y: 220 }] } } },
+  },
+};
+assert.deepEqual(
+  normalizeProject(scopedWaypointProject).canvas.scopes["sequence:s"].edgeWaypoints["edge:transition:route"],
+  [{ x: 610, y: 220 }],
+  "scope-specific transition route waypoints survive project normalization for save and reopen",
+);
+assert.deepEqual(
+  buildStoryCanvasModel(scopedWaypointProject, { scope: { kind: "sequence", id: "s" } }).edges.find(edge => edge.id === "edge:transition:route").data.waypoints,
+  [{ x: 610, y: 220 }],
+  "scope-specific route waypoints take precedence over the project fallback",
+);
 let narrativeCalls = 0;
 const narrativeValidation = createNarrativeValidationCache(() => { narrativeCalls++; return []; });
 const narrativeFindings = narrativeValidation(project);

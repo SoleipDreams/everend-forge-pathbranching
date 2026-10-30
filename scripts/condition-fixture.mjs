@@ -8,7 +8,7 @@ export function fixture() {
   logicVariables: [{ id: 'strength', name: 'Strength', type: 'number', value: 0, groupId: 'default' }],
   localExplorerEntities: [{ id: 'relic', name: 'Relic', type: 'item', fields: { durability: 4, day: '2026-10-06' } }],
   localExplorerProperties: [{ id: 'durability', label: 'Durability', valueType: 'number' }, { id: 'day', label: 'Day', valueType: 'date' }],
-  logicTypeOverrides: [{ source: 'canon', typeId: 'item', runtimeRoles: ['owned'] }],
+  logicTypeOverrides: [{ source: 'canon', typeId: 'item', runtimeRoles: ['owned'], inventoryItem: true }],
   logicPropertyOverrides: [{ source: 'local', propertyId: 'durability', conditionReadable: true }, { source: 'local', propertyId: 'day', conditionReadable: true }],
   });
 }

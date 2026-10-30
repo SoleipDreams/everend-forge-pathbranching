@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { canonicalPropertyDescriptors } from './characterStats.js';
 import { isWorldNotionVisualDocument } from "./visualDocumentMarker.js";
 import type {
   BranchingProject,
@@ -131,6 +132,27 @@ function parsePropertiesConfig(
   }
 }
 
+function worldNotionContentTypeIds(
+  propertiesConfig: WorldNotionPropertiesConfig | undefined,
+): Set<string> {
+  const definitions = (
+    propertiesConfig as { contentTypes?: { definitions?: unknown } } | undefined
+  )?.contentTypes?.definitions;
+  const ids = new Set(["folder-description"]);
+  if (!Array.isArray(definitions)) return ids;
+  definitions.forEach((definition) => {
+    if (
+      definition &&
+      typeof definition === "object" &&
+      "id" in definition &&
+      typeof definition.id === "string"
+    ) {
+      ids.add(definition.id);
+    }
+  });
+  return ids;
+}
+
 function isTemplateLikeValue(value: unknown): boolean {
   return (
     typeof value === "string" && value.trim().toLowerCase().includes("template")
@@ -190,8 +212,9 @@ function toCanonRef(entity: WorldNotionEntity): CanonRef {
     childrenIds: entity.childrenIds,
     properties: entity.customProperties,
     frontmatter: entity.frontmatter,
-    folderDescription:
-      entity.type === "folder-description" || typeof entity.folder === "string",
+    // `folder` records an entity's folder in the vault; it does not mean the
+    // entity itself is a folder-description note.
+    folderDescription: entity.type === "folder-description",
     source: "worldnotion",
     canonSourcePath: entity.path,
     canonSourceModifiedMs: entity.modifiedMs,
@@ -267,6 +290,7 @@ export function indexWorldNotionVaultFiles(
   const seenIds = new Set<string>();
   const duplicateIds = new Set<string>();
   const propertiesConfig = parsePropertiesConfig(files, findings);
+  const contentTypeIds = worldNotionContentTypeIds(propertiesConfig);
 
   files
     .filter((file) => file.relativePath.endsWith(".md"))
@@ -296,6 +320,10 @@ export function indexWorldNotionVaultFiles(
       const type = requiredString(parsed.data.type);
       const name = requiredString(parsed.data.name);
       const status = requiredString(parsed.data.status) || "unknown";
+
+      // WorldNotion content types describe documents such as folder notes;
+      // they are not canon entities and should not enter the PathBranching index.
+      if (contentTypeIds.has(type)) return;
 
       if (!id || !type || !name) {
         looseCanonRefs.push(
@@ -385,6 +413,7 @@ export function createEmptyBranchingProjectFromWorldNotionIndex(
       relativePath: options.vaultRelativePath,
     },
     canonRefs: index.canonRefs,
+    canonPropertyDescriptors: canonicalPropertyDescriptors(index.propertiesConfig as Record<string, unknown> | undefined),
     dataClasses: [],
     projectionRules: [],
     graphModules: [],

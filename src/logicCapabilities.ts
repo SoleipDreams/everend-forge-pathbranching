@@ -9,8 +9,10 @@ import type {
   LogicSubject,
 } from "./domain.js";
 import { conditionLabels, consequenceLabel, walkConditions } from "./logic.js";
-import { typeCapability } from "./explorerSchema.js";
+import { explorerTypeLabel, findLocalExplorerPropertyByReference, flattenLocalExplorerPropertyTree, typeCapability } from "./explorerSchema.js";
 import { entityCapabilities } from './authoringEntities.js';
+import { characterPropertyDescriptor, propertyReadPermission, sourcePropertyDescriptors } from './characterStats.js';
+import { canonVariantsForRef } from './worldnotionVariants.js';
 
 export type LogicCapabilityPurpose = "condition" | "effect";
 export type LogicCapabilityStatus = "enabled" | "disabled" | "missing" | "incompatible";
@@ -67,15 +69,12 @@ function propertyDefinition(project: BranchingProject, propertyId: string) {
   const normalized = propertyId.startsWith("property:")
     ? propertyId.slice("property:".length)
     : propertyId;
-  return project.localExplorerProperties?.find((property) =>
-    property.id === propertyId ||
-    property.id === normalized ||
-    property.id === `property:${normalized}`,
-  );
+  return findLocalExplorerPropertyByReference(project.localExplorerProperties, propertyId)
+    ?? characterPropertyDescriptor(project, normalized);
 }
 
 export function logicSubjectKey(subject: LogicSubject): string {
-  if (subject.kind === "entity") return `entity:${subject.entityId}`;
+  if (subject.kind === "entity") return `entity:${subject.entityId}${subject.variantId && subject.variantId !== 'base' ? `:variant:${subject.variantId}` : ''}`;
   if (subject.kind === "dataObject") return `data:${subject.objectId}`;
   if (subject.kind === "variable") return `variable:${subject.variableId}`;
   if (subject.kind === "progress") return `progress:${subject.targetType}:${subject.targetId}`;
@@ -107,7 +106,7 @@ export function logicEntityDescriptor(
   return {
     source,
     typeId,
-    label: canon?.label ?? local?.name ?? subject.entityId,
+    label: [canon?.label ?? local?.name ?? subject.entityId, subject.variantId && subject.variantId !== 'base' && canon ? canonVariantsForRef(canon).find(variant=>variant.id===subject.variantId)?.label ?? subject.variantId : undefined].filter(Boolean).join(' · '),
     color: localType?.color ?? typeProperty?.color,
     icon: localType?.icon ?? typeProperty?.icon,
   };
@@ -125,7 +124,7 @@ export function logicSubjectOptions(
       return {
         key: logicSubjectKey(subject),
         label: entity.label ?? entity.id,
-        detail: normalizedTypeId(entity.kind) ?? "canon",
+        detail: entity.kind ? explorerTypeLabel(project, "canon", entity.kind) : "",
         subject,
         contextual: context.has(entity.id),
         typeId: normalizedTypeId(entity.kind),
@@ -139,7 +138,7 @@ export function logicSubjectOptions(
       return {
         key: logicSubjectKey(subject),
         label: entity.name,
-        detail: normalizedTypeId(entity.type) ?? entity.type,
+        detail: explorerTypeLabel(project, "local", entity.type),
         subject,
         contextual: context.has(entity.id),
         typeId: normalizedTypeId(entity.type),
@@ -148,6 +147,10 @@ export function logicSubjectOptions(
       };
     }),
   ];
+  for (const canon of project.canonRefs) for (const variant of canonVariantsForRef(canon).filter(item=>item.id !== 'base')) {
+    const subject: LogicSubject = {kind:'entity',entityId:canon.id,source:'canon',variantId:variant.id};
+    entities.push({key:logicSubjectKey(subject),label:`${canon.label ?? canon.id} · ${variant.label}`,detail:canon.kind ? explorerTypeLabel(project, 'canon', canon.kind) : '',subject,contextual:context.has(canon.id),typeId:normalizedTypeId(canon.kind)});
+  }
   entities.sort((left, right) => Number(right.contextual) - Number(left.contextual) || left.label.localeCompare(right.label));
   return [
     ...entities,
@@ -204,7 +207,14 @@ export function resolveLogicField(
 ): LogicFieldOption {
   if (subject.kind === 'context') {
     const property = propertyDefinition(project, fieldId);
-    const configured = project.logicPropertyOverrides?.some(o => o.propertyId === fieldId && (purpose === 'condition' ? o.conditionReadable : o.actionWritable));
+    const profileId = project.activePlayerProfileId ?? project.playerProfiles?.[0]?.id ?? 'default';
+    const actorProfile = project.playerProfiles?.find(profile=>profile.id === profileId);
+    const actor = actorProfile?.simulation.context?.[subject.role] ?? (profileId === 'default' ? project.playerSimulation?.context?.[subject.role] : undefined) ?? (subject.role === 'actor' && actorProfile?.playableCharacterRef ? {kind:'entity' as const,entityId:actorProfile.playableCharacterRef,...(actorProfile.playableVariantId ? {variantId:actorProfile.playableVariantId} : {})} : undefined);
+    if (actor && actor.kind !== 'context') return resolveLogicField(project,actor,purpose,fieldKind,fieldId);
+    const configured = purpose === 'condition'
+      ? [...project.canonRefs.map(item => ({ kind: 'entity' as const, entityId: item.id })), ...(project.localExplorerEntities ?? []).map(item => ({ kind: 'entity' as const, entityId: item.id }))]
+        .some(entity => resolveLogicField(project, entity, purpose, fieldKind, fieldId).status === 'enabled')
+      : project.logicPropertyOverrides?.some(o => o.propertyId === fieldId && o.actionWritable) || project.entityOverrides?.some(o => o.properties?.[fieldId]?.actionWritable === true);
     return { key: fieldId, label: fieldKind === 'state' ? LOGIC_ROLE_LABELS[fieldId as EntityRuntimeStateRole] ?? fieldId : property?.label ?? fieldId, kind: fieldKind, valueType: fieldKind === 'state' ? 'boolean' : property?.valueType, status: fieldKind === 'state' || configured ? 'enabled' : 'disabled' };
   }
   if (subject.kind === "external") {
@@ -249,12 +259,12 @@ export function resolveLogicField(
       capabilityTarget: { source: entity.source, id: entity.typeId, kind: "type" },
     };
   }
-  const property = propertyDefinition(project, fieldId);
+  const property = sourcePropertyDescriptors(project, entity.source).find(item => item.id === fieldId || entity.source === 'local' && item.id === `property:${fieldId}`) ?? propertyDefinition(project, fieldId);
   const override = project.logicPropertyOverrides?.find((item) => item.source === entity.source && item.propertyId === fieldId);
-  const applies = !property?.appliesToTypes?.length || property.appliesToTypes.some((typeId) => normalizedTypeId(typeId) === entity.typeId);
+  const applies = property?.appliesToTypes === undefined || property.appliesToTypes.some((typeId) => normalizedTypeId(typeId) === entity.typeId);
   const entityId = subject.kind === 'entity' ? subject.entityId : subject.kind === 'instance' ? project.entityInstances?.find(i => i.id === subject.instanceId)?.entityId : undefined;
   const individual = project.entityOverrides?.find(o => o.entityId === entityId)?.properties?.[fieldId];
-  const enabled = purpose === "condition" ? (individual?.conditionReadable ?? override?.conditionReadable) === true : (individual?.actionWritable ?? override?.actionWritable) === true;
+  const enabled = purpose === "condition" ? (individual?.conditionReadable ?? propertyReadPermission(project, entity.source, fieldId, { typeId: entity.typeId }).value) === true : (individual?.actionWritable ?? override?.actionWritable) === true;
   return {
     key: fieldId,
     label: property?.label ?? fieldId,
@@ -271,7 +281,7 @@ export function logicFieldOptions(
   purpose: LogicCapabilityPurpose,
 ): LogicFieldOption[] {
   if (subject.kind === 'context') {
-    const fields = (project.localExplorerProperties ?? []).filter(p => !['group','entity-type'].includes(p.valueType)).map(p => resolveLogicField(project,subject,purpose,'property',p.id)).filter(f => f.status === 'enabled');
+    const fields = [...new Set([...flattenLocalExplorerPropertyTree(project.localExplorerProperties).filter(p => !['group','entity-type'].includes(p.valueType)).map(p=>p.id),...(project.canonPropertyDescriptors ?? []).map(p=>p.id)])].map(id => resolveLogicField(project,subject,purpose,'property',id)).filter(f => f.status === 'enabled');
     return [...(['owned','unlocked','discovered','present'] as const).map(role => resolveLogicField(project,subject,purpose,'state',role)), ...fields];
   }
   if (subject.kind === "external") return [resolveLogicField(project, subject, purpose, "external", "call")].filter((field) => field.status === "enabled");
@@ -292,10 +302,10 @@ export function logicFieldOptions(
   const entityId = subject.kind === 'entity' ? subject.entityId : subject.kind === 'instance' ? project.entityInstances?.find(i => i.id === subject.instanceId)?.entityId : undefined;
   const roles = entityId ? Object.entries(entityCapabilities(project, entityId).runtimeRoles).filter(([,enabled]) => enabled).map(([role]) => role) : [];
   const states = roles.map((role) => resolveLogicField(project, subject, purpose, "state", role));
-  const propertyIds = new Set([...(project.logicPropertyOverrides ?? []).filter(o => o.source === entity.source && !o.propertyId.startsWith('type:')).map(o => o.propertyId), ...Object.keys(project.entityOverrides?.find(o => o.entityId === entityId)?.properties ?? {})]);
+  const propertyIds = new Set([...sourcePropertyDescriptors(project, entity.source).filter(field => !['group', 'entity-type', 'entity type'].includes(field.valueType)).map(field => field.id), ...(project.logicPropertyOverrides ?? []).filter(o => o.source === entity.source && !o.propertyId.startsWith('type:')).map(o => o.propertyId), ...Object.keys(project.entityOverrides?.find(o => o.entityId === entityId)?.properties ?? {})]);
   const properties = [...propertyIds]
     .map((propertyId) => resolveLogicField(project, subject, purpose, "property", propertyId))
-    .filter((field) => field.status === "enabled" && field.valueType !== "group")
+    .filter((field) => field.status === "enabled" && !['group', 'entity-type', 'entity type'].includes(field.valueType ?? ''))
     .filter((field, index, fields) => fields.findIndex((candidate) => candidate.key === field.key) === index);
   return [...states, ...properties];
 }

@@ -1,5 +1,118 @@
-import type { BranchingProject, ValidationFinding } from "./domain.js";
+import type { BranchingProject, EventNode, ValidationFinding } from "./domain.js";
 import type { Selection } from "./appTypes.js";
+import { effectiveConditions, orderedTransitions } from "./logic.js";
+import { blockValues, localizedValue } from "./localization.js";
+
+function compactDiagnosticText(value: string, limit = 88) {
+  const text = value.replace(/\s+/gu, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
+}
+
+function scopedNarrativeNodeLabel(project: BranchingProject, event: EventNode, nodeId: string, locale: "en" | "es") {
+  const dialoguePrefix = `dialogue:${event.id}:`;
+  if (nodeId.startsWith(dialoguePrefix)) {
+    const dialogueId = nodeId.slice(dialoguePrefix.length);
+    return event.dialogues?.find((dialogue) => dialogue.id === dialogueId)?.title ?? (locale === "es" ? "Conversación" : "Conversation");
+  }
+
+  const decisionPrefix = `decision:${event.id}:`;
+  if (nodeId.startsWith(decisionPrefix)) {
+    const decisionId = nodeId.slice(decisionPrefix.length);
+    return event.decisions?.find((decision) => decision.id === decisionId)?.name ?? (locale === "es" ? "Decisión" : "Decision");
+  }
+
+  const outcomePrefix = `outcome:${event.id}:`;
+  if (nodeId.startsWith(outcomePrefix)) {
+    const outcome = (event.decisions ?? []).flatMap((decision) => decision.outcomes.map((candidate) => ({ decision, outcome: candidate })))
+      .find(({ decision, outcome: candidate }) => `outcome:${event.id}:${decision.id}:${candidate.id}` === nodeId);
+    return outcome ? `${outcome.decision.name} · ${outcome.outcome.visibleText || outcome.outcome.id}` : (locale === "es" ? "Opción" : "Outcome");
+  }
+
+  const beatPrefix = `beat:${event.id}:`;
+  if (nodeId.startsWith(beatPrefix)) {
+    const beatId = nodeId.slice(beatPrefix.length);
+    const dialogue = event.dialogues?.find((candidate) => candidate.beats?.some((beat) => beat.id === beatId));
+    const beat = (event.dialogueBeats ?? []).find((candidate) => candidate.id === beatId)
+      ?? dialogue?.beats?.find((candidate) => candidate.id === beatId);
+    if (!beat) return dialogue?.title ?? (locale === "es" ? "Línea de diálogo" : "Dialogue line");
+    const block = project.scriptDocuments?.find((script) => script.id === beat.blockRef.scriptId)?.blocks.find((candidate) => candidate.id === beat.blockRef.blockId);
+    const text = block
+      ? localizedValue(blockValues(project, beat.blockRef.scriptId, block, project.localizationCatalog?.primaryLocale ?? "es-419"), locale, project.localizationCatalog?.primaryLocale ?? "es-419")
+      : "";
+    const speakerId = block?.characterRef ?? block?.speakerRef;
+    const speaker = speakerId
+      ? project.canonRefs.find((ref) => ref.id === speakerId)?.label ?? project.localExplorerEntities?.find((entity) => entity.id === speakerId)?.name
+      : undefined;
+    const kind = beat.kind === "direction" ? (locale === "es" ? "acotación" : "stage direction") : (locale === "es" ? "línea" : "line");
+    const preview = compactDiagnosticText(text, 64);
+    return `${dialogue?.title ?? (locale === "es" ? "Conversación" : "Conversation")} · ${kind}${preview ? ` · ${speaker ? `${speaker}: ` : ""}“${preview}”` : ""}`;
+  }
+
+  return nodeId;
+}
+
+function narrativeNodeLabel(project: BranchingProject, ownerEvent: EventNode, nodeId: string, locale: "en" | "es") {
+  const targetEvent = project.events.find((candidate) => candidate.id === nodeId);
+  if (targetEvent) return targetEvent.name;
+  const scopedEvent = project.events.find((candidate) =>
+    nodeId.startsWith(`dialogue:${candidate.id}:`) ||
+    nodeId.startsWith(`beat:${candidate.id}:`) ||
+    nodeId.startsWith(`decision:${candidate.id}:`) ||
+    nodeId.startsWith(`outcome:${candidate.id}:`),
+  );
+  if (scopedEvent) return scopedNarrativeNodeLabel(project, scopedEvent, nodeId, locale);
+
+  for (const event of project.events) {
+    const interactionPrefix = `interaction:${event.id}:`;
+    if (nodeId.startsWith(interactionPrefix)) {
+      const useId = nodeId.slice(interactionPrefix.length);
+      const use = event.interactionUses?.find((candidate) => candidate.id === useId);
+      return event.interactionDefinitions?.find((definition) => definition.id === use?.definitionId)?.name ?? (locale === "es" ? "Interacción" : "Interaction");
+    }
+    const barrierPrefix = `barrier:${event.id}:`;
+    if (nodeId.startsWith(barrierPrefix)) {
+      const barrierId = nodeId.slice(barrierPrefix.length);
+      return event.interactionBarriers?.find((candidate) => candidate.id === barrierId)?.name ?? (locale === "es" ? "Barrera" : "Barrier");
+    }
+  }
+
+  const sequence = project.sequences.find((candidate) => candidate.id === nodeId);
+  if (sequence) return sequence.name;
+  const branch = project.branches.find((candidate) => candidate.id === nodeId);
+  if (branch) return branch.title;
+  if (nodeId.startsWith(`boundary:${ownerEvent.id}:`) || nodeId.startsWith(`dialogue-boundary:${ownerEvent.id}:`)) {
+    const isInput = nodeId.includes(":input:");
+    return `${isInput ? (locale === "es" ? "Entrada" : "Entry") : (locale === "es" ? "Continuación" : "Continuation")} · ${ownerEvent.name}`;
+  }
+  return nodeId;
+}
+
+export function transitionOrderDetails(project: BranchingProject, sourceId: string, locale: "en" | "es") {
+  const event = project.events.find((candidate) => candidate.transitions?.some((transition) => transition.from === sourceId));
+  if (!event) return undefined;
+  const routes = orderedTransitions((event.transitions ?? []).filter((transition) => transition.from === sourceId));
+  const sourceLabel = narrativeNodeLabel(project, event, sourceId, locale);
+  const routeIds = routes.map((route) => route.id);
+  const unconditionalIndex = routes.findIndex((route) => route.mode !== "fallback" && !effectiveConditions(route));
+  const blockedRoutes = unconditionalIndex >= 0 ? routes.slice(unconditionalIndex + 1) : [];
+  if (!blockedRoutes.length) return { event, sourceLabel, routeIds };
+
+  const blocker = routes[unconditionalIndex];
+  const blockerTarget = narrativeNodeLabel(project, event, blocker.to, locale);
+  const sourceContext = sourceLabel === event.name
+    ? (locale === "es" ? `En «${event.name}»` : `In “${event.name}”`)
+    : `${event.name} → ${sourceLabel}`;
+  const message = locale === "es"
+    ? `${sourceContext}: la ruta ${unconditionalIndex + 1} hacia «${blockerTarget}» no tiene condición y aparece antes de ${blockedRoutes.length} ${blockedRoutes.length === 1 ? "ruta posterior" : "rutas posteriores"}. Como coincide siempre, esas rutas no se alcanzan. Define las condiciones de las ramas y deja, como máximo, una ruta incondicional al final.`
+    : `${sourceContext}: route ${unconditionalIndex + 1} to “${blockerTarget}” has no condition and comes before ${blockedRoutes.length} later route${blockedRoutes.length === 1 ? "" : "s"}. It always matches first, so those routes cannot be reached. Add conditions to the branches and keep at most one unconditional route at the end.`;
+  const technical = [
+    `${locale === "es" ? "Origen" : "Source"}: ${sourceLabel} [${sourceId}]`,
+    `${locale === "es" ? "Ruta incondicional" : "Unconditional route"}: #${unconditionalIndex + 1} → ${blockerTarget} [${blocker.id}]`,
+    `${locale === "es" ? "Rutas posteriores inalcanzables" : "Unreachable later routes"}:`,
+    ...blockedRoutes.map((route, index) => `  #${unconditionalIndex + index + 2} ${route.mode === "fallback" ? "Else" : effectiveConditions(route) ? (locale === "es" ? "Con condición" : "Conditional") : (locale === "es" ? "Sin condición" : "No condition")} → ${narrativeNodeLabel(project, event, route.to, locale)} [${route.id}]`),
+  ].join("\n");
+  return { event, sourceLabel, routeIds, message, technical };
+}
 
 /** Turn a reference scan path into its authored owner, keeping indices as technical detail. */
 export function authoringUsagePresentation(project: BranchingProject, path: string, locale: "en" | "es") {
@@ -125,5 +238,13 @@ export function findingPresentation(finding: ValidationFinding, project: Branchi
     message = message.replace(new RegExp(`(?<![\\p{L}\\p{N}_:-])${escaped}(?![\\p{L}\\p{N}_:-])`, "gu"), () => label);
   }
   const title = findingTitles[finding.code]?.[locale === "es" ? 1 : 0] ?? finding.code.replaceAll("_", " ");
-  return { title, message, technical: `${finding.code}: ${finding.message}` };
+  const routeOrder = finding.code === "invalid_transition_order" && finding.id
+    ? transitionOrderDetails(project, finding.id, locale)
+    : undefined;
+  return {
+    title,
+    message: routeOrder?.message ?? message,
+    description: routeOrder?.message,
+    technical: routeOrder?.technical ?? `${finding.code}: ${finding.message}`,
+  };
 }

@@ -1,6 +1,7 @@
 import type { InspectorTab, Selection } from "./appTypes.js";
 import type { BranchingProject, CanvasScope } from "./domain.js";
 import { authoringNodeOptions } from "./authoringMutations.js";
+import { findLocalExplorerPropertyByReference } from "./explorerSchema.js";
 
 export type InspectorSize = { width: number; height?: number };
 export type InspectorStackTarget = { kind: "inspector" | "event"; id: string };
@@ -23,6 +24,7 @@ export function orderedInspectorStack(targets: readonly InspectorStackTarget[], 
 /** Canvas ports are projections, so inspect their narrative event rather than
  * persisting a tab for the port. Sequence starts have no inspector. */
 export function canvasInspectorTarget(project: BranchingProject, target: Selection, nodes: readonly { id: string; data: { kind: string; details?: Record<string, unknown> } }[]): Selection | undefined {
+  if (target.type === "edge") return undefined;
   if (target.type !== "node") return target;
   const node = nodes.find(item => item.id === target.id);
   if (node?.data.kind === "start" || target.id.startsWith("start:")) return undefined;
@@ -64,11 +66,16 @@ export function closeInspectorStackTabs(
   eventIds: readonly string[],
   target: InspectorStackTarget,
   direction: "above" | "below" | "others",
+  order: readonly string[] = [],
 ): { inspectorTabs: InspectorTab[]; eventIds: string[] } {
-  const stack = [
-    ...inspectorTabs.map(tab => ({ kind: "inspector" as const, id: tab.id, protected: tab.mode === "debug" })),
-    ...eventIds.map(id => ({ kind: "event" as const, id, protected: false })),
-  ];
+  const protectedInspectorIds = new Set(inspectorTabs.filter(tab => tab.mode === "debug").map(tab => tab.id));
+  const stack = orderedInspectorStack([
+    ...inspectorTabs.map(tab => ({ kind: "inspector" as const, id: tab.id })),
+    ...eventIds.map(id => ({ kind: "event" as const, id })),
+  ], order).map(item => ({
+    ...item,
+    protected: item.kind === "inspector" && protectedInspectorIds.has(item.id),
+  }));
   const targetIndex = stack.findIndex(item => item.kind === target.kind && item.id === target.id);
   if (targetIndex < 0) return { inspectorTabs: [...inspectorTabs], eventIds: [...eventIds] };
   const removed = stack.filter((item, index) => !item.protected && (
@@ -97,7 +104,7 @@ export function inspectorTargetTitle(project: BranchingProject, target?: Selecti
     ?? project.branches.find(item => item.id === target.id)?.title
     ?? project.canonRefs.find(item => item.id === target.id)?.label
     ?? project.localExplorerEntities?.find(item => item.id === target.id)?.name
-    ?? project.localExplorerProperties?.find(item => item.id === target.id)?.label
+    ?? findLocalExplorerPropertyByReference(project.localExplorerProperties, target.id)?.label
     ?? project.localExplorerTypes?.find(item => item.id === target.id)?.label
     ?? project.narrativeActions?.find(item => item.id === target.id)?.name
     ?? project.narrativeRules?.find(item => item.id === target.id)?.name
@@ -119,7 +126,7 @@ export function inspectorTargetKind(project: BranchingProject, target?: Selectio
   const kind = authoringNodeOptions(project).find(item => item.id === target.id)?.kind;
   const labels: Record<string, { es: string; en: string }> = {
     dialogue: { es: "Conversación", en: "Conversation" },
-    decision: { es: "Decisión", en: "Decision" },
+    decision: { es: "Decisiones", en: "Decisions" },
     speech: { es: "Diálogo", en: "Dialogue" },
     direction: { es: "Acotación", en: "Stage direction" },
     outcome: { es: "Opción", en: "Option" },

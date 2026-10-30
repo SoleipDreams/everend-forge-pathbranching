@@ -159,6 +159,10 @@ function directoryHandle(name: string, node: MemoryDirectory): BrowserDirectoryH
         ];
       }
     },
+    async removeEntry(childName) {
+      validateChildName(childName);
+      if (!node.children.delete(childName)) throw new DOMException(`${childName} was not found.`, "NotFoundError");
+    },
     async getDirectoryHandle(childName, options) {
       validateChildName(childName);
       const child = node.children.get(childName);

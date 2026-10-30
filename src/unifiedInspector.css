@@ -8,6 +8,9 @@
 .unified-authoring-inspector summary { cursor:pointer; font-weight:600; }
 .unified-authoring-inspector :is(p,li) { line-height:1.5; }
 .unified-authoring-dock .event-inspector-cards { justify-content:flex-start; }
+.unified-authoring-dock .event-inspector-cards[data-layout-animating="true"] { pointer-events:auto; }
+.unified-authoring-dock .event-inspector-cards[data-layout-animating="true"] * { pointer-events:none !important; }
+.unified-authoring-dock .event-inspector-cards[data-layout-animating="true"] .event-inspector-card { transition:none; }
 .unified-authoring-dock .event-inspector-body-scroll { overflow:hidden; scrollbar-gutter:auto; mask-image:none; -webkit-mask-image:none; }
 /* These wrappers frame fixed navigation; only inspector-scroll owns scrolling. */
 .unified-authoring-dock :is(.event-inspector-body,.event-inspector-body-scroll,.event-dock-inspector,.canvas-inspector.embedded) { overflow:clip; }
@@ -117,6 +120,22 @@
 .inspector-connections .inspector-connection-group + .inspector-connection-group { border:1px solid var(--wn-border); }
 .inspector-route-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; align-items:start; }
 .inspector-route-columns > :is(.narrative-connections,.narrative-continuation) { min-width:0; margin:0; }
+.inspector-decision-connections-layout { display:grid; gap:12px; }
+.inspector-decision-connections-layout > .narrative-connections { padding:12px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel-2); }
+.inspector-decision-connections-layout > .narrative-connections h3 { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 10px; color:var(--wn-text); }
+.narrative-decision-connections { min-width:0; }
+.narrative-decision-connections > h3 { margin:0 0 10px; }
+.narrative-decision-connection-list { display:grid; gap:10px; }
+.narrative-decision-connection-option { min-width:0; padding:12px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); }
+.narrative-decision-connection-heading { display:flex; align-items:center; gap:10px; min-width:0; margin:0 0 10px; }
+.narrative-decision-connection-heading > div,
+.narrative-decision-option-context > strong { min-width:0; overflow-wrap:anywhere; }
+.narrative-decision-connection-heading small { display:block; margin-bottom:2px; color:var(--wn-muted); font-size:11px; }
+.narrative-decision-connection-heading strong { display:block; color:var(--wn-text); font-size:13px; }
+.narrative-decision-option-marker { display:grid; place-items:center; flex:0 0 28px; width:28px; height:28px; border:1px solid color-mix(in srgb,var(--wn-accent) 42%,var(--wn-border)); border-radius:8px; background:color-mix(in srgb,var(--wn-accent) 12%,var(--wn-panel-2)); color:var(--wn-accent); font-size:12px; font-weight:800; }
+.narrative-decision-connection-option .narrative-continuation { margin:0; }
+.narrative-decision-option-context { display:flex; align-items:center; gap:9px; min-width:0; margin:0 0 12px; padding:10px 12px; border:1px solid var(--wn-border); border-radius:9px; background:var(--wn-panel-2); color:var(--wn-muted); font-size:12px; }
+.narrative-decision-option-context strong { color:var(--wn-text); }
 .inspector-route-columns h3 { display:flex; justify-content:space-between; gap:8px; margin:0 0 12px; color:var(--wn-text); }
 .inspector-route-columns .narrative-connections > div { display:grid; gap:8px; }
 .inspector-connections .narrative-incoming-route,
@@ -135,6 +154,7 @@
 .inspector-connections .reference-picker-values > span { display:flex; align-items:center; padding:10px; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel-2); text-align:left; overflow-wrap:anywhere; }
 .inspector-connections .canon-ref-dropzone + .canon-ref-dropzone { border-top:1px solid var(--wn-border); padding-top:16px; }
 @container (max-width:420px) { .inspector-route-columns { grid-template-columns:minmax(0,1fr); } }
+@container (max-width:420px) { .inspector-decision-connections-layout { gap:10px; } }
 
 /* Rounded module frame, including Add, above the clipped content viewport. */
 .unified-authoring-dock .event-dock-inspector .canvas-inspector.embedded .inspector-scroll { padding:0; scrollbar-gutter:auto; }

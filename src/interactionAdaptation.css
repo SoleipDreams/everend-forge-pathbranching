@@ -1,0 +1,12 @@
+.interaction-adaptation-dialog { width: min(900px, calc(100vw - 40px)); }
+.interaction-adaptation-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.interaction-adaptation-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.interaction-adaptation-settings > div { padding: 12px; border: 1px solid var(--ef-border); border-radius: var(--ef-radius-panel, 10px); overflow-wrap: anywhere; }
+.interaction-adaptation-settings p { margin-bottom: 0; }
+.interaction-adaptation-modes [aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft, #342b1d); }
+.interaction-adaptation-match { display: grid; grid-template-columns: minmax(90px, 1fr) auto minmax(140px, 2fr); align-items: center; gap: 12px; margin-block: 10px; }
+.interaction-adaptation-match > * { min-width: 0; }
+.interaction-adaptation-table { overflow-x: auto; }
+.interaction-adaptation-dialog table { width: 100%; border-collapse: collapse; text-align: left; }
+.interaction-adaptation-dialog th, .interaction-adaptation-dialog td { padding: 10px; border-bottom: 1px solid var(--border, #343744); overflow-wrap: anywhere; }
+.interaction-adaptation-dialog li { overflow-wrap: anywhere; }

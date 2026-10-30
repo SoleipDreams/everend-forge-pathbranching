@@ -1,0 +1,11 @@
+.condition-reference-create-backdrop { position: fixed; inset: 0; z-index: 1400; display: grid; place-items: center; background: rgb(0 0 0 / 55%); padding: 24px; }
+.condition-reference-create-dialog { width: min(500px, 100%); max-height: calc(100vh - 48px); overflow: auto; background: var(--wn-panel); color: var(--wn-text); border: 1px solid var(--wn-border); border-radius: 12px; padding: 22px; box-shadow: 0 16px 60px #0008; }
+.condition-reference-create-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.condition-reference-create-dialog h2 { font-size: 1rem; margin: 0; }
+.condition-reference-create-dialog p { color: var(--wn-muted); font-size: 0.8rem; line-height: 1.5; }
+.condition-reference-create-dialog form { display: grid; gap: 14px; }
+.condition-reference-create-dialog .field-label { display: grid; gap: 6px; }
+.condition-reference-create-dialog input:not([type=checkbox]), .condition-reference-create-dialog select, .condition-reference-create-dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 9px 10px; background: var(--wn-editor-bg); color: var(--wn-text); border: 1px solid var(--wn-border); border-radius: 6px; }
+.condition-reference-create-dialog footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.condition-reference-create-dialog [role=alert] { color: var(--wn-danger, #ff9d94); }
+.condition-reference-create-checkbox { display: flex; align-items: flex-start; gap: 8px; font-size: 0.8rem; line-height: 1.5; }

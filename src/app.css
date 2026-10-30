@@ -2534,7 +2534,7 @@ button:disabled {
 }
 
 .react-flow__controls,
-.react-flow__minimap {
+.canvas-minimap {
   border: 1px solid var(--wn-border);
   background: color-mix(in srgb, var(--wn-panel) 94%, transparent) !important;
   color: var(--wn-text);
@@ -2650,24 +2650,92 @@ button:disabled {
   font-size: 0.72rem;
 }
 
-.react-flow__minimap.react-flow__panel.bottom.left {
+.canvas-minimap.react-flow__panel.bottom.left {
+  z-index: 5;
   left: 58px;
   bottom: var(--canvas-floating-gap);
   overflow: hidden;
-  width: 178px;
-  height: 116px;
+  width: 210px;
+  height: 138px;
+  max-width: calc(100% - 72px);
+  max-height: min(138px, calc(100% - var(--canvas-floating-gap) - 8px));
   border-radius: 8px;
 }
 
 /* Keep the speaker popover's action row reachable when it extends toward the
    floating minimap. The minimap returns as soon as the selector closes. */
-.canvas-shell:has(.speaker-selector-menu) .react-flow__minimap {
+.canvas-shell:has(.speaker-selector-menu) .canvas-minimap {
   opacity: 0;
   pointer-events: none;
 }
 
-.react-flow__minimap.nested-scope-minimap {
-  background: var(--wn-editor-bg) !important;
+.canvas-minimap-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  cursor: grab;
+  touch-action: none;
+}
+
+.canvas-minimap-svg:active {
+  cursor: grabbing;
+}
+
+.canvas-minimap-svg:focus-visible {
+  outline: 2px solid var(--wn-accent);
+  outline-offset: -3px;
+}
+
+.canvas-minimap-edge {
+  fill: none;
+  opacity: 0.68;
+  stroke-width: 1.2px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.canvas-minimap-edge.selected {
+  opacity: 1;
+  stroke-width: 2px;
+}
+
+.canvas-minimap-marker-leader {
+  fill: none;
+  opacity: 0.42;
+  stroke-width: 0.9px;
+  stroke-dasharray: 1.5 2.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.canvas-minimap-node-icon {
+  display: block;
+  color: #ffffff;
+  pointer-events: none;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 0.75px rgb(0 0 0 / 80%));
+}
+
+.canvas-minimap-selection {
+  fill: none;
+  stroke: var(--wn-accent);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.canvas-minimap-viewport {
+  fill: color-mix(in srgb, var(--wn-accent-soft) 12%, transparent);
+  stroke: var(--wn-accent);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .react-flow__minimap-mask {
@@ -2966,6 +3034,117 @@ button:disabled {
   text-align: left;
 }
 
+.canvas-create-menu {
+  width: min(270px, calc(100vw - 24px));
+  gap: 5px;
+  padding: 8px;
+  border-radius: 12px;
+  border-color: color-mix(in srgb, var(--wn-accent) 24%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-panel) 94%, #08090d);
+  box-shadow:
+    0 18px 42px color-mix(in srgb, #000000 38%, transparent),
+    0 2px 8px color-mix(in srgb, #000000 22%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.canvas-create-menu .canvas-menu-label {
+  padding: 7px 9px 5px;
+  color: var(--wn-text);
+  font-size: 0.69rem;
+  font-weight: 850;
+  letter-spacing: 0.085em;
+}
+
+.canvas-menu-group {
+  display: grid;
+  gap: 3px;
+}
+
+.canvas-menu-group-label {
+  padding: 5px 9px 2px;
+  color: var(--wn-muted);
+  font-size: 0.65rem;
+  font-weight: 750;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.canvas-menu-divider {
+  height: 1px;
+  margin: 3px 4px;
+  background: color-mix(in srgb, var(--wn-border) 76%, transparent);
+}
+
+.canvas-create-menu button.canvas-create-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 39px;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--wn-text);
+  font-size: 0.88rem;
+  font-weight: 620;
+  line-height: 1.2;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.canvas-create-menu button.canvas-create-menu-item:hover,
+.canvas-create-menu button.canvas-create-menu-item:focus-visible {
+  border-color: color-mix(in srgb, var(--wn-accent) 34%, var(--wn-border));
+  background: color-mix(in srgb, var(--wn-accent-soft) 76%, transparent);
+  outline: none;
+}
+
+.canvas-create-menu button.canvas-create-menu-item:active {
+  transform: scale(0.985);
+}
+
+.canvas-create-menu-icon {
+  display: inline-grid;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--wn-accent) 18%, var(--wn-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--wn-accent-soft) 56%, var(--wn-panel));
+  color: var(--wn-accent);
+}
+
+.canvas-create-menu-icon--category {
+  border-color: transparent;
+  background: transparent;
+  color: var(--wn-muted);
+}
+
+.canvas-create-menu-item-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-create-menu-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--wn-muted);
+  transition: transform 120ms ease, color 120ms ease;
+}
+
+.canvas-menu-submenu-trigger:hover .canvas-create-menu-chevron,
+.canvas-menu-submenu-trigger:focus-visible .canvas-create-menu-chevron {
+  color: var(--wn-accent);
+  transform: translateX(2px);
+}
+
 .canvas-menu-submenu {
   position: relative;
 }
@@ -2994,6 +3173,16 @@ button:disabled {
   background: color-mix(in srgb, var(--wn-panel) 96%, transparent);
   box-shadow: 0 12px 28px color-mix(in srgb, #000000 20%, transparent);
   backdrop-filter: blur(14px);
+}
+
+.canvas-create-menu .canvas-menu-submenu-flyout {
+  gap: 3px;
+  width: 228px;
+  padding: 7px;
+  border-color: color-mix(in srgb, var(--wn-accent) 24%, var(--wn-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--wn-panel) 96%, #08090d);
+  box-shadow: 0 16px 36px color-mix(in srgb, #000000 40%, transparent);
 }
 
 .canvas-menu-submenu:hover .canvas-menu-submenu-flyout,
@@ -3472,19 +3661,6 @@ button:disabled {
   background: color-mix(in srgb, var(--pb-start) 10%, var(--wn-panel));
 }
 
-.node-boundary-icon::before {
-  content: "";
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 9px solid var(--pb-sequence);
-}
-
-.boundary-input .node-boundary-icon::before {
-  border-left-color: var(--pb-start);
-}
-
 .node-boundary-copy {
   position: relative;
   z-index: 1;
@@ -3567,16 +3743,6 @@ button:disabled {
   border: 1px solid color-mix(in srgb, var(--pb-start) 54%, var(--wn-border));
   border-radius: 999px;
   background: color-mix(in srgb, var(--pb-start) 12%, var(--wn-panel));
-}
-
-.node-start-icon::before {
-  content: "";
-  width: 0;
-  height: 0;
-  margin-left: 2px;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 9px solid var(--pb-start);
 }
 
 .node-start-title {
@@ -6318,7 +6484,23 @@ button:disabled {
   margin: 0;
 }
 
-.logic-canon-type-toggle {
+.logic-local-property-heading {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0;
+  border-radius: 6px;
+}
+
+.logic-local-property-heading > .explorer-entity-row {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.logic-canon-type-toggle,
+.logic-property-tree-toggle {
   display: grid;
   width: 28px;
   min-width: 28px;
@@ -6330,11 +6512,20 @@ button:disabled {
   cursor: pointer;
 }
 
-.logic-canon-type-toggle:hover {
+.logic-canon-type-toggle:hover,
+.logic-property-tree-toggle:hover {
   color: var(--wn-text);
 }
 
-.logic-canon-type-row {
+.logic-canon-type-toggle:disabled,
+.logic-property-tree-toggle:disabled {
+  color: var(--wn-muted);
+  cursor: default;
+  opacity: 0.45;
+}
+
+.logic-canon-type-row,
+.logic-property-tree-row {
   min-height: 28px;
   padding-left: 0;
 }
@@ -6343,7 +6534,8 @@ button:disabled {
   margin: 0 2px 0 0;
 }
 
-.logic-canon-type-count {
+.logic-canon-type-count,
+.logic-property-tree-count {
   margin-left: auto;
   font-size: 0.6rem;
   font-weight: 700;
@@ -7053,6 +7245,7 @@ button:disabled {
 .event-header-title {
   width: 100%;
   min-width: 0;
+  cursor: pointer;
 }
 
 .event-header-title.event-inspector-node-title {
@@ -8815,6 +9008,59 @@ button:disabled {
   color: var(--wn-accent);
 }
 
+.speaker-selector-variant-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border-bottom: 1px solid var(--wn-border);
+}
+
+.speaker-selector-variant-header > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.speaker-selector-variant-header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+}
+
+.speaker-selector-variant-header small {
+  color: var(--wn-muted);
+  font-size: 0.58rem;
+}
+
+.speaker-selector-back {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  min-height: 28px;
+  padding: 3px 6px;
+  border: 1px solid var(--wn-border);
+  border-radius: 5px;
+  color: var(--wn-muted);
+  background: var(--wn-panel);
+  font: inherit;
+  font-size: 0.6rem;
+  cursor: pointer;
+}
+
+.speaker-selector-back:hover {
+  color: var(--wn-text);
+  background: var(--wn-accent-soft);
+}
+
+.speaker-selector-back:focus-visible {
+  outline: 2px solid var(--wn-accent);
+  outline-offset: 2px;
+}
+
 .speaker-selector-icon {
   display: flex;
   align-items: center;
@@ -9016,6 +9262,12 @@ button:disabled {
 .empty-line {
   color: var(--wn-muted);
   overflow-wrap: anywhere;
+}
+
+.finding .finding-technical {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.65rem;
 }
 
 .finding.error {
@@ -9393,7 +9645,8 @@ button:disabled {
   cursor: pointer;
   border-radius: 5px;
 }
-.explorer-entity-open.logic-canon-type-row {
+.explorer-entity-open.logic-canon-type-row,
+.explorer-entity-open.logic-property-tree-row {
   padding-left: 8px;
 }
 .explorer-entity-row.active .explorer-entity-open,
@@ -10434,7 +10687,13 @@ button:disabled {
 .route-inspector-summary button.active { border-color: color-mix(in srgb, var(--wn-accent) 58%, var(--wn-border)); background: color-mix(in srgb, var(--wn-accent) 9%, var(--wn-panel)); outline: none; }
 .route-inspector-summary strong { color: var(--wn-accent); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
 .route-inspector-summary span { color: var(--wn-muted); font-size: 0.72rem; font-weight: 700; }
+.route-inspector-context { display:flex; align-items:center; gap:10px; min-width:0; margin:10px 0; padding:10px 12px; border:1px solid var(--wn-border); border-radius:9px; background:var(--wn-panel-2); }
+.route-inspector-context > div { display:grid; min-width:0; gap:2px; }
+.route-inspector-context small { color:var(--wn-muted); font-size:0.66rem; }
+.route-inspector-context strong { min-width:0; overflow-wrap:anywhere; color:var(--wn-text); font-size:0.78rem; }
+.route-inspector-context-marker { display:grid; place-items:center; flex:0 0 30px; min-width:30px; height:30px; padding:0 4px; border:1px solid color-mix(in srgb,var(--wn-accent) 48%,var(--wn-border)); border-radius:8px; background:color-mix(in srgb,var(--wn-accent) 12%,var(--wn-panel)); color:var(--wn-accent); font-size:0.72rem; font-weight:800; }
 .route-inspector-list { display: grid; gap: 6px; margin-bottom: 12px; }
+.route-inspector-route-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 6px; min-width: 0; }
 .route-inspector-route { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--wn-border); border-radius: 8px; color: var(--wn-text); background: var(--wn-panel-2); text-align: left; cursor: pointer; }
 .route-inspector-route:hover,
 .route-inspector-route:focus-visible,
@@ -10442,6 +10701,9 @@ button:disabled {
 .route-inspector-route-name { color: var(--wn-accent); font-size: 0.78rem; font-weight: 800; }
 .route-inspector-route-target { grid-column: 1; min-width: 0; overflow: hidden; color: var(--wn-text); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
 .route-inspector-route small { grid-column: 2; grid-row: 1 / span 2; color: var(--wn-muted); font-size: 0.64rem; text-align: right; }
+.route-inspector-delete-route { display: grid; place-items: center; align-self: stretch; min-width: 34px; border: 1px solid var(--wn-border); border-radius: 8px; color: var(--wn-muted); background: var(--wn-panel-2); cursor: pointer; }
+.route-inspector-delete-route:hover, .route-inspector-delete-route:focus-visible, .route-inspector-delete-router:hover, .route-inspector-delete-router:focus-visible { border-color: var(--wn-danger, #c75a5a); color: var(--wn-danger, #c75a5a); outline: none; }
+.route-inspector-delete-router { display: inline-flex; align-items: center; gap: 7px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--wn-border); border-radius: 8px; color: var(--wn-text); background: var(--wn-panel-2); cursor: pointer; }
 .route-inspector .route-gate-route-editor h3 { margin: 0 0 2px; color: var(--wn-text); font-size: 0.85rem; }
 .route-inspector-add { margin-top: 10px; }
 
@@ -10680,7 +10942,7 @@ button:disabled {
   transform: translateY(-50%);
 }
 
-.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) {
+.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node):not(.sequence-start) {
   display: grid;
   align-content: stretch;
   gap: 7px;
@@ -10690,9 +10952,9 @@ button:disabled {
 
 /* Logic is a distinct canvas language: narrative controls and artwork are not
    merely dimmed, they leave the node entirely so conditions and effects own it.
-   Decision option rows stay mounted and visible because their source handles
-   are also the canonical Visual connections. */
-.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > :not(.node-identity):not(.node-authoring-logic):not(.node-canvas-actions):not(.canvas-interaction-cards):not(.node-logic-bands):not(.node-info-badges):not(.decision-options):not(.react-flow__handle):not(.react-flow__node-toolbar) {
+   Decision options and interaction results stay mounted and visible because
+   their source handles are also canonical Visual connections. */
+.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node):not(.sequence-start) > :not(.node-identity):not(.node-authoring-logic):not(.node-canvas-actions):not(.canvas-interaction-cards):not(.node-logic-bands):not(.node-info-badges):not(.decision-options):not(.interaction-node-results):not(.react-flow__handle):not(.react-flow__node-toolbar) {
   display: none;
 }
 

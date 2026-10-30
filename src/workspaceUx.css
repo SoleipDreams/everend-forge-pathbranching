@@ -17,7 +17,6 @@
 .finding details { font-size: 11px; overflow-wrap: anywhere; }
 .canvas-breadcrumb button { max-width: 220px; }
 .canvas-breadcrumb button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-breadcrumb-story { font-size: 12px; padding: 6px 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adaptive-workspace .event-authoring-dock { max-width: calc(100% - 20px); }
 .app-shell > .web-preview-banner, .app-shell > [role="status"] { flex-shrink: 0; }
 @media(max-width: 960px) {

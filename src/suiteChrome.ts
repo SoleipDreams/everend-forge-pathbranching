@@ -3,6 +3,7 @@ import type { LearningHost } from "./learning";
 import type { NotificationHost } from "./notifications";
 import type { ReactNode } from "react";
 import type { LocalePreference } from "./i18n";
+import type { BrowserDirectoryHandle } from "./utils/browserUniverse";
 
 export type SuiteLicenseStatus = "idle" | "activating" | "active" | "inactive" | "error";
 
@@ -75,6 +76,10 @@ export type SuiteUpdateControls = {
 };
 
 export type SuiteChrome = {
+  onOpenCanonEntity?: (target: { entityId: string; variantId?: string; propertyId?: string }) => void | Promise<void>;
+  onOpenCanonProperties?: () => void | Promise<void>;
+  /** Changes only after a successful WorldNotion note/schema write. */
+  canonRevision?: number;
   /** Optional embedded settings center. Older hosts keep the local dialog. */
   settingsHost?: SettingsHost;
   /** Optional onboarding host; absent in standalone and older Suite builds. */
@@ -85,6 +90,8 @@ export type SuiteChrome = {
   registerSettingsOpener?: (open: (section?: "suite") => void) => () => void;
   active: boolean;
   sharedUniversePath?: string;
+  /** Browser folder handle supplied by the integrated Suite web shell. */
+  sharedUniverseDirectory?: BrowserDirectoryHandle;
   onReady?: () => void;
   onHome?: () => void;
   onReload?: () => void;

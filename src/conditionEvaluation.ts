@@ -1,7 +1,8 @@
 import type { BranchingProject, ConditionInput, InstanceQuery, LogicPredicate, LogicSubject, PlayerSimulationState } from './domain.js';
 import type { NarrativeEvaluationState } from './logic.js';
 import { migrateConditionInput } from './logic.js';
-import { entityDefinition, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
+import { entityCapabilities, entityDefinition, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
+import { characterPropertyDescriptor, resolveCharacterProperty } from './characterStats.js';
 
 export type ConditionProject = Pick<BranchingProject, 'canonRefs' | 'localExplorerEntities'> & Partial<BranchingProject>;
 export type ConditionStatus = 'satisfied' | 'unsatisfied' | 'unresolved' | 'invalid';
@@ -39,13 +40,16 @@ export function conditionValueType(predicate: LogicPredicate, project: Condition
     const object = project.projectDataObjects?.find(o => o.id === s.objectId);
     return project.dataClasses?.find(c => c.id === object?.classId)?.fields.find(f => f.name === predicate.propertyId)?.type;
   }
-  if (predicate.type === 'property') return project.localExplorerProperties?.find(p => p.id === predicate.propertyId || p.id === `property:${predicate.propertyId}`)?.valueType;
+  if (predicate.type === 'property') return characterPropertyDescriptor(project as BranchingProject, predicate.propertyId)?.valueType;
   return undefined;
 }
-type Resolved = { value?: unknown; error?: string; unresolved?: string };
+type Resolved = ReturnType<typeof resolveCharacterProperty>;
 export function resolveConditionValue(predicate: LogicPredicate, project: ConditionProject, state: NarrativeEvaluationState): Resolved {
   let s = predicate.subject;
   if (!s || typeof s !== 'object') return { error: 'Missing condition subject' };
+  if (predicate.type === 'property' && ['entity', 'instance', 'context'].includes(s.kind)) {
+    return resolveCharacterProperty(project as BranchingProject, state as PlayerSimulationState, s, predicate.propertyId, { purpose: 'condition' });
+  }
   if (s.kind === 'context') {
     const resolved = resolveContextSubject(s, state as PlayerSimulationState);
     if (!resolved) return { unresolved: `Supply ${s.role} context` };
@@ -189,10 +193,13 @@ function evaluateTree(input: unknown, project: ConditionProject, state: Narrativ
     const use = project.events?.flatMap(e => (e.interactionUses ?? []).map(use => ({ use, event: e }))).find(item => item.use.id === value.useId);
     const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
     if (!use || !definition?.results.some(r => r.id === value.resultId) || !['==', '!='].includes(String(value.operator))) return { status: 'invalid', path, message: 'Missing interaction use/result or invalid operator' };
+    if (value.participantId && (definition.mechanic.kind !== 'opposedcheck' || !definition.mechanic.rivals.some(rival => rival.id === value.participantId))) return { status: 'invalid', path, message: 'Missing interaction rival' };
     const actual = state.interactionResults?.[String(value.useId)];
     if (!actual) return { status: 'unresolved', path, message: 'Wait for the interaction result' };
-    const equal = actual.resultId === value.resultId;
-    return { status: (value.operator === '==' ? equal : !equal) ? 'satisfied' : 'unsatisfied', path, message: `Interaction ${value.useId}: ${actual.resultId}`, actual: actual.resultId };
+    const resultId = value.participantId ? actual.participantResults?.[String(value.participantId)]?.resultId : actual.resultId;
+    if (!resultId) return { status: 'unresolved', path, message: 'Wait for the interaction result' };
+    const equal = resultId === value.resultId;
+    return { status: (value.operator === '==' ? equal : !equal) ? 'satisfied' : 'unsatisfied', path, message: `Interaction ${value.useId}: ${resultId}`, actual: resultId };
   }
   const key = Array.isArray(input) ? 'all' : own(value,'all') ? 'all' : own(value,'any') ? 'any' : own(value,'not') ? 'not' : undefined;
   if (!key) return value.type === 'instanceQuery' ? evaluateInstanceQuery(input as InstanceQuery, project, state, path) : evaluatePredicate(input as LogicPredicate,project,state,path);
@@ -210,7 +217,10 @@ export function evaluateInstanceQuery(query: InstanceQuery, project: ConditionPr
   const owner = resolveOwner(query.owner, state as PlayerSimulationState);
   if (query.owner && !owner) return fail('unresolved', 'Supply copy owner context');
   const instances = state.entityInstances ?? project.entityInstances ?? [];
-  const candidates = instances.filter(i => (!query.entityId || i.entityId === query.entityId) && (!query.owner || ownerKey(i.owner) === ownerKey(owner)));
+  // A saved explicit entity query retains its existing meaning. The wildcard
+  // query ranges over the types currently enabled as inventory items.
+  const candidates = instances.filter(i => (query.entityId ? i.entityId === query.entityId : entityCapabilities(project, i.entityId).inventoryItem)
+    && (!query.owner || ownerKey(i.owner) === ownerKey(owner)));
   const children = candidates.map(i => evaluateConditionDetailed(query.filters, project, { ...state, context: { ...state.context, self: { kind: 'instance', instanceId: i.id } } }));
   children.forEach((child, index) => { child.path = `${path}.copy[${candidates[index].id}]`; });
   if (children.some(c => c.status === 'invalid')) return { ...fail('invalid', 'Invalid copy filter'), children };

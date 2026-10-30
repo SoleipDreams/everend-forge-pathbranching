@@ -87,6 +87,7 @@ export type StoryCanvasNodeData = {
 export type StoryCanvasEdgeData = {
   kind: StoryCanvasEdgeKind;
   label: string;
+  waypoints?: Array<{ x: number; y: number }>;
   routeRole?: "flow" | "route";
   conditions?: ConditionInput;
   consequences?: Consequence[];
@@ -339,6 +340,11 @@ function applyCanvasLogicMode(
   options: StoryCanvasModelOptions,
 ): StoryCanvasModel {
   const canvasLayerMode = options.canvasLayerMode ?? "visual";
+  const scopeKey = options.scope ? canvasScopeKey(options.scope) : undefined;
+  const scopedWaypoints = scopeKey
+    ? project.canvas?.scopes?.[scopeKey]?.edgeWaypoints
+    : undefined;
+  const globalWaypoints = project.canvas?.edgeWaypoints;
   return {
     ...model,
     nodes: model.nodes.map((node) => ({
@@ -365,6 +371,13 @@ function applyCanvasLogicMode(
         ...(hideVisualEntryLabel ? { label: undefined } : {}),
         data: {
           ...item.data,
+          ...(item.data.kind === "transition"
+            ? {
+                waypoints: scopedWaypoints && Object.prototype.hasOwnProperty.call(scopedWaypoints, item.id)
+                  ? scopedWaypoints[item.id]
+                  : globalWaypoints?.[item.id],
+              }
+            : {}),
           ...(hideVisualEntryLabel ? { label: "" } : {}),
           canvasLayerMode,
         },
@@ -473,6 +486,12 @@ function transitionEdge(
   locale: ConditionUiLocale = "en",
 ): StoryCanvasEdge {
   const source = visualTransitionSource(event, transition);
+  const resultUse = event.interactionUses?.find(use => interactionNodeId(event.id, use.id) === transition.from);
+  const resultIds = new Set<string>();
+  walkConditions(transition.logic?.when ?? transition.conditions, condition => {
+    if (condition.type === "interactionResult" && condition.useId === resultUse?.id && condition.operator === "==" && typeof condition.resultId === "string") resultIds.add(condition.resultId);
+  });
+  const resultId = resultIds.size === 1 ? Array.from(resultIds)[0] : undefined;
   return {
     ...edge(
       `edge:transition:${transition.id}`,
@@ -482,7 +501,7 @@ function transitionEdge(
       transitionCanvasLabel(transition),
       transitionEdgeData(project, transition, locale),
     ),
-    sourceHandle: source.handleId,
+    sourceHandle: resultId ? `interaction-result:${resultId}` : source.handleId,
     animated: transition.role === "route",
   };
 }
@@ -505,9 +524,14 @@ function projectRouteGates(
   const shouldProjectGate = (_routeSourceId: string, routes: StoryCanvasEdge[]) =>
     routes.length >= 2;
   const transitionGroups = new Map<string, StoryCanvasEdge[]>();
+  const directInteractionResultEdges: StoryCanvasEdge[] = [];
   edges
     .filter((item) => item.data?.kind === "transition")
     .forEach((item) => {
+      if (item.sourceHandle?.startsWith("interaction-result:")) {
+        directInteractionResultEdges.push(item);
+        return;
+      }
       const routeSourceId =
         typeof item.data?.routeSourceId === "string"
           ? item.data.routeSourceId
@@ -550,23 +574,21 @@ function projectRouteGates(
       scopeNodes?.[legacyGateId] ??
       project.canvas?.nodes?.[legacyGateId];
     const storedGatePosition = storedGateState?.position;
+    // Canvas snapshots include route gates when any node is moved. Keep that
+    // anchor stable so dragging a source or destination cannot recalculate it.
+    const hasStoredGateAnchor = Boolean(
+      storedGatePosition &&
+      (storedGateState?.manual || storedGateState?.positionPinned),
+    );
     const forwardTargets = [...new Set(routes
       .filter((route) => route.data?.returnRoute !== true)
       .map((route) => route.target))]
       .map((targetId) => nodes.find((node) => node.id === targetId))
       .filter((target): target is StoryCanvasNode => Boolean(target && target.position.x > source.position.x));
-    const alignedTargetCenter = forwardTargets.length
-      ? forwardTargets.reduce((total, target) => total + target.position.y + (target.height ?? target.measured?.height ?? DEFAULT_STORY_NODE_HEIGHT) / 2, 0) / forwardTargets.length
-      : undefined;
     const sourceCenter = source.position.y + (source.height ?? source.measured?.height ?? DEFAULT_STORY_NODE_HEIGHT) / 2;
-    const visualPosition = {
-      x: storedGatePosition?.x ?? source.position.x + NODE_WIDTH + ROUTE_GATE_SOURCE_GAP,
-      y: storedGateState?.manual && storedGatePosition?.y !== undefined
-        ? storedGatePosition.y
-        : alignedTargetCenter !== undefined
-          ? alignedTargetCenter - ROUTE_GATE_VISUAL_HEIGHT / 2
-          : storedGatePosition?.y ?? sourceCenter - ROUTE_GATE_VISUAL_HEIGHT / 2,
-    };
+    const visualPosition = hasStoredGateAnchor && storedGatePosition
+      ? storedGatePosition
+      : { x: source.position.x + (source.width ?? NODE_WIDTH) + ROUTE_GATE_SOURCE_GAP, y: sourceCenter - ROUTE_GATE_VISUAL_HEIGHT / 2 };
     const visualCenter = {
       x: visualPosition.x + ROUTE_GATE_VISUAL_WIDTH / 2,
       y: visualPosition.y + ROUTE_GATE_VISUAL_HEIGHT / 2,
@@ -587,20 +609,12 @@ function projectRouteGates(
       : ROUTE_GATE_VISUAL_WIDTH;
     const gateHeight = logicMode ? ROUTE_GATE_LOGIC_HEIGHT : ROUTE_GATE_VISUAL_HEIGHT;
     const gatePosition = logicMode
-      ? storedGateState?.manual
+      ? hasStoredGateAnchor && storedGatePosition
         ? {
             x: visualCenter.x - gateWidth / 2,
             y: visualCenter.y - gateHeight / 2,
           }
-        : {
-            // The Visual knot sits on the edge split. The expanded Logic card
-            // belongs in the open lane between its source and first forward
-            // destination, so it does not cover either narrative node.
-            x: fitsBetweenNodes
-              ? sourceRight + (availableRouteGap! - gateWidth) / 2
-              : sourceRight + ROUTE_GATE_SOURCE_GAP,
-            y: visualCenter.y - gateHeight / 2,
-          }
+        : { x: sourceRight + ROUTE_GATE_SOURCE_GAP, y: sourceCenter - gateHeight / 2 }
       : visualPosition;
     const orderedRoutes = [...routes].sort((left, right) => {
       if (left.data?.mode === "fallback" && right.data?.mode !== "fallback") return 1;
@@ -714,7 +728,7 @@ function projectRouteGates(
     }
   });
   const nonTransitionEdges = edges.filter((item) => item.data?.kind !== "transition");
-  edges.splice(0, edges.length, ...nonTransitionEdges, ...gateInputEdges, ...finalTransitionEdges);
+  edges.splice(0, edges.length, ...nonTransitionEdges, ...directInteractionResultEdges, ...gateInputEdges, ...finalTransitionEdges);
 }
 
 function boundaryPortId(eventId: string, direction: "input" | "output", ownerId: string) {
@@ -1363,6 +1377,9 @@ function addEventSupportNodes(
       {
         nodeColors: options.nodeColors,
         width: 230,
+        infoBadges: authoringDisplaySettings(options).showOutcomeCount && decision.outcomes.length > 0
+          ? [{ kind: "outcomes", count: decision.outcomes.length }]
+          : [],
       },
     );
 
@@ -1473,6 +1490,9 @@ function buildEventScopeModel(
         nodeColors: options.nodeColors,
         scope,
         width: 230,
+        infoBadges: authoringDisplaySettings(options).showOutcomeCount && decision.outcomes.length > 0
+          ? [{ kind: "outcomes", count: decision.outcomes.length }]
+          : [],
       },
     );
   });
@@ -1541,7 +1561,7 @@ function buildEventScopeModel(
       nodes,
       nodeId,
       "dialogueStart",
-      "Conversation start",
+      "Trigger",
       sourceLabel ?? "Choose an interactable source",
       410,
       250 + index * 120,
@@ -1813,7 +1833,14 @@ function buildDialogueScopeModel(
           : []),
       ],
       { eventId: eventNode.id, dialogueId: dialogue.id, decision, options: decisionOptions(project, eventNode.id, decision, options.interfaceLocale) },
-      { nodeColors: options.nodeColors, scope, width: 230 },
+      {
+        nodeColors: options.nodeColors,
+        scope,
+        width: 230,
+        infoBadges: authoringDisplaySettings(options).showOutcomeCount && decision.outcomes.length > 0
+          ? [{ kind: "outcomes", count: decision.outcomes.length }]
+          : [],
+      },
     );
   });
 
@@ -2239,7 +2266,7 @@ function addInteractionCanvasNodes(project: BranchingProject, nodes: StoryCanvas
     const definition = event.interactionDefinitions?.find(d => d.id === use.definitionId);
     pushNode(project, nodes, `interaction:${event.id}:${use.id}`, 'interaction', definition?.name ?? use.id,
       options.canvasLayerMode === 'logic' ? JSON.stringify(definition?.mechanic) : definition?.prompt?.content ?? definition?.mechanic.kind,
-      700, 120 + index * 190, definition?.results.map(r => r.name) ?? [], { eventId: event.id, dialogueId, interactionUse: use, interactionResults: definition?.results.map(r => ({ id: r.id, name: r.name })) }, { scope, nodeColors: options.nodeColors });
+      700, 120 + index * 190, definition?.results.map(r => r.name) ?? [], { eventId: event.id, dialogueId, interactionUse: use, interactionResults: definition?.results.map(r => ({ id: r.id, name: r.name })) }, { scope, nodeColors: options.nodeColors, width: 168 });
   });
   (event.interactionBarriers ?? []).filter(b => b.dialogueId === dialogueId).forEach((barrier, index) => {
     pushNode(project, nodes, `barrier:${event.id}:${barrier.id}`, 'barrier', barrier.name,
@@ -2247,10 +2274,17 @@ function addInteractionCanvasNodes(project: BranchingProject, nodes: StoryCanvas
       1010, 120 + index * 190, ['Wait / Esperar'], { eventId: event.id, dialogueId, interactionBarrier: barrier }, { scope, nodeColors: options.nodeColors });
   });
   // Attached uses are a badge on their authored owner, not additional executable nodes.
-  const cards = (ownerId: string) => (event.interactionUses ?? []).filter(u => u.ownerNodeId === ownerId).map(u => {
+  const cards = (ownerId: string) => {
+    const optionUses = (event.transitions ?? [])
+      .filter(transition => transition.from === ownerId)
+      .map(transition => event.interactionUses?.find(use => interactionNodeId(event.id, use.id) === transition.to))
+      .filter((use): use is NonNullable<typeof use> => Boolean(use));
+    const linkedUseIds = new Set(optionUses.map(use => use.id));
+    return (event.interactionUses ?? []).filter(use => use.ownerNodeId === ownerId || linkedUseIds.has(use.id)).map(u => {
     const definition = event.interactionDefinitions?.find(d => d.id === u.definitionId);
     return { id: u.id, name: definition?.name ?? u.id, moment: u.moment, mechanic: definition?.mechanic, results: definition?.results };
-  });
+    });
+  };
   for (const node of nodes) {
     const attached = (event.interactionUses ?? []).filter(u => u.ownerNodeId === node.id);
     node.data.badges.push(...attached.map(u => `${u.moment} · ${event.interactionDefinitions?.find(d => d.id === u.definitionId)?.name ?? u.id}`));

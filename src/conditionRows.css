@@ -1,0 +1,113 @@
+@scope (.pathbranching-app) {
+.condition-ux.condition-rows-editor { --condition-rail:color-mix(in srgb,var(--wn-accent) 60%,var(--wn-border)); --condition-soft:color-mix(in srgb,var(--wn-accent) 9%,transparent); --condition-columns:20px minmax(0,1.15fr) minmax(0,1.3fr) minmax(0,1.7fr) minmax(0,.85fr) 68px; width:100%; min-width:0; font-size:13px; container-type:inline-size; container-name:conditions; }
+/* Every group, including the root, owns a visible card and its controls. */
+.condition-ux.condition-rows-editor .condition-friendly-group { min-width:0; margin:0; border:1px solid var(--wn-border); border-left:3px solid var(--condition-rail); border-radius:8px; background:var(--wn-panel); }
+.condition-ux.condition-rows-editor .condition-friendly-group.is-deep { margin-inline:-8px; }
+.condition-ux.condition-rows-editor .condition-friendly-group-header { display:flex; flex-wrap:nowrap; align-items:center; gap:6px; min-width:0; padding:7px 8px; border-bottom:1px solid var(--wn-border); border-radius:7px 7px 0 0; background:var(--condition-soft); }
+.condition-ux.condition-rows-editor .condition-friendly-group-header:has(.condition-group-collapse[aria-expanded="false"]) { border-bottom:0; border-radius:7px; }
+.condition-ux.condition-rows-editor .condition-group-name { flex:1; min-width:0; width:0; min-height:30px; max-width:none; margin:0; padding:3px 5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid transparent; border-radius:4px; background:transparent; color:var(--wn-text); font:inherit; font-weight:600; text-align:left; }
+.condition-ux.condition-rows-editor .condition-group-root-label { flex:0 1 auto; min-width:0; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wn-text); font-size:12px; font-weight:600; }
+.condition-ux.condition-rows-editor .condition-group-link-word { flex:0 0 auto; color:var(--wn-muted); font-size:12px; }
+.condition-ux.condition-rows-editor .condition-group-summary { flex:0 1 150px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--wn-muted); font-size:11px; text-align:right; }
+.condition-ux.condition-rows-editor .condition-group-mode { flex:0 1 160px; min-width:84px; }
+.condition-ux.condition-rows-editor .condition-group-mode .condition-picker-trigger { height:30px; min-height:30px; padding:4px 8px; background:var(--wn-card); }
+.condition-ux.condition-rows-editor .condition-group-negate { display:grid; place-items:center; flex:0 0 38px; box-sizing:border-box; width:38px; height:30px; min-height:30px; margin:0; padding:0; text-align:center; line-height:1; white-space:nowrap; border:1px solid color-mix(in srgb,var(--wn-accent) 45%,var(--wn-border)); border-radius:6px; background:color-mix(in srgb,var(--wn-accent) 8%,transparent); color:var(--wn-accent); font:inherit; font-size:11px; font-weight:700; cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-group-negate.active { border-color:var(--wn-danger); color:var(--wn-danger); background:color-mix(in srgb,var(--wn-danger) 10%,transparent); }
+.condition-ux.condition-rows-editor .condition-group-collapse { display:grid; place-items:center; flex:0 0 22px; width:22px; height:30px; min-height:30px; padding:0; margin:0; border:0; background:transparent; color:var(--wn-muted); cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-group-count { color:var(--wn-muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.condition-ux.condition-rows-editor .condition-group-header-spacer { flex:1 1 auto; min-width:0; }
+.condition-ux.condition-rows-editor .condition-group-path { max-width:60px; color:var(--wn-muted); overflow:hidden; text-overflow:ellipsis; font-size:10px; }
+.condition-ux.condition-rows-editor .condition-group-body { min-width:0; padding:8px; }
+.condition-ux.condition-rows-editor .condition-group-children { min-width:0; }
+.condition-ux.condition-rows-editor .condition-node-wrapper { min-width:0; }
+.condition-ux.condition-rows-editor .condition-column-headings,.condition-ux.condition-rows-editor .condition-inline-row { display:grid; grid-template-columns:var(--condition-columns); align-items:center; column-gap:6px; min-width:0; }
+.condition-ux.condition-rows-editor .condition-column-headings { padding:0 5px 2px; color:var(--wn-muted); font-size:11px; }
+.condition-ux.condition-rows-editor .condition-column-headings > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* One compact line; long values remain readable in their contextual popovers. */
+.condition-ux.condition-rows-editor .condition-row-shell { position:relative; min-width:0; padding:4px; border:1px solid var(--wn-border); border-radius:6px; background:var(--wn-card); }
+.condition-ux.condition-managed-interaction { padding:10px 12px; border:1px solid var(--wn-border); border-left:3px solid var(--wn-accent); border-radius:7px; color:var(--wn-text-muted); background:var(--wn-panel); }
+.condition-ux.condition-managed-interaction p { margin:0; }
+.condition-ux.condition-rows-editor .condition-managed-interaction { display:grid; gap:4px; padding:8px 10px; color:var(--wn-text-muted); }
+.condition-ux.condition-rows-editor .condition-managed-interaction > span { color:var(--wn-text); font-weight:600; }
+.condition-ux.condition-rows-editor .condition-managed-interaction > small { overflow-wrap:anywhere; }
+.condition-ux.condition-rows-editor .condition-row-shell:focus-within,.condition-ux.condition-rows-editor .condition-row-shell:hover { border-color:var(--condition-rail); }
+.condition-ux.condition-rows-editor .condition-inline-field { min-width:0; }
+.condition-ux.condition-rows-editor .condition-inline-field > span:first-child { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
+.condition-ux.condition-rows-editor .condition-inline-row.has-no-value > .condition-inline-field:nth-child(4) { grid-column:4 / 6; }
+.condition-ux.condition-rows-editor .condition-reference-picker > .condition-picker-trigger { height:36px; min-height:36px; padding:5px 8px; gap:5px; font-size:13px; background:var(--wn-panel); }
+.condition-ux.condition-rows-editor .condition-picker-trigger > svg:not(.condition-picker-chevron) { width:14px; height:14px; }
+.condition-ux.condition-rows-editor .condition-picker-chevron { width:12px; height:12px; }
+.condition-ux.condition-rows-editor .condition-modifier-fields { display:flex; align-items:center; min-width:0; border:1px solid var(--wn-border); border-radius:6px; overflow:hidden; background:var(--wn-panel); }
+.condition-ux.condition-rows-editor .condition-modifier-fields > * { flex:1; min-width:0; }
+.condition-ux.condition-rows-editor .condition-modifier-fields > * + * { border-left:1px solid var(--wn-border); }
+.condition-ux.condition-rows-editor .condition-modifier-fields .condition-picker-trigger { border:0; border-radius:0; height:34px; min-height:34px; }
+.condition-ux.condition-rows-editor .condition-modifier-fields.has-symbol-operator > .condition-reference-picker:last-child { flex:0 0 44px; }
+.condition-ux.condition-rows-editor .condition-modifier-fields.has-symbol-operator > .condition-reference-picker:last-child .condition-picker-trigger { padding-inline:5px; justify-content:center; }
+.condition-ux.condition-rows-editor .condition-modifier-fields > button:disabled { height:34px; min-height:34px; min-width:0; padding:5px 8px; border:0; background:transparent; color:var(--wn-muted); font:inherit; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.condition-ux.condition-rows-editor .condition-inline-value { box-sizing:border-box; width:100%; min-width:0; height:36px; padding:5px 8px; border:1px solid var(--wn-border); border-radius:6px; background:var(--wn-panel); color:var(--wn-text); font:inherit; }
+.condition-ux.condition-rows-editor .condition-inline-value:focus { outline:2px solid var(--wn-accent); outline-offset:-2px; }
+.condition-ux.condition-rows-editor .condition-inline-value:disabled { opacity:.5; }
+.condition-ux.condition-rows-editor .condition-row-tools { display:flex; align-items:center; justify-content:flex-end; gap:3px; min-width:0; }
+.condition-ux.condition-rows-editor .condition-row-menu { position:relative; flex:0 0 26px; margin:0; }
+.condition-ux.condition-rows-editor .condition-actions-trigger { position:static; transform:none; display:grid; place-items:center; width:26px; min-width:26px; height:30px; min-height:30px; margin:0; padding:0; border:0; border-radius:4px; color:var(--wn-muted); background:transparent; cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-actions-trigger:hover { background:var(--condition-soft); color:var(--wn-text); }
+.condition-ux.condition-rows-editor .condition-negation-mark { flex-shrink:0; margin:0; padding:1px 3px; border-radius:3px; color:var(--wn-danger); background:color-mix(in srgb,var(--wn-danger) 10%,transparent); font-size:10px; font-weight:700; }
+.condition-ux.condition-rows-editor .condition-friendly-group.is-negated { border-left-color:var(--wn-danger); }
+.condition-ux.condition-rows-editor .condition-row-shell.is-negated { border-left:2px solid var(--wn-danger); }
+.condition-ux.condition-rows-editor details.condition-row-feedback { position:relative; flex:0 0 16px; min-width:0; margin:0; padding:0; border:0; background:transparent; }
+.condition-ux.condition-rows-editor .condition-row-feedback > summary { display:grid; place-items:center; width:16px; height:28px; margin:0; padding:0; color:var(--wn-warning,var(--wn-accent)); list-style:none; cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-row-feedback > summary::-webkit-details-marker { display:none; }
+.condition-ux.condition-rows-editor .condition-row-feedback > p { position:absolute; right:0; top:28px; z-index:10; box-sizing:border-box; width:260px; margin:0; padding:10px; border:1px solid var(--wn-border); border-radius:6px; background:var(--wn-panel); color:var(--wn-text); font-size:12px; line-height:1.4; box-shadow:0 5px 18px #0005; }
+
+/* Reordering is scoped to one editor; drop slots never change row positions. */
+.condition-ux.condition-rows-editor .condition-drag-handle { display:grid; place-items:center; flex:0 0 20px; width:20px; min-width:20px; height:30px; min-height:30px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--wn-muted); cursor:grab; touch-action:none; }
+.condition-ux.condition-rows-editor .condition-drag-handle:hover { color:var(--wn-accent); background:var(--condition-soft); }
+.condition-ux.condition-rows-editor .condition-drag-handle:active { cursor:grabbing; }
+.condition-ux.condition-rows-editor .condition-drop-slot { position:relative; height:6px; }
+.condition-ux.condition-rows-editor .condition-drop-slot[data-active="true"]::before { content:""; position:absolute; inset:2px 0; border-radius:2px; background:var(--wn-accent); box-shadow:0 0 0 2px var(--condition-soft); }
+.condition-ux.condition-rows-editor .condition-friendly-group[data-drop-active="true"] { border-color:var(--wn-accent); }
+.condition-ux.condition-rows-editor .condition-node-wrapper[data-dragging="true"] { opacity:.5; }
+.condition-ux.condition-rows-editor .condition-group-add { display:flex; align-items:center; gap:8px; padding-top:8px; margin-top:4px; border-top:1px solid var(--wn-border); }
+.condition-ux.condition-rows-editor .condition-group-add button { display:inline-flex; align-items:center; gap:5px; min-height:30px; padding:4px 8px; border:1px solid transparent; border-radius:5px; color:var(--wn-muted); background:transparent; font:inherit; font-size:12px; cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-group-add button:hover { background:var(--condition-soft); color:var(--wn-accent); border-color:var(--wn-border); }
+.condition-ux.condition-rows-editor .condition-group-add button:disabled { opacity:.45; cursor:default; }
+.condition-ux.condition-rows-editor .condition-empty { margin:8px 4px 12px; color:var(--wn-muted); font-size:12px; }
+.condition-ux.condition-rows-editor .condition-move-panel { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:8px; border:1px solid var(--wn-accent); border-radius:6px; background:var(--wn-panel); }
+.condition-ux.condition-rows-editor .condition-move-panel > button { flex:0 0 30px; display:grid; place-items:center; width:30px; height:30px; padding:0; }
+
+.condition-ux.condition-rows-editor .condition-copy-settings { display:grid; place-items:center; flex:0 0 16px; width:16px; min-width:16px; height:30px; min-height:30px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--wn-muted); cursor:pointer; }
+.condition-ux.condition-rows-editor .condition-copy-settings:hover,.condition-ux.condition-rows-editor .condition-copy-settings[aria-expanded="true"] { color:var(--wn-accent); background:var(--condition-soft); }
+.condition-ux.condition-rows-editor .condition-copy-details-panel { min-width:0; margin:5px 0 0 26px; padding:5px 0 0; border-top:1px solid var(--wn-border); font-size:12px; }
+.condition-ux.condition-rows-editor .condition-copy-details { min-width:0; padding:8px 0 0; }
+.condition-ux.condition-rows-editor .condition-copy-owner { display:flex; align-items:center; gap:8px; }
+.condition-ux.condition-rows-editor .condition-copy-owner > span { white-space:nowrap; color:var(--wn-muted); }
+.condition-ux.condition-rows-editor .condition-copy-details h5 { margin:10px 0 6px; color:var(--wn-muted); font:inherit; font-weight:600; }
+.condition-ux.condition-rows-editor > .condition-tester { margin:10px 0 0; padding:0; border:1px solid var(--wn-border); border-radius:8px; background:var(--wn-panel); }
+.condition-ux.condition-rows-editor > .condition-tester > summary { padding:8px 10px; color:var(--wn-muted); font-size:12px; cursor:pointer; }
+.condition-ux.condition-rows-editor > .condition-tester > :not(summary) { margin-inline:10px; }
+.condition-ux.condition-rows-editor > .condition-tester[open] { padding-bottom:10px; }
+.condition-ux.condition-rows-editor :is(button,summary):focus-visible { outline:2px solid var(--wn-accent); outline-offset:-2px; }
+
+@container conditions (max-width:700px) {
+ .condition-ux.condition-rows-editor .condition-picker-label-full { display:none; }
+ .condition-ux.condition-rows-editor .condition-picker-label-short { display:inline; }
+ .condition-ux.condition-rows-editor .condition-group-mode { flex-basis:106px; }
+ .condition-ux.condition-rows-editor .condition-reference-picker > .condition-picker-trigger { padding-inline:5px; gap:3px; }
+ .condition-ux.condition-rows-editor .condition-modifier-fields .condition-picker-trigger > svg:not(.condition-picker-chevron) { display:none; }
+}
+@container conditions (max-width:500px) {
+ .condition-ux.condition-rows-editor .condition-inline-row,.condition-ux.condition-rows-editor .condition-column-headings { column-gap:3px; grid-template-columns:16px minmax(0,1fr) minmax(0,1.2fr) minmax(0,1.4fr) minmax(0,.8fr) 64px; }
+ .condition-ux.condition-rows-editor .condition-group-body { padding:5px; }
+ .condition-ux.condition-rows-editor .condition-friendly-group.is-deep { margin-inline:-5px; }
+ .condition-ux.condition-rows-editor .condition-friendly-group-header { gap:3px; padding:5px; }
+ .condition-ux.condition-rows-editor .condition-group-mode { min-width:72px; flex-basis:90px; }
+ .condition-ux.condition-rows-editor .condition-group-summary { display:none; }
+ .condition-ux.condition-rows-editor .condition-reference-picker > .condition-picker-trigger { padding-inline:4px; }
+ .condition-ux.condition-rows-editor .condition-picker-chevron { width:10px; }
+ .condition-ux.condition-rows-editor .condition-modifier-fields.has-symbol-operator > .condition-reference-picker:last-child { flex-basis:34px; }
+ .condition-ux.condition-rows-editor .condition-drag-handle { min-width:16px; width:16px; }
+ .condition-ux.condition-rows-editor .condition-row-tools { gap:1px; }
+ .condition-ux.condition-rows-editor .condition-column-headings { font-size:10px; }
+}
+}

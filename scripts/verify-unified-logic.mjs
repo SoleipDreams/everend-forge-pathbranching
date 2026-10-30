@@ -118,8 +118,8 @@ const autoAlignedGate = buildStoryCanvasModel(storedGateProject, {
   scope: alignedGateScope,
   canvasLayerMode: "visual",
 }).nodes.find((node) => node.id === splitGateId);
-assert.equal(autoAlignedGate?.position.x, 333, "automatic gate alignment must preserve the author's horizontal placement");
-assert.equal(autoAlignedGate?.position.y, 237, "a stored gate should recenter between the rows of its forward destinations");
+assert.equal(autoAlignedGate?.position.x, 288, "an automatic gate should start to the right of its source");
+assert.equal(autoAlignedGate?.position.y, 37, "an automatic gate should stay centered on its source rather than its destinations");
 const manuallyPositionedGate = buildStoryCanvasModel({
   ...storedGateProject,
   canvas: {
@@ -140,6 +140,34 @@ const manuallyPositionedGate = buildStoryCanvasModel({
   canvasLayerMode: "visual",
 }).nodes.find((node) => node.id === splitGateId);
 assert.equal(manuallyPositionedGate?.position.y, 401, "a gate deliberately dragged by the author must retain its vertical placement");
+const pinnedGateProject = structuredClone(storedGateProject);
+pinnedGateProject.canvas.scopes[alignedGateScopeKey].nodes[splitGateId] = {
+  position: { x: 333, y: 401 },
+  positionPinned: true,
+};
+assert.equal(
+  normalizeProject(pinnedGateProject).canvas.scopes[alignedGateScopeKey].nodes[splitGateId].positionPinned,
+  true,
+  "a pinned route-gate anchor must survive project normalization for save/reopen",
+);
+const movedPinnedGateProject = structuredClone(pinnedGateProject);
+movedPinnedGateProject.canvas.scopes[alignedGateScopeKey].nodes["event:a"] = { position: { x: 180, y: 720 } };
+movedPinnedGateProject.canvas.scopes[alignedGateScopeKey].nodes["event:b"] = { position: { x: 1200, y: -200 } };
+movedPinnedGateProject.canvas.scopes[alignedGateScopeKey].nodes["event:c"] = { position: { x: 1200, y: 900 } };
+const movedPinnedVisualGate = buildStoryCanvasModel(movedPinnedGateProject, {
+  scope: alignedGateScope,
+  canvasLayerMode: "visual",
+}).nodes.find((node) => node.id === splitGateId);
+const movedPinnedLogicGate = buildStoryCanvasModel(movedPinnedGateProject, {
+  scope: alignedGateScope,
+  canvasLayerMode: "logic",
+}).nodes.find((node) => node.id === splitGateId);
+assert.deepEqual(movedPinnedVisualGate?.position, { x: 333, y: 401 }, "a persisted route-gate anchor must not move when the source or destinations move");
+assert.deepEqual(
+  routeGateVisualAnchorFromLogicPosition(movedPinnedLogicGate.position, movedPinnedLogicGate.width, movedPinnedLogicGate.height),
+  { x: 333, y: 401 },
+  "the Logic router must keep its persisted center as nearby canvas nodes move",
+);
 const visualGate = visualModel.nodes.find((node) => node.id === splitGateId);
 const logicGate = logicModel.nodes.find((node) => node.id === splitGateId);
 assert.equal(visualGate?.data.details?.junctionPresentation, "split");

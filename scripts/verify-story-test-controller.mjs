@@ -32,7 +32,7 @@ function fixture() {
       { id: 'usable', label: 'Usable', valueType: 'boolean', createdAt: '', updatedAt: '' },
     ],
     logicPropertyOverrides: [{ source: 'local', propertyId: 'wear', conditionReadable: true, actionWritable: true }, { source: 'local', propertyId: 'usable', conditionReadable: true, actionWritable: true }],
-    logicTypeOverrides: [{ source: 'local', typeId: 'item', grantable: true, runtimeRoles: ['owned'] }, { source: 'local', typeId: 'container', container: true }, { source: 'local', typeId: 'person', container: true }],
+    logicTypeOverrides: [{ source: 'local', typeId: 'item', grantable: true, inventoryItem: true, runtimeRoles: ['owned'] }, { source: 'local', typeId: 'container', container: true }, { source: 'local', typeId: 'person', container: true }],
     logicVariables: [{ id: 'strength', name: 'Strength', type: 'number', value: 0, groupId: 'ungrouped' }, { id: 'visits', name: 'Visits', type: 'number', value: 0, groupId: 'ungrouped' }],
     playerProfiles: [{ id: 'default', name: 'Player', playableCharacterRef: 'actor', simulation: {} }],
     entityInstances: [

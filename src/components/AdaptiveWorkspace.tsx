@@ -1,13 +1,13 @@
 import { useApplicationActive, useApplicationEffect } from "./useApplicationActivity.js";
-import { Children, cloneElement, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { Children, cloneElement, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import { allocateAuthoringWorkspace, isExplorerPanel, type AdaptivePanel, type ExplorerPanelId } from "../adaptiveWorkspace.js";
-import { type WorkspacePanelId } from "../workspaceSettings.js";
+import { clampExplorerWidth, type WorkspacePanelId } from "../workspaceSettings.js";
 import { useInterfaceLocale } from "../i18n.js";
 import "../workspaceUx.css";
 import { ExplorerEmbeddedContext } from "./ExplorerPresentation.js";
 import { AccessibleTabs } from "./AccessibleTabs.js";
 import { useSurfaceMotion } from "../useSurfaceMotion.js";
-import { BookOpen, Library, Workflow, Download, Plug, RotateCcw, PanelLeftClose } from "lucide-react";
+import { BookOpen, Library, Workflow, Download, Plug, RefreshCw, PanelLeftClose } from "lucide-react";
 
 type WorkspaceContext = {
   inline: Set<WorkspacePanelId>; active?: WorkspacePanelId;
@@ -17,42 +17,89 @@ type WorkspaceContext = {
 const Context = createContext<WorkspaceContext | undefined>(undefined);
 const panelOrder: WorkspacePanelId[] = ["outline", "assets", "logic", "player", "export", "connect"];
 
-export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, resizing, children, explorerTab = "outline", onExplorerTabChange, reservedContextWidth = 0, focus = false, onResetLayout }: {
+export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, resizing, children, explorerTab = "outline", onExplorerTabChange, reservedContextWidth = 0, focus = false, explorerWidth, onExplorerResize, onExplorerResizeStateChange, onResetExplorerWidth }: {
   panels: AdaptivePanel[]; requestedPanel?: { id?: WorkspacePanelId; revision: number };
   onCollapsedChange: (id: WorkspacePanelId, collapsed: boolean) => void;
   explorerTab?: ExplorerPanelId; onExplorerTabChange?: (id: ExplorerPanelId) => void;
-  reservedContextWidth?: number; focus?: boolean; onResetLayout?: () => void;
+  reservedContextWidth?: number; focus?: boolean;
+  explorerWidth: number; onExplorerResize: (width: number) => void;
+  onExplorerResizeStateChange?: (resizing: boolean) => void; onResetExplorerWidth?: () => void;
   resizing?: boolean; children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => window.innerWidth);
   const explorerSurface = useRef<HTMLDivElement>(null);
   const explorerRail = useRef<HTMLDivElement>(null);
+  const [viewReloads, setViewReloads] = useState<Partial<Record<ExplorerPanelId, number>>>({});
   const locale = useInterfaceLocale();
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const measure = () => {
+    const measureNow = () => {
       const measuredWidth = ref.current?.getBoundingClientRect().width ?? 0;
-      if (measuredWidth > 0) setWidth(measuredWidth);
+      if (measuredWidth > 0) {
+        const nextWidth = Math.round(measuredWidth);
+        setWidth(current => current === nextWidth ? current : nextWidth);
+      }
     };
-    measure();
-    const observer = new ResizeObserver(measure);
+    measureNow();
+    let frame: number | undefined;
+    const scheduleMeasure = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        measureNow();
+      });
+    };
+    const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(element);
-    window.addEventListener("resize", measure);
-    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, []);
   // All management views remain reachable, including views hidden by older layouts.
   const availableExplorer = panels.filter(panel => isExplorerPanel(panel.id)).sort((left, right) => panelOrder.indexOf(left.id) - panelOrder.indexOf(right.id));
-  const selectedExplorer = availableExplorer.find(panel => panel.id === explorerTab && panel.visible)
-    ?? availableExplorer.find(panel => panel.visible && !panel.collapsed) ?? availableExplorer[0];
+  const selectedExplorer = availableExplorer.find(panel => panel.id === explorerTab && panel.visible && !panel.collapsed)
+    ?? availableExplorer.find(panel => panel.visible && !panel.collapsed)
+    ?? availableExplorer.find(panel => panel.id === explorerTab && panel.visible)
+    ?? availableExplorer.find(panel => panel.visible)
+    ?? availableExplorer[0];
   const explorerContent = useSurfaceMotion<HTMLDivElement>(selectedExplorer?.id);
-  const explorerOpen = !focus && availableExplorer.some(panel => panel.visible && !panel.collapsed);
-  const explorerLayout = allocateAuthoringWorkspace(width, (selectedExplorer?.width ?? 282) + 40, explorerOpen, reservedContextWidth);
-  const explorerDrawer = explorerOpen && !explorerLayout.inlineExplorer;
+  const explorerOpen = !focus && Boolean(selectedExplorer?.visible && !selectedExplorer.collapsed);
+  const safeExplorerWidth = clampExplorerWidth(explorerWidth);
+  const explorerLayout = allocateAuthoringWorkspace(width, safeExplorerWidth + 40, explorerOpen, reservedContextWidth);
+  const startExplorerResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (typeof onExplorerResize !== "function") return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = safeExplorerWidth;
+    onExplorerResizeStateChange?.(true);
+    const move = (moveEvent: PointerEvent) => onExplorerResize(startWidth + moveEvent.clientX - startX);
+    const end = () => {
+      onExplorerResizeStateChange?.(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  };
   const open = (id: WorkspacePanelId) => {
     if (isExplorerPanel(id)) onExplorerTabChange?.(id);
     onCollapsedChange(id, false);
+  };
+  const selectExplorer = (id: ExplorerPanelId) => {
+    if (explorerOpen && selectedExplorer?.id === id) closeExplorer();
+    else open(id);
+  };
+  const reloadSelectedView = () => {
+    const id = selectedExplorer?.id;
+    if (!id || !isExplorerPanel(id)) return;
+    setViewReloads(current => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
   };
   const closeExplorer = () => {
     if (explorerSurface.current?.contains(document.activeElement) || explorerRail.current?.contains(document.activeElement)) {
@@ -75,21 +122,23 @@ export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, r
   const context = { panels: contextPanels, inline, active: undefined, open, close: closeExplorer, collapse: (id: WorkspacePanelId, collapsed: boolean) => collapsed ? closeExplorer() : open(id) };
   return <Context.Provider value={context}>
     <div ref={ref} className={`workspace adaptive-workspace pb-authoring-workspace ${resizing ? "resizing" : ""} ${focus ? "context-focus" : ""}`} style={{ gridTemplateColumns: `${selectedExplorer ? `${explorerLayout.explorerColumn}px ` : ""}minmax(0, 1fr)` }}>
-      {selectedExplorer ? <aside className={`pb-explorer pb-management ${explorerOpen ? "open" : "collapsed"} ${explorerDrawer ? "drawer" : ""}`} aria-label={locale === "es" ? "Central de gestión" : "Management center"}>
+      {selectedExplorer ? <aside className={`pb-explorer pb-management ${explorerOpen ? "open" : "collapsed"}`} aria-label={locale === "es" ? "Central de gestión" : "Management center"}>
         <div ref={explorerRail} className="pb-explorer-rail">
           <AccessibleTabs value={selectedExplorer.id} orientation="vertical" className="pb-management-views" tabs={availableExplorer.map(panel => {
             const Icon = icons[panel.id as ExplorerPanelId];
             return { id: panel.id, title: labels[panel.id], label: <><Icon size={18} aria-hidden="true" /><span className="sr-only">{labels[panel.id]}</span></> };
-          })} onChange={id => open(id as ExplorerPanelId)} ariaLabel={locale === "es" ? "Vistas de gestión" : "Management views"} panelId="pb-explorer-content" />
-          {onResetLayout ? <button className="pb-management-reset" type="button" title={locale === "es" ? "Restablecer disposición" : "Reset layout"} aria-label={locale === "es" ? "Restablecer disposición" : "Reset layout"} onClick={onResetLayout}><RotateCcw size={17} /></button> : null}
+          })} onChange={id => selectExplorer(id as ExplorerPanelId)} ariaLabel={locale === "es" ? "Vistas de gestión" : "Management views"} panelId="pb-explorer-content" />
+          <button className="pb-management-reload" type="button" title={locale === "es" ? "Recargar vista actual" : "Reload current view"} aria-label={locale === "es" ? "Recargar vista actual" : "Reload current view"} onClick={reloadSelectedView}><RefreshCw size={17} /></button>
         </div>
-        <div ref={explorerSurface} className="pb-explorer-surface" hidden={!explorerOpen} onKeyDown={event => { if (explorerDrawer && event.key === "Escape" && event.target instanceof Element && !event.target.closest('[role="dialog"],[role="menu"]')) { event.preventDefault(); event.stopPropagation(); closeExplorer(); } }}>
+        <div ref={explorerSurface} className="pb-explorer-surface" hidden={!explorerOpen}>
           <header className="pb-explorer-tabs"><strong>{labels[selectedExplorer.id]}</strong><button type="button" onClick={closeExplorer} aria-label={locale === "es" ? "Contraer gestión" : "Collapse management"}><PanelLeftClose size={16} /></button></header>
           <ExplorerEmbeddedContext.Provider value={true}><div ref={explorerContent} id="pb-explorer-content" className="pb-explorer-content" role="tabpanel" aria-label={labels[selectedExplorer.id]}>{explorerItems.map(child => {
             const element = child as ReactElement<{ id: WorkspacePanelId }>;
-            return <div key={element.props.id} className="pb-explorer-section" hidden={element.props.id !== selectedExplorer.id}>{child}</div>;
+            const id = element.props.id as ExplorerPanelId;
+            return <div key={`${id}-${viewReloads[id] ?? 0}`} className="pb-explorer-section" hidden={element.props.id !== selectedExplorer.id}>{child}</div>;
           })}</div></ExplorerEmbeddedContext.Provider>
         </div>
+        {explorerOpen ? <button type="button" className="resize-handle pb-explorer-resize-handle" aria-label={locale === "es" ? "Cambiar ancho de gestión" : "Resize management panel"} title={locale === "es" ? "Cambiar ancho; doble clic para restablecer" : "Resize width; double-click to reset"} onPointerDown={startExplorerResize} onDoubleClick={onResetExplorerWidth} /> : null}
       </aside> : null}
       {contentItems}
     </div>

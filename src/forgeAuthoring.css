@@ -26,7 +26,6 @@
   .pb-explorer-rail button { display: inline-flex; align-items: center; justify-content: center; min-height: 32px; padding: 4px; border-color: transparent; font-weight: 600; }
   .pb-explorer-rail button[aria-pressed="true"] { color: var(--ef-accent); background: var(--ef-accent-soft); }
   .pb-explorer-surface { display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: hidden; border-radius: inherit; }
-  .pb-explorer.drawer .pb-explorer-surface { position: absolute; z-index: 40; top: 0; bottom: 0; left: 46px; width: min(360px,calc(100vw - 116px)); border: 1px solid var(--ef-border); background: var(--ef-panel); box-shadow: 0 8px 24px #0003; }
   .pb-explorer-tabs { display: flex; align-items: center; gap: 4px; padding: 8px; border-bottom: 1px solid var(--ef-border); flex: 0 0 auto; }
   .pb-explorer-tabs nav { display: flex; flex: 1; gap: 4px; min-width: 0; }
   .pb-explorer-tabs button { min-height: 32px; padding: 5px 8px; border: 0; border-radius: 6px; color: var(--ef-muted); background: transparent; font-size: 13px; }
@@ -34,15 +33,16 @@
   .pb-explorer-tabs > button { display: inline-flex; align-items: center; padding: 5px; }
   .pb-explorer-content, .pb-explorer-section, .workspace-explorer-slot { flex: 1; height: 100%; min-height: 0; overflow: hidden; }
   .pb-management { display: grid; grid-template-columns: 38px minmax(0, 1fr); overflow: visible; }
-  .pb-management.collapsed, .pb-management.drawer { grid-template-columns: minmax(0, 1fr); }
+  .pb-management.collapsed { grid-template-columns: minmax(0, 1fr); }
   .pb-management .pb-explorer-rail { box-sizing: border-box; min-height: 0; gap: 8px; border-right: 1px solid var(--wn-border); }
   .pb-management-views { display: flex; flex-direction: column; gap: 6px; }
   .pb-management-views button { width: 32px; height: 34px; color: var(--wn-muted); background: transparent; border-radius: 6px; }
   .pb-management-views button.active { color: var(--wn-accent); background: var(--wn-accent-soft); }
   .pb-management .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  .pb-management-reset { margin-top: auto; }
+  .pb-management-reload { margin-top: auto; }
   .pb-management .pb-explorer-tabs strong { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pb-management .pb-explorer-surface { min-width: 0; }
+  .pb-management .pb-explorer-surface { position: relative; min-width: 0; }
+  .pb-management .pb-explorer-resize-handle { touch-action: none; }
   .pb-management .workspace-explorer-slot .side-panel { width: 100%; max-width: 100%; }
   .pb-management .pb-explorer-section[hidden] { display: none; }
   .workspace-explorer-slot .side-panel { width: 100%; height: 100%; border: 0; background: transparent; }
@@ -61,14 +61,13 @@
   .pb-canvas-stage .canvas-breadcrumb-edge.left { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--ef-panel) 98%, transparent), color-mix(in srgb, var(--ef-panel) 78%, transparent) 62%, transparent); }
   .pb-canvas-stage .canvas-breadcrumb-edge.right { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--ef-panel) 98%, transparent), color-mix(in srgb, var(--ef-panel) 78%, transparent) 62%, transparent); }
   .pb-canvas-stage .canvas-breadcrumb-edge:hover, .pb-canvas-stage .canvas-breadcrumb-edge:focus-visible { color: var(--ef-text); opacity: 1; outline: none; }
-  .canvas-story-selector { flex: 0 0 auto; field-sizing: content; min-width: 0; width: auto; max-width: min(360px,calc(50cqw - 120px)); min-height: 32px; padding: 6px 26px 6px 9px; border: 1px solid var(--ef-border); border-radius: 8px; color: var(--ef-text); background: var(--ef-panel-soft); font: inherit; font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
-  .canvas-story-selector:hover, .canvas-story-selector:focus-visible { border-color: var(--ef-accent); background: var(--ef-accent-soft); outline: none; }
-  .breadcrumb-crumb > :is(button, select) { -webkit-user-select: none; user-select: none; }
-  .pb-canvas-stage .canvas-breadcrumb-story { max-width: 160px; font-weight: 600; }
+  .breadcrumb-crumb > button { -webkit-user-select: none; user-select: none; }
   .pb-canvas-tool-row { position: absolute; z-index: 16; top: 12px; left: 12px; right: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: start; gap: 8px; pointer-events: none; }
   .pb-canvas-tool-row > * { pointer-events: auto; }
   .pb-canvas-stage .canvas-layer-switch { position: relative; inset: auto; grid-column: 2; transform: none; border-radius: 10px; box-shadow: 0 6px 20px #0002; }
   .pb-canvas-locale-tools { position: absolute; z-index: 17; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; }
+  .pb-canvas-locale-tools .inspector-toolbar-host { display: flex; flex: 0 0 auto; align-items: center; }
+  .pb-canvas-locale-tools .inspector-window-tools { flex: 0 0 auto; width: auto; height: 32px; min-height: 32px; padding: 0; gap: 4px; }
   .pb-canvas-stage .canvas-locale-control { position: relative; inset: auto; }
   .pb-canvas-locale-tools .canvas-findings-button { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 32px; padding: 6px 8px; border: 1px solid var(--ef-border); border-radius: 8px; }
   .pb-canvas-locale-tools .canvas-findings-popup { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; }
@@ -146,6 +145,8 @@
   .inspector-centered-search-results > p { margin:4px 6px; }
   .pb-context-surface .inspector-centered-sidebar .event-inspector-group-popover { left:0; right:auto; max-width:calc(100cqw - 48px); }
   .inspector-centered-tabs { display:flex; flex-direction:column; align-self:stretch; gap:6px; min-height:0; min-width:0; overflow-y:auto; padding:2px 4px 2px 2px; pointer-events:auto; }
+  .inspector-centered-tabs[data-layout-animating="true"] { pointer-events:auto; }
+  .inspector-centered-tabs[data-layout-animating="true"] * { pointer-events:none !important; }
   .inspector-centered-tab-row { position:relative; display:flex; align-items:center; gap:4px; flex-shrink:0; min-width:0; }
   .inspector-centered-tabs .inspector-centered-tab-open-button { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; min-height:40px; padding:8px 34px 8px 8px; text-align:left; border:1px solid var(--ef-border); border-radius:8px; background:var(--ef-panel); color:var(--ef-muted); }
   .inspector-centered-tabs .inspector-centered-tab-open-button svg { flex-shrink:0; }

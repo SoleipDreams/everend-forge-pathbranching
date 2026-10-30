@@ -19,9 +19,9 @@ export function storiesViewCopy(locale: "en" | "es") {
   };
 }
 
-function StoryActions({ label, renameLabel, deleteLabel, canRename, canDelete, onRename, onDelete }: {
-  label: string; renameLabel: string; deleteLabel: string; canRename: boolean; canDelete: boolean;
-  onRename: () => void; onDelete: () => void;
+function StoryActions({ label, createLabel, createTarget, renameLabel, deleteLabel, canRename, canDelete, onCreate, onRename, onDelete }: {
+  label: string; createLabel: string; createTarget: string; renameLabel: string; deleteLabel: string; canRename: boolean; canDelete: boolean;
+  onCreate: () => void; onRename: () => void; onDelete: () => void;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -61,6 +61,7 @@ function StoryActions({ label, renameLabel, deleteLabel, canRename, canDelete, o
       if (event.key === "Escape") close(true);
     }}><MoreHorizontal size={16} aria-hidden="true" /></button>
     {open ? <div ref={menuRef} id={id} role="menu" aria-label={label} className="pb-story-menu" style={{ top: Math.max(8, Math.min((triggerRef.current?.getBoundingClientRect().bottom ?? 8) + 4, window.innerHeight - 100)), right: Math.max(8, window.innerWidth - (triggerRef.current?.getBoundingClientRect().right ?? window.innerWidth - 8)), maxHeight: "calc(100vh - 16px)" }} onKeyDown={menuKey}>
+      <button type="button" role="menuitem" className="create" data-onboarding-target={createTarget} onClick={() => { close(true); onCreate(); }}><Plus size={14} />{createLabel}</button>
       <button type="button" role="menuitem" disabled={!canRename} onClick={() => { close(true); onRename(); }}><Pencil size={14} />{renameLabel}</button>
       <button type="button" role="menuitem" className="danger" disabled={!canDelete} onClick={() => { close(true); onDelete(); }}><Trash2 size={14} />{deleteLabel}</button>
     </div> : null}
@@ -72,8 +73,6 @@ export type StoriesPanelProps = {
   activeStoryId?: string;
   sequences: Array<{ id: string; name: string }>;
   activeSequenceId?: string;
-  eventCount?: number;
-  fileCount?: number;
   locale?: "en" | "es";
   onStoryChange: (id: string) => void;
   onSequenceChange: (id: string) => void;
@@ -82,7 +81,7 @@ export type StoriesPanelProps = {
 };
 
 /** Hierarchical story controls. Outline tabs and canvas navigation remain owned by the workspace. */
-export function StoriesPanel({ stories, activeStoryId, sequences, activeSequenceId, eventCount = 0, locale: localeOverride, onStoryChange, onSequenceChange, onCreateStory, onRenameStory, onDeleteStory, onCreateSequence, onRenameSequence, onDeleteSequence }: StoriesPanelProps) {
+export function StoriesPanel({ stories, activeStoryId, sequences, activeSequenceId, locale: localeOverride, onStoryChange, onSequenceChange, onCreateStory, onRenameStory, onDeleteStory, onCreateSequence, onRenameSequence, onDeleteSequence }: StoriesPanelProps) {
   const interfaceLocale = useInterfaceLocale();
   const locale = localeOverride ?? interfaceLocale;
   const id = useId();
@@ -90,26 +89,24 @@ export function StoriesPanel({ stories, activeStoryId, sequences, activeSequence
   const hasSequence = sequences.some((sequence) => sequence.id === activeSequenceId);
   return <div className="pb-stories-controls">
     <section className="pb-story-level" aria-labelledby={`${id}-story-label`}>
-      <label id={`${id}-story-label`} htmlFor={`${id}-story`}><BookOpen size={14} aria-hidden="true" />{es ? "Historia" : "Story"}</label>
       <div className="pb-story-select-row">
+        <label id={`${id}-story-label`} htmlFor={`${id}-story`}><BookOpen size={14} aria-hidden="true" />{es ? "Historia" : "Story"}</label>
         <select id={`${id}-story`} data-onboarding-target="pathbranching.story-selector" value={activeStoryId ?? ""} onChange={(event) => onStoryChange(event.target.value)}>
           <option value="">{es ? "Selecciona una historia" : "Select a story"}</option>
           {stories.map((story) => <option key={story.id} value={story.id}>{story.name}</option>)}
         </select>
-        <StoryActions label={es ? "Acciones de la historia" : "Story actions"} renameLabel={es ? "Renombrar historia" : "Rename story"} deleteLabel={es ? "Eliminar historia" : "Delete story"} canRename={Boolean(activeStoryId)} canDelete={Boolean(activeStoryId) && stories.length > 1} onRename={onRenameStory} onDelete={onDeleteStory} />
+        <StoryActions label={es ? "Acciones de la historia" : "Story actions"} createLabel={es ? "Nueva historia" : "New story"} createTarget="pathbranching.create-story" renameLabel={es ? "Renombrar historia" : "Rename story"} deleteLabel={es ? "Eliminar historia" : "Delete story"} canRename={Boolean(activeStoryId)} canDelete={Boolean(activeStoryId) && stories.length > 1} onCreate={onCreateStory} onRename={onRenameStory} onDelete={onDeleteStory} />
       </div>
-      <button type="button" className="pb-story-create" data-onboarding-target="pathbranching.create-story" onClick={onCreateStory}><Plus size={14} aria-hidden="true" />{es ? "Nueva historia" : "New story"}</button>
     </section>
     {activeStoryId ? <section className="pb-story-level pb-sequence-level" aria-labelledby={`${id}-sequence-label`}>
-      <label id={`${id}-sequence-label`} htmlFor={`${id}-sequence`}><FilePlus2 size={14} aria-hidden="true" />{es ? "Secuencia de la historia" : "Story sequence"}</label>
       <div className="pb-story-select-row">
+        <label id={`${id}-sequence-label`} htmlFor={`${id}-sequence`}><FilePlus2 size={14} aria-hidden="true" />{es ? "Secuencia" : "Sequence"}</label>
         <select id={`${id}-sequence`} data-onboarding-target="pathbranching.sequence-selector" value={activeSequenceId ?? ""} onChange={(event) => onSequenceChange(event.target.value)}>
           <option value="" disabled={sequences.length > 0}>{es ? "Selecciona una secuencia" : "Select a sequence"}</option>
           {sequences.map((sequence) => <option key={sequence.id} value={sequence.id}>{sequence.name}</option>)}
         </select>
-        <StoryActions label={es ? "Acciones de la secuencia" : "Sequence actions"} renameLabel={es ? "Renombrar secuencia" : "Rename sequence"} deleteLabel={es ? "Eliminar secuencia" : "Delete sequence"} canRename={hasSequence} canDelete={hasSequence} onRename={onRenameSequence} onDelete={onDeleteSequence} />
+        <StoryActions label={es ? "Acciones de la secuencia" : "Sequence actions"} createLabel={es ? "Nueva secuencia" : "New sequence"} createTarget="pathbranching.create-sequence" renameLabel={es ? "Renombrar secuencia" : "Rename sequence"} deleteLabel={es ? "Eliminar secuencia" : "Delete sequence"} canRename={hasSequence} canDelete={hasSequence} onCreate={onCreateSequence} onRename={onRenameSequence} onDelete={onDeleteSequence} />
       </div>
-      <div className="pb-sequence-footer"><button type="button" className="pb-story-create" data-onboarding-target="pathbranching.create-sequence" onClick={onCreateSequence}><Plus size={14} aria-hidden="true" />{es ? "Nueva secuencia" : "New sequence"}</button><span>{hasSequence ? `${eventCount} ${es ? "eventos" : "events"}` : es ? "Sin secuencia" : "No sequence"}</span></div>
     </section> : null}
   </div>;
 }

@@ -2,6 +2,13 @@
 @scope (.pathbranching-app) {
 .logic-view-tabs { overflow-x: auto; }
 .logic-view-tabs > button { flex: 1 0 auto; min-width: 0; }
+.logic-formats-panel { display: grid; gap: 12px; padding: 8px; }
+.logic-formats-card { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--wn-border); border-radius: 8px; background: var(--wn-panel); }
+.logic-formats-card > header { display: grid; gap: 4px; }
+.logic-formats-card h3 { margin: 0; font-size: .84rem; }
+.logic-formats-card .empty-line { margin: 0; }
+.logic-formats-card .field-label { display: grid; gap: 5px; }
+.logic-formats-card input, .logic-formats-card select { width: 100%; }
 .logic-authoring-catalog .panel-toolbar { flex-wrap: wrap; }
 .logic-authoring-catalog .panel-toolbar > strong { font-size: .76rem; }
 .logic-catalog-count { color: var(--wn-muted); font-weight: 400; }

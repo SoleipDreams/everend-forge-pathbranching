@@ -18,7 +18,7 @@ export function InspectorModuleTabs({ projectId, objectKey, modules, value, onCh
   const menuRef = useRef<HTMLDivElement>(null);
   const placement = useInspectorMenuPlacement(Boolean(menu), root, menuRef);
   useEffect(() => { saveInspectorModulePreferences(projectId, objectKey, preferences); }, [preferences, projectId, objectKey]);
-  const labels: Record<string, string> = es ? { Wait: 'Espera', Conversation: 'Conversación', Dialogue: 'Diálogo', Decision: 'Decisión', Option: 'Opción', Response: 'Opción', Speech: 'Diálogo', 'Stage direction': 'Acotación', Direction: 'Acotación', Interaction: 'Interacción', Event: 'Evento', Overview: 'Resumen', Connections: 'Conexiones', Narrative: 'Narrativa', Options: 'Opciones', Responses: 'Opciones', Content: 'Contenido', Conditions: 'Condiciones' } : {};
+  const labels: Record<string, string> = es ? { Wait: 'Espera', Conversation: 'Conversación', Dialogue: 'Diálogo', Decision: 'Decisión', Decisions: 'Decisiones', Option: 'Opción', Response: 'Opción', Speech: 'Diálogo', 'Stage direction': 'Acotación', Direction: 'Acotación', Interaction: 'Interacción', Event: 'Evento', Overview: 'Resumen', Connections: 'Conexiones', Narrative: 'Narrativa', Options: 'Opciones', Responses: 'Opciones', Content: 'Contenido', Conditions: 'Condiciones', Consequences: 'Consecuencias', Settings: 'Configuración' } : {};
   const label = (item: InspectorModule) => labels[item.label] ?? item.label;
   // A direct navigation request reveals its module without changing narrative data.
   const visible = [...new Set([...preferences.visible, ...(modules.some(item => item.id === value) ? [value] : [])])];

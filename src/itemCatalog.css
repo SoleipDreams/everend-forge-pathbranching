@@ -1,0 +1,13 @@
+.item-catalog { display: grid; gap: 12px; padding: 12px; min-width: 0; }
+.item-catalog p, .item-catalog small { color: var(--wn-muted); font-size: .8rem; line-height: 1.5; }
+.item-catalog .field-label { display: grid; gap: 6px; }
+.item-catalog input:not([type=checkbox]), .item-catalog select { width: 100%; min-width: 0; box-sizing: border-box; }
+.item-catalog-create { display: grid; gap: 8px; }
+.item-catalog-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+.item-catalog-list button { width: 100%; text-align: left; display: grid; gap: 4px; padding: 10px; }
+.item-catalog-list button[aria-pressed=true] { border-color: var(--wn-accent); background: var(--wn-accent-soft); }
+.item-catalog-detail, .item-catalog-copy, .item-modifiers { min-width: 0; display: grid; gap: 12px; }
+.item-catalog-detail h3 { margin: 8px 0; }
+.item-catalog-copy, .item-modifier-row { min-width: 0; display: grid; gap: 10px; border: 1px solid var(--wn-border); border-radius: 8px; padding: 12px; }
+.item-modifiers { border: 1px solid var(--wn-border); border-radius: 8px; }
+.item-catalog [role=alert] { color: var(--wn-danger, #ff9d94); }

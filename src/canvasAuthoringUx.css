@@ -83,6 +83,65 @@
 }
 .canvas-shell .node-identity-inspect:hover,
 .canvas-shell .node-identity-inspect:focus-visible { color: var(--wn-accent); background: var(--wn-accent-soft); }
+.canvas-shell .story-node.interaction {
+  box-sizing: border-box;
+  width: 168px;
+  min-height: 168px;
+  align-content: center;
+  gap: 9px;
+  padding: 12px;
+  border-radius: 12px;
+  text-align: left;
+}
+.canvas-shell.canvas-layer-logic .story-node.interaction:not(.route-junction):not(.workspace-node) {
+  align-content: center;
+  gap: 9px;
+  padding: 12px;
+}
+.canvas-shell .story-node.interaction > .node-identity {
+  height: 38px;
+  margin: 0;
+}
+.canvas-shell .story-node.interaction > .interaction-node-results {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+}
+.canvas-shell .story-node.interaction .interaction-node-result {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  width: 100%;
+  padding: 4px 16px 4px 8px;
+  border: 1px solid var(--wn-border);
+  border-radius: 6px;
+  background: var(--wn-panel);
+  color: var(--wn-text);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+}
+.canvas-shell .story-node.interaction .interaction-node-result > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-shell .story-node.interaction .interaction-node-result .react-flow__handle {
+  right: -5px;
+}
+.canvas-shell .story-node.interaction > .react-flow__handle.source[data-handleid="interaction:output"] {
+  top: 50%;
+  right: 0;
+  bottom: auto;
+  left: auto;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(50%, -50%);
+}
 .canvas-shell .story-node > .node-canvas-actions {
   position: absolute;
   z-index: 30;
@@ -167,7 +226,7 @@
 .canvas-shell .node-authoring-logic.logic-detail > button:not(.node-authoring-warning) { flex: 1 1 0; }
 .canvas-shell .node-authoring-logic > button:hover,
 .canvas-shell .node-authoring-logic > button:focus-visible { border-color: var(--wn-accent); outline: 1px solid var(--wn-accent-soft); }
-.canvas-shell.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) { align-content: center; gap: 6px; padding: 12px 12px 12px 16px; }
+.canvas-shell.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node):not(.decision):not(.sequence-start) { align-content: center; gap: 6px; padding: 12px 12px 12px 16px; }
 .canvas-shell.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > .node-identity,
 .canvas-shell.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > .node-authoring-logic { display: grid; }
 .canvas-shell.canvas-layer-logic .story-node:not(.route-junction):not(.workspace-node) > .node-authoring-logic { display: flex; }
@@ -175,12 +234,18 @@
 .canvas-shell.canvas-layer-logic .story-node.event-overview > .event-branch-tag { display: flex; visibility: hidden; }
 .canvas-shell.canvas-layer-logic .story-node.event-overview > .event-cover-image { display: grid; visibility: hidden; }
 .canvas-shell.canvas-layer-logic .story-node.event-overview.has-cover { padding: 0 0 10px; }
-.canvas-shell.canvas-layer-logic .story-node.decision-container { padding: 10px; gap: 8px; }
-.canvas-shell.canvas-layer-logic .story-node.decision-container > .node-identity { height: 15px; grid-template-rows: 15px; padding-inline-end: 0; }
-.canvas-shell.canvas-layer-logic .story-node.decision-container > .node-identity .node-identity-title { display: none; }
-.canvas-shell.canvas-layer-logic .story-node.decision-container > .node-identity .node-identity-inspect { display: none; }
-.canvas-shell.canvas-layer-logic .story-node.decision-container .decision-option { grid-template-columns: 18px minmax(0, 1fr); }
-.canvas-shell.canvas-layer-logic .story-node.decision-container .decision-option.icon-mode { grid-template-columns: 25px minmax(0, 1fr); justify-items: start; }
+.canvas-shell:is(.canvas-layer-visual, .canvas-layer-logic) .story-node.decision-container { padding: 10px; gap: 8px; align-content: start; }
+/* Reserve the same letter, delete slot and action space in both layers so
+   switching layers never moves the text, row boundaries or connection ports. */
+.canvas-shell .story-node.decision-container .decision-option { grid-template-columns: 18px 20px minmax(0, 1fr); min-height: 34px; gap: 6px; padding: 5px 58px 5px 6px; }
+.canvas-shell .story-node.decision-container .decision-option.icon-mode { grid-template-columns: 25px 20px minmax(0, 1fr); min-height: 38px; justify-items: start; }
+.canvas-shell .story-node.decision-container :is(.decision-option-key, .decision-option-icon) { grid-column: 1; grid-row: 1; }
+.canvas-shell .story-node.decision-container .decision-option-delete { grid-column: 2; grid-row: 1; }
+.canvas-shell .story-node.decision-container :is(.decision-option-label, .decision-option-edit-trigger) { grid-column: 3; grid-row: 1; min-width: 0; width: 100%; box-sizing: border-box; padding: 3px 4px; border: 1px solid transparent; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-shell .story-node.decision-container .decision-option-edit-trigger:is(:hover, :focus-visible) { border-color: var(--wn-accent); }
+.canvas-shell .decision-option-open { padding: 0; border: 0; font-family: inherit; line-height: inherit; cursor: pointer; }
+.canvas-shell .decision-option-open:hover,
+.canvas-shell .decision-option-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--pb-decision) 65%, transparent); outline-offset: 2px; }
 .canvas-shell.canvas-layer-logic .story-node.speech-beat-node { padding: 0; gap: 0; }
 .canvas-shell .story-node > .node-badges,
 .canvas-shell .story-node > .node-summary-badges,
@@ -206,10 +271,12 @@
 .canvas-shell .story-node.boundary { grid-template-columns: 28px minmax(0, 1fr); }
 .canvas-shell .story-node.boundary > .node-boundary-icon { display: grid; }
 .canvas-shell .story-node.boundary .node-identity { width: 100%; grid-column: 2; }
-.canvas-shell .decision-option { padding-inline-end: 58px; }
-.canvas-shell.canvas-layer-visual .story-node.decision-container .decision-option { grid-template-columns: 24px minmax(0, 1fr); column-gap: 9px; padding-inline: 8px 38px; }
-.canvas-shell.canvas-layer-visual .story-node.decision-container .decision-option-edit-trigger { grid-column: 2; }
-.canvas-shell.canvas-layer-visual .story-node.decision-container .decision-option-delete { position: absolute; top: 50%; inset-inline-end: 29px; transform: translateY(-50%); }
+.canvas-shell .story-node.decision-container .decision-option:has(.decision-option-drag) { padding-inline-start: 25px; }
+.canvas-shell .decision-option-drag { position:absolute; z-index:4; inset-block:0; inset-inline-start:0; display:grid; place-items:center; width:20px; min-height:100%; padding:0; border:0; border-radius:5px 0 0 5px; color:var(--wn-muted); background:transparent; opacity:.58; cursor:grab; touch-action:none; }
+.canvas-shell .decision-option-drag:active { cursor:grabbing; }
+.canvas-shell .decision-option:hover .decision-option-drag,
+.canvas-shell .decision-option:focus-within .decision-option-drag { opacity:1; color:var(--pb-decision); background:color-mix(in srgb,var(--pb-decision) 8%,transparent); }
+.canvas-shell .decision-option.drag-over { outline:2px solid color-mix(in srgb,var(--pb-decision) 62%,transparent); outline-offset:1px; }
 .canvas-shell .decision-option-condition { position: absolute; right: 30px; top: 50%; display: grid; place-items: center; width: 21px; height: 24px; padding: 0; transform: translateY(-50%); border: 0; border-radius: 4px; color: var(--pb-decision); background: transparent; }
 .canvas-shell .decision-option-condition:hover,
 .canvas-shell .decision-option-condition:focus-visible { background: var(--wn-accent-soft); color: var(--wn-accent); }
@@ -287,6 +354,29 @@
 .canvas-shell .canvas-return-connector:hover,
 .canvas-shell .canvas-return-connector:focus-visible { border-color: var(--wn-accent); outline: 2px solid var(--wn-accent-soft); }
 .canvas-shell .canvas-return-stub { pointer-events: none; }
+.canvas-shell .canvas-edge-waypoints { position: absolute; z-index: 1000; inset: 0; overflow: visible; pointer-events: none; }
+.canvas-shell .canvas-edge-waypoint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--wn-panel);
+  border-radius: 50%;
+  background: var(--wn-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wn-accent) 35%, transparent), 0 2px 7px #0008;
+  cursor: grab;
+  pointer-events: all;
+  touch-action: none;
+}
+.canvas-shell .canvas-edge-waypoint > span { width: 5px; height: 5px; border-radius: 50%; background: var(--wn-panel); }
+.canvas-shell .canvas-edge-waypoint:hover,
+.canvas-shell .canvas-edge-waypoint:focus-visible { width: 22px; height: 22px; outline: 2px solid var(--wn-accent-soft); }
+.canvas-shell .canvas-edge-waypoint.selected { outline: 2px solid var(--wn-text); outline-offset: 2px; }
+.canvas-shell .canvas-edge-waypoint:active { cursor: grabbing; }
 
 /* Keep the selection halo on the selected node only. */
 .canvas-shell .story-node.selected {
@@ -311,6 +401,21 @@
 .canvas-shell .canvas-return-connector:focus-visible {
   border-color: var(--wn-accent);
   box-shadow: none;
+}
+
+.canvas-shell .story-node.validation-find-highlight {
+  z-index: 20;
+  border-color: var(--wn-accent) !important;
+  outline: 2px solid color-mix(in srgb, var(--wn-accent) 78%, transparent);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--wn-accent) 14%, transparent),
+    0 0 26px color-mix(in srgb, var(--wn-accent) 42%, transparent);
+}
+.canvas-shell .react-flow__edge-path.validation-find-highlight {
+  stroke: var(--wn-accent) !important;
+  stroke-width: 4 !important;
+  opacity: 1 !important;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--wn-accent) 60%, transparent));
 }
 
 }

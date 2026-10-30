@@ -16,6 +16,8 @@ const TRANSACTIONS: &str = ".everend/.pathbranching/.transactions";
 pub struct BatchFile {
     pub relative_path: String,
     pub content: String,
+    #[serde(default)]
+    pub delete: bool,
     pub expected_exists: bool,
     pub expected_content: Option<String>,
     pub expected_modified_ms: Option<u128>,
@@ -43,7 +45,7 @@ struct JournalEntry {
     original: Option<String>,
     #[serde(default)]
     original_modified_ms: Option<u128>,
-    replacement: String,
+    replacement: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -209,7 +211,7 @@ fn rollback(root: &Path, journal: &Journal) -> Result<(), String> {
         if current == entry.original {
             continue;
         }
-        if current.as_deref() != Some(entry.replacement.as_str()) {
+        if current != entry.replacement {
             conflicts.push(entry.relative_path.clone());
             continue;
         }
@@ -326,7 +328,7 @@ fn save_batch_locked(
             relative_path: file.relative_path.clone(),
             original,
             original_modified_ms: modified_ms(&path),
-            replacement: file.content.clone(),
+            replacement: (!file.delete).then(|| file.content.clone()),
         });
     }
     let directory = safe_path(root, TRANSACTIONS)?.join(format!(
@@ -344,7 +346,9 @@ fn save_batch_locked(
         entries,
     };
     for (index, entry) in journal.entries.iter().enumerate() {
-        write_synced(&directory.join(format!("{index}.new")), &entry.replacement)?;
+        if let Some(replacement) = &entry.replacement {
+            write_synced(&directory.join(format!("{index}.new")), replacement)?;
+        }
     }
     write_journal(&directory, &journal)?;
     let outcome = (|| {
@@ -367,7 +371,11 @@ fn save_batch_locked(
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             }
-            replace_file(&directory.join(format!("{index}.new")), &path)?;
+            if entry.replacement.is_some() {
+                replace_file(&directory.join(format!("{index}.new")), &path)?;
+            } else {
+                fs::remove_file(&path).map_err(|error| error.to_string())?;
+            }
         }
         Ok::<(), String>(())
     })();
@@ -434,6 +442,19 @@ mod tests {
             BatchFile {
                 relative_path: path.into(),
                 content: content.into(),
+                delete: false,
+                expected_exists: old.is_some(),
+                expected_content: old,
+                expected_modified_ms: modified_ms(&target),
+            }
+        }
+        fn deletion(&self, path: &str) -> BatchFile {
+            let target = safe_path(&self.0, path).unwrap();
+            let old = read_optional(&target).unwrap();
+            BatchFile {
+                relative_path: path.into(),
+                content: String::new(),
+                delete: true,
                 expected_exists: old.is_some(),
                 expected_content: old,
                 expected_modified_ms: modified_ms(&target),
@@ -466,6 +487,31 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn authoring_batch_deletes_obsolete_sidecars() {
+        let root = Universe::new();
+        root.write(EVPATH, "old-script");
+        root.write(STORY, "old-story");
+        let result = save_batch(&root.0, vec![root.batch(STORY, "new-story"), root.deletion(EVPATH)]).unwrap();
+        assert!(result.ok);
+        assert!(!root.0.join(EVPATH).exists());
+        assert_eq!(fs::read_to_string(root.0.join(STORY)).unwrap(), "new-story");
+        assert!(result.files.iter().any(|file| file.relative_path == EVPATH && file.modified_ms.is_none()));
+    }
+
+    #[test]
+    fn interrupted_batch_restores_deleted_sidecars() {
+        let root = Universe::new();
+        root.write(EVPATH, "old-script");
+        root.write(STORY, "old-story");
+        let files = vec![root.deletion(EVPATH), root.batch(STORY, "new-story")];
+        assert!(save_batch_locked(&root.0, files, Some(1)).is_err());
+        assert!(!root.0.join(EVPATH).exists());
+        recover_locked(&root.0).unwrap();
+        assert_eq!(fs::read_to_string(root.0.join(EVPATH)).unwrap(), "old-script");
+        assert_eq!(fs::read_to_string(root.0.join(STORY)).unwrap(), "old-story");
     }
 
     #[test]

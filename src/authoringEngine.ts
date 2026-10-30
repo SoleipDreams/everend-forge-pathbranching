@@ -3,12 +3,14 @@ import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEva
 import { applyConsequenceDetailed, combineConditions, effectiveConditions, orderedTransitions, orderedMomentEffects } from './logic.js';
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
 import { resolveLogicField } from './logicCapabilities.js';
-import { barrierNodeId, defaultInteractionEnvironment, interactionNodeId, interactionUsesFor, resolveInteraction, type InteractionEnvironment, type InteractionExecution } from './interactions.js';
+import { barrierNodeId, defaultInteractionEnvironment, freezeInteractionParticipants, freezeInteractionRoll, interactionNodeId, interactionUsesFor, resolveInteraction, type InteractionEnvironment, type InteractionExecution } from './interactions.js';
+import { resolveCharacterSubject } from './characterStats.js';
+import { findLocalExplorerPropertyByReference } from './explorerSchema.js';
 
 export type AuthoringTrace = { kind: 'enter' | 'condition' | 'effect' | 'route' | 'rule' | 'action' | 'return' | 'error' | 'interaction'; nodeId?: string; id?: string; message: string; evaluation?: ConditionEvaluationResult; before?: PlayerSimulationState; after?: PlayerSimulationState };
 export type AuthoringChoice = { id: string; nodeId: string; text: string; status: ConditionEvaluationResult['status']; hidden: boolean; masked: boolean; reason?: string; evaluation: ConditionEvaluationResult };
 export type AuthoringActionOption = { id: string; name: string; status: ConditionEvaluationResult['status']; requiresTarget: boolean; reason?: string };
-export type AuthoringView = { nodeId?: string; eventId?: string; dialogueId?: string; kind?: string; title?: string; text?: string; speakerRef?: string; speakerVariantId?: string; choices: AuthoringChoice[]; actions: AuthoringActionOption[]; interactions?: (InteractionExecution & { name: string; prompt?: import('./domain.js').InteractionDefinition['prompt']; mechanic: import('./domain.js').InteractionMechanic; results: { id: string; name: string }[] })[]; waiting?: boolean };
+export type AuthoringView = { nodeId?: string; eventId?: string; eventName?: string; dialogueId?: string; kind?: string; title?: string; text?: string; locationName?: string; speakerRef?: string; speakerVariantId?: string; choices: AuthoringChoice[]; actions: AuthoringActionOption[]; interactions?: (InteractionExecution & { name: string; prompt?: import('./domain.js').InteractionDefinition['prompt']; mechanic: import('./domain.js').InteractionMechanic; results: { id: string; name: string }[] })[]; waiting?: boolean };
 type Frame = { nodeId: string; context?: PlayerSimulationState['context'] };
 type Snapshot = Omit<AuthoringSession, 'history'>;
 export type AuthoringSession = {
@@ -16,7 +18,11 @@ export type AuthoringSession = {
   interactionSerial: number;
   interactionClockAt?: number;
   /** Retained across Back so replaying an execution never rolls again. */
-  interactionResolutions?: Record<string, { resultId: string; total?: number; rolls?: number[]; forced: boolean }>;
+  interactionResolutions?: Record<string, {
+    resultId: string; total?: number; rolls?: number[]; skillSource?: import('./domain.js').InteractionValueSource; skillLabel?: string; skillValue?: number; modifier?: number; modifierBreakdown?: import('./domain.js').InteractionModifierTrace[]; forced: boolean;
+    participantTraces?: import('./domain.js').InteractionParticipantTrace[];
+    participantResults?: Record<string, import('./domain.js').InteractionParticipantResult>;
+  }>;
   confirmedOutcomeId?: string;
   waiting?: { kind: 'entry' | 'exit' | 'barrier'; nodeId: string; chosenNodeId?: string };
   revision: string;
@@ -44,11 +50,11 @@ export type AuthoringCommand =
   | { type: 'setState'; state: Partial<PlayerSimulationState> }
   | { type: 'back' }
   | { type: 'restart'; scenario?: AuthoringScenario; startNodeId?: string };
-type ContentNode = { id: string; rawId: string; kind: string; event?: EventNode; dialogue?: DialogueNode; title?: string; text?: string; speakerRef?: string; speakerVariantId?: string; logic?: LogicMoment; when?: ConditionInput; automatic: boolean; decision?: NonNullable<EventNode['decisions']>[number] };
+type ContentNode = { id: string; rawId: string; kind: string; event?: EventNode; dialogue?: DialogueNode; title?: string; text?: string; locationRef?: string; speakerRef?: string; speakerVariantId?: string; logic?: LogicMoment; when?: ConditionInput; automatic: boolean; decision?: NonNullable<EventNode['decisions']>[number] };
 
 /** Only narrative data participates in the fixed revision; panels/layout never invalidate a run. */
 export function authoringRevision(project: BranchingProject): string {
-  return JSON.stringify({ sequences: project.sequences, branches: project.branches, events: project.events, scriptDocuments: project.scriptDocuments, variables: project.logicVariables, canon: project.canonRefs, local: project.localExplorerEntities, properties: project.localExplorerProperties, instances: project.entityInstances, overrides: project.entityOverrides, actions: project.narrativeActions, rules: project.narrativeRules, typeOverrides: project.logicTypeOverrides, propertyOverrides: project.logicPropertyOverrides, data: project.projectDataObjects });
+  return JSON.stringify({ sequences: project.sequences, branches: project.branches, events: project.events, scriptDocuments: project.scriptDocuments, variables: project.logicVariables, logicFormats: project.logicFormats, canon: project.canonRefs, local: project.localExplorerEntities, properties: project.localExplorerProperties, canonProperties: project.canonPropertyDescriptors, instances: project.entityInstances, overrides: project.entityOverrides, actions: project.narrativeActions, rules: project.narrativeRules, typeOverrides: project.logicTypeOverrides, propertyOverrides: project.logicPropertyOverrides, data: project.projectDataObjects });
 }
 export function authoringNodeOptions(project: BranchingProject) {
   return Array.from(nodeIndex(project).values()).filter((n, i, all) => all.findIndex(x => x.id === n.id) === i && !['outcome','boundary','dialogueStart'].includes(n.kind)).map(n => ({ id: n.id, label: [n.event?.name, n.dialogue?.title, n.title || n.kind].filter(Boolean).join(' / '), eventId: n.event?.id, dialogueId: n.dialogue?.id }));
@@ -59,26 +65,26 @@ function nodeIndex(project: BranchingProject): Map<string, ContentNode> {
   const add = (node: ContentNode) => { nodes.set(node.id, node); if (!nodes.has(node.rawId)) nodes.set(node.rawId, node); };
   project.sequences.forEach(s => { add({ id: `start:${s.id}`, rawId: s.id, kind: 'sequence', title: s.name, logic: s.logic, when: effectiveConditions(s), automatic: true }); });
   for (const event of project.events) {
-    add({ id: event.id, rawId: event.id, kind: 'event', event, title: event.name, text: event.text?.content, logic: event.logic ?? { then: event.consequences }, when: effectiveConditions(event), automatic: !event.text?.content });
+    add({ id: event.id, rawId: event.id, kind: 'event', event, title: event.name, text: event.text?.content, locationRef: event.locationRef, logic: event.logic ?? { then: event.consequences }, when: effectiveConditions(event), automatic: !event.text?.content });
     const beat = (b: NonNullable<EventNode['dialogueBeats']>[number], dialogue?: DialogueNode) => {
       const block = project.scriptDocuments?.find(s => s.id === b.blockRef.scriptId)?.blocks.find(block => block.id === b.blockRef.blockId);
-      add({ id: `beat:${event.id}:${b.id}`, rawId: b.id, kind: b.kind, event, dialogue, title: dialogue?.title ?? event.name, text: block?.content, speakerRef: block?.characterRef ?? block?.speakerRef, speakerVariantId: block?.characterVariantId, logic: b.logic ?? { then: b.consequences }, when: effectiveConditions(b), automatic: false });
+      add({ id: `beat:${event.id}:${b.id}`, rawId: b.id, kind: b.kind, event, dialogue, title: dialogue?.title ?? event.name, text: block?.content, locationRef: b.locationRef ?? dialogue?.locationRef ?? event.locationRef, speakerRef: block?.characterRef ?? block?.speakerRef, speakerVariantId: block?.characterVariantId, logic: b.logic ?? { then: b.consequences }, when: effectiveConditions(b), automatic: false });
     };
     (event.dialogueBeats ?? []).forEach(b => beat(b));
     for (const dialogue of event.dialogues ?? []) {
-      add({ id: `dialogue:${event.id}:${dialogue.id}`, rawId: dialogue.id, kind: 'dialogue', event, dialogue, title: dialogue.title, text: dialogue.beats?.length ? undefined : dialogue.text?.content, speakerRef: dialogue.speakerRef, logic: dialogue.logic ?? { then: dialogue.consequences }, when: effectiveConditions(dialogue), automatic: Boolean(dialogue.beats?.length || dialogue.members?.length) || !dialogue.text?.content });
+      add({ id: `dialogue:${event.id}:${dialogue.id}`, rawId: dialogue.id, kind: 'dialogue', event, dialogue, title: dialogue.title, text: dialogue.beats?.length ? undefined : dialogue.text?.content, locationRef: dialogue.locationRef ?? event.locationRef, speakerRef: dialogue.speakerRef, logic: dialogue.logic ?? { then: dialogue.consequences }, when: effectiveConditions(dialogue), automatic: Boolean(dialogue.beats?.length || dialogue.members?.length) || !dialogue.text?.content });
       (dialogue.beats ?? []).forEach(b => beat(b, dialogue));
     }
     for (const decision of event.decisions ?? []) {
       const dialogue = event.dialogues?.find(d => d.id === decision.dialogueId || d.members?.some(m => m.kind === 'decision' && m.id === decision.id));
-      add({ id: `decision:${event.id}:${decision.id}`, rawId: decision.id, kind: 'decision', event, dialogue, title: decision.name, text: decision.description, decision, logic: decision.logic, when: effectiveConditions(decision), automatic: false });
+      add({ id: `decision:${event.id}:${decision.id}`, rawId: decision.id, kind: 'decision', event, dialogue, title: decision.name, text: decision.description, locationRef: dialogue?.locationRef ?? event.locationRef, decision, logic: decision.logic, when: effectiveConditions(decision), automatic: false });
       decision.outcomes.forEach(outcome => add({ id: `outcome:${event.id}:${decision.id}:${outcome.id}`, rawId: outcome.id, kind: 'outcome', event, dialogue, title: outcome.name, logic: outcome.logic ?? { then: outcome.consequences }, when: combineConditions(effectiveConditions(decision), effectiveConditions(outcome)), automatic: true }));
     }
-    for (const use of event.interactionUses ?? []) if (!use.ownerNodeId) add({ id: interactionNodeId(event.id, use.id), rawId: use.id, kind: 'interaction', event, dialogue: event.dialogues?.find(d => d.id === use.dialogueId), title: event.interactionDefinitions?.find(d => d.id === use.definitionId)?.name, automatic: true });
-    for (const barrier of event.interactionBarriers ?? []) add({ id: barrierNodeId(event.id, barrier.id), rawId: barrier.id, kind: 'barrier', event, dialogue: event.dialogues?.find(d => d.id === barrier.dialogueId), title: barrier.name, automatic: true });
-    (event.dialogueStarts ?? []).forEach(start => add({ id: `dialogue-start:${event.id}:${start.id}`, rawId: start.id, kind: 'dialogueStart', event, when: effectiveConditions(start), logic: start.logic, automatic: true }));
+    for (const use of event.interactionUses ?? []) if (!use.ownerNodeId) { const dialogue = event.dialogues?.find(d => d.id === use.dialogueId); add({ id: interactionNodeId(event.id, use.id), rawId: use.id, kind: 'interaction', event, dialogue, locationRef: dialogue?.locationRef ?? event.locationRef, title: event.interactionDefinitions?.find(d => d.id === use.definitionId)?.name, automatic: true }); }
+    for (const barrier of event.interactionBarriers ?? []) { const dialogue = event.dialogues?.find(d => d.id === barrier.dialogueId); add({ id: barrierNodeId(event.id, barrier.id), rawId: barrier.id, kind: 'barrier', event, dialogue, locationRef: dialogue?.locationRef ?? event.locationRef, title: barrier.name, automatic: true }); }
+    (event.dialogueStarts ?? []).forEach(start => add({ id: `dialogue-start:${event.id}:${start.id}`, rawId: start.id, kind: 'dialogueStart', event, locationRef: event.locationRef, when: effectiveConditions(start), logic: start.logic, automatic: true }));
     const boundaries = new Set((event.transitions ?? []).flatMap(t => [t.from, t.to]).concat((event.boundaryBindings ?? []).map(b => b.portId)));
-    for (const id of boundaries) if (id.startsWith(`boundary:${event.id}:`) || id.startsWith(`dialogue-boundary:${event.id}:`)) add({ id, rawId: id, kind: 'boundary', event, dialogue: event.dialogues?.find(d => id.startsWith(`dialogue-boundary:${event.id}:${d.id}:`)), automatic: true });
+    for (const id of boundaries) if (id.startsWith(`boundary:${event.id}:`) || id.startsWith(`dialogue-boundary:${event.id}:`)) { const dialogue = event.dialogues?.find(d => id.startsWith(`dialogue-boundary:${event.id}:${d.id}:`)); add({ id, rawId: id, kind: 'boundary', event, dialogue, locationRef: dialogue?.locationRef ?? event.locationRef, automatic: true }); }
   }
   return nodes;
 }
@@ -122,7 +128,7 @@ export function applyInstanceEffect(project: BranchingProject, state: PlayerSimu
   if (effect.owner && !owner) return fail('Supply copy owner context');
   const validProperties = (entityId: string) => {
     for (const [id, value] of Object.entries(effect.properties ?? {})) {
-      const property = project.localExplorerProperties?.find(p => p.id === id || p.id === `property:${id}`);
+      const property = findLocalExplorerPropertyByReference(project.localExplorerProperties, id);
       const base = entityDefinition(project, entityId)?.properties;
       if (!property && !Object.prototype.hasOwnProperty.call(base ?? {}, id)) return `Missing property ${id}`;
       if (!conditionValueMatchesType(value, property?.valueType)) return `Copy property ${id} has an incompatible value`;
@@ -159,15 +165,15 @@ function effects(project: BranchingProject, session: AuthoringSession, effects: 
   const before = structuredClone(session.state);
   let next = session.state;
   for (const [index, effect] of (effects ?? []).entries()) {
+    const guarded = 'conditions' in effect ? effect.conditions : undefined;
+    const gate = evaluate(project, next, guarded as ConditionInput | undefined);
+    if (gate.status === 'invalid' || gate.status === 'unresolved') { stop(session, gate.message, key); return false; }
+    if (gate.status === 'unsatisfied') continue;
     if (effect.type === 'instanceEffect') {
       const result = applyInstanceEffect(project, next, effect as InstanceEffect, `${key}:${index}`);
       if (result.error) { stop(session, result.error, key); return false; }
       next = result.state;
     } else {
-      const guarded = 'conditions' in effect ? effect.conditions : undefined;
-      const gate = evaluate(project, next, guarded as ConditionInput | undefined);
-      if (gate.status === 'invalid' || gate.status === 'unresolved') { stop(session, gate.message, key); return false; }
-      if (gate.status === 'unsatisfied') continue;
       const result = applyConsequenceDetailed(project, next, effect as import('./domain.js').Consequence);
       if (result.status !== 'applied') { stop(session, result.message ?? 'Invalid consequence', key); return false; }
       next = result.state;
@@ -231,8 +237,29 @@ function routes(project: BranchingProject, from: string): Transition[] {
   }
   return orderedTransitions(list);
 }
-function route(project: BranchingProject, session: AuthoringSession, from: string, budget: { value: number }): string | undefined {
-  const candidates = routes(project, from);
+function route(project: BranchingProject, session: AuthoringSession, from: string, budget: { value: number }, environment: InteractionEnvironment = defaultInteractionEnvironment): string | undefined {
+  let candidates = routes(project, from);
+  const automaticUses = automaticRollUsesForSource(project, from);
+  if (automaticUses.length) {
+    const owner = nodeIndex(project).get(from) ?? {
+      id: from,
+      rawId: from,
+      kind: 'route',
+      event: project.events.find(event => event.interactionUses?.some(use => automaticUses.some(candidate => candidate.id === use.id))),
+      automatic: true,
+    };
+    if (!resolveAutomaticDecisionRolls(project, session, owner, automaticUses, environment)) return undefined;
+  }
+  const sourceInteraction = project.events.flatMap(event => (event.interactionUses ?? []).map(use => ({ event, use })))
+    .find(({ event, use }) => interactionNodeId(event.id, use.id) === from ||
+      (event.interactionBarriers ?? []).some(barrier => barrierNodeId(event.id, barrier.id) === from && barrier.useIds.includes(use.id)))?.use;
+  if (sourceInteraction) {
+    const resultRoutes = candidates.filter(transition => interactionResultUseIds(effectiveConditions(transition)).has(sourceInteraction.id));
+    if (resultRoutes.length) {
+      const prioritized = new Set(resultRoutes.map(transition => transition.id));
+      candidates = [...orderedTransitions(resultRoutes), ...orderedTransitions(candidates.filter(transition => !prioritized.has(transition.id)))];
+    }
+  }
   if (candidates.filter(t => t.mode === 'fallback').length > 1) { stop(session, 'More than one Else route', from); return undefined; }
   for (const t of candidates) {
     const result = evaluate(project, session.state, effectiveConditions(t));
@@ -248,28 +275,28 @@ function route(project: BranchingProject, session: AuthoringSession, from: strin
   if (candidates.length) stop(session, 'No route is satisfied', from);
   return undefined;
 }
-function structuralNext(project: BranchingProject, session: AuthoringSession, node: ContentNode, budget: { value: number }): string | undefined {
+function structuralNext(project: BranchingProject, session: AuthoringSession, node: ContentNode, budget: { value: number }, environment: InteractionEnvironment = defaultInteractionEnvironment): string | undefined {
   if (node.kind === 'sequence') {
     const sequence = project.sequences.find(s => s.id === node.rawId);
     if (!sequence?.entryEventId) { stop(session, 'Sequence has no entry event', node.rawId); return undefined; }
     return sequence.entryEventId;
   }
   if (node.kind === 'boundary' && node.event) {
-    if (node.id.startsWith(`dialogue-boundary:${node.event.id}:`) && node.id.endsWith(':output')) return route(project, session, `dialogue:${node.event.id}:${node.dialogue?.id}`, budget);
+    if (node.id.startsWith(`dialogue-boundary:${node.event.id}:`) && node.id.endsWith(':output')) return route(project, session, `dialogue:${node.event.id}:${node.dialogue?.id}`, budget, environment);
     if (node.id.startsWith(`boundary:${node.event.id}:output:`)) {
       const suffix = node.id.slice(`boundary:${node.event.id}:output:`.length);
       if (suffix === 'restart') return node.event.id;
       const t = node.event.transitions?.find(t => t.id === suffix && t.from === node.event!.id);
-      if (t) return route(project, session, node.event.id, budget);
-      const direct = route(project, session, node.id, budget);
+      if (t) return route(project, session, node.event.id, budget, environment);
+      const direct = route(project, session, node.id, budget, environment);
       return direct;
     }
-    return route(project, session, node.id, budget);
+    return route(project, session, node.id, budget, environment);
   }
   if (node.kind === 'dialogue' && node.dialogue) {
     if (node.dialogue.entryBeatId) return `beat:${node.event!.id}:${node.dialogue.entryBeatId}`;
     const input = `dialogue-boundary:${node.event!.id}:${node.dialogue.id}:input`;
-    if (routes(project, input).length) return route(project, session, input, budget);
+    if (routes(project, input).length) return route(project, session, input, budget, environment);
     const members = node.dialogue.members ?? (node.dialogue.beats ?? []).map(b => ({ kind: 'beat' as const, id: b.id }));
     const starts = members.map(m => `${m.kind === 'beat' ? 'beat' : 'decision'}:${node.event!.id}:${m.id}`).filter(id => !node.event!.transitions?.some(t => t.to === id && members.some(m => t.from.endsWith(`:${m.id}`))));
     if (starts.length > 1) { stop(session, 'Choose the dialogue entry; several blocks are possible', node.id); return undefined; }
@@ -279,29 +306,32 @@ function structuralNext(project: BranchingProject, session: AuthoringSession, no
     const inputPrefix = `boundary:${node.event.id}:input:`;
     const inputs = [...new Set((node.event.transitions ?? []).filter(t => t.from.startsWith(inputPrefix)).map(t => t.from))];
     const preferred = inputs.find(i => i === `${inputPrefix}${session.entryTransitionId}`) ?? inputs.find(i => i === `${inputPrefix}entry` || i === `${inputPrefix}sequence-entry:${project.entrySequenceId}`);
-    if (preferred) return route(project, session, preferred, budget);
+    if (preferred) return route(project, session, preferred, budget, environment);
     if (inputs.length > 1) { stop(session, 'Choose the event input; several entries are possible', node.id); return undefined; }
-    if (inputs.length === 1) return route(project, session, inputs[0], budget);
-    if (routes(project, node.id).length) return route(project, session, node.id, budget);
+    if (inputs.length === 1) return route(project, session, inputs[0], budget, environment);
+    if (routes(project, node.id).length) return route(project, session, node.id, budget, environment);
     const children = [...(node.event.dialogueBeats ?? []).map(b => `beat:${node.event!.id}:${b.id}`), ...(node.event.dialogues ?? []).map(d => `dialogue:${node.event!.id}:${d.id}`), ...(node.event.decisions ?? []).filter(d => !d.dialogueId).map(d => `decision:${node.event!.id}:${d.id}`), ...(node.event.childEventIds ?? []), ...(node.event.interactionUses ?? []).filter(u => !u.ownerNodeId && !u.dialogueId).map(u => interactionNodeId(node.event!.id, u.id)), ...(node.event.interactionBarriers ?? []).filter(b => !b.dialogueId).map(b => barrierNodeId(node.event!.id, b.id))];
     const starts = children.filter(id => !node.event!.transitions?.some(t => t.to === id));
     if (starts.length > 1) { stop(session, 'Choose the event entry; several blocks are possible', node.id); return undefined; }
     if (starts.length === 1) return starts[0];
   }
-  return route(project, session, node.id, budget);
+  return route(project, session, node.id, budget, environment);
 }
 function refreshView(project: BranchingProject, session: AuthoringSession) {
   const node = nodeIndex(project).get(session.nodeId ?? '');
   const choices: AuthoringChoice[] = (node?.decision?.outcomes ?? []).map(o => {
     const result = evaluate(project, session.state, combineConditions(node?.when, effectiveConditions(o)));
     const unavailable = result.status !== 'satisfied';
-    const masked = unavailable && Boolean(o.unavailableText?.content.trim());
+    const unavailableText = project.logicFormats?.unavailableText?.trim() ? project.logicFormats.unavailableText : o.unavailableText?.content;
+    const lockText = project.logicFormats?.lockText?.trim() ? project.logicFormats.lockText : o.lockText?.content;
+    const unavailableBehavior = project.logicFormats?.unavailableBehavior ?? o.unavailableBehavior;
+    const masked = unavailable && Boolean(unavailableText?.trim());
     return {
       id: o.id, nodeId: `outcome:${node!.event!.id}:${node!.decision!.id}:${o.id}`,
-      text: masked ? o.unavailableText!.content : o.visibleText ?? o.name,
-      status: result.status, hidden: o.unavailableBehavior === 'hidden' && unavailable, masked,
+      text: masked ? unavailableText! : o.visibleText ?? o.name,
+      status: result.status, hidden: unavailableBehavior === 'hidden' && unavailable, masked,
       // Detailed diagnostics stay in debug; a masked label must not reveal its identity.
-      reason: unavailable ? o.lockText?.content || (masked ? undefined : result.message) : undefined,
+      reason: unavailable ? lockText || (masked ? undefined : result.message) : undefined,
       evaluation: result,
     };
   });
@@ -309,15 +339,81 @@ function refreshView(project: BranchingProject, session: AuthoringSession) {
     const result = evaluate(project, session.state, a.when);
     return { id: a.id, name: a.name, status: result.status, requiresTarget: a.requiresTarget ?? false, reason: result.status === 'satisfied' ? undefined : result.message };
   });
-  session.view = { nodeId: node?.id, eventId: node?.event?.id, dialogueId: node?.dialogue?.id, kind: node?.kind, title: node?.title, text: node?.text, speakerRef: node?.speakerRef, speakerVariantId: node?.speakerVariantId, choices: session.waiting ? [] : choices, actions, waiting: Boolean(session.waiting), interactions: session.interactions.filter(x => x.status === 'pending' && x.eventId === node?.event?.id).map(x => { const definition = project.events.find(e => e.id === x.eventId)!.interactionDefinitions!.find(d => d.id === x.definitionId)!; return { ...x, name: definition.name, prompt: definition.prompt, mechanic: definition.mechanic, results: definition.results.map(r => ({ id: r.id, name: r.name })) }; }) };
+  session.view = { nodeId: node?.id, eventId: node?.event?.id, eventName: node?.event?.name, dialogueId: node?.dialogue?.id, kind: node?.kind, title: node?.title, text: node?.text, locationName: node?.locationRef ? entityDefinition(project, node.locationRef)?.name : undefined, speakerRef: node?.speakerRef, speakerVariantId: node?.speakerVariantId, choices: session.waiting ? [] : choices, actions, waiting: Boolean(session.waiting), interactions: session.interactions.filter(x => x.status === 'pending' && x.eventId === node?.event?.id).map(x => { const definition = project.events.find(e => e.id === x.eventId)!.interactionDefinitions!.find(d => d.id === x.definitionId)!; return { ...x, name: definition.name, prompt: definition.prompt, mechanic: definition.mechanic, results: definition.results.map(r => ({ id: r.id, name: r.name })) }; }) };
 }
 function startInteractions(project: BranchingProject, session: AuthoringSession, node: ContentNode, uses: import('./domain.js').InteractionUse[]) {
   for (const use of uses) {
     if (session.interactions.some(x => x.useId === use.id && x.status === 'pending')) { stop(session, 'An interaction is already pending; add a barrier before re-entry', use.id); return false; }
-    if (!node.event?.interactionDefinitions?.some(d => d.id === use.definitionId)) { stop(session, 'Missing interaction definition', use.id); return false; }
-    session.interactions.push({ id: `execution:${++session.interactionSerial}`, useId: use.id, definitionId: use.definitionId, eventId: node.event.id, ownerNodeId: node.id, moment: node.kind === 'interaction' ? 'before' : use.moment, status: 'pending', elapsedMs: 0 });
+    const definition = node.event?.interactionDefinitions?.find(d => d.id === use.definitionId);
+    if (!definition) { stop(session, 'Missing interaction definition', use.id); return false; }
+    let participantTraces: import('./domain.js').InteractionParticipantTrace[] | undefined;
+    let frozenRoll: ReturnType<typeof freezeInteractionRoll>;
+    try { participantTraces = freezeInteractionParticipants(project, session.state, definition); frozenRoll = freezeInteractionRoll(project, session.state, definition); }
+    catch (error) { stop(session, error instanceof Error ? error.message : String(error), use.id); return false; }
+    const frozenSubject = (subject: LogicSubject | undefined) => {
+      if (!subject) return undefined;
+      const resolved = resolveCharacterSubject(project, session.state, subject);
+      return resolved.subject ? { subject: resolved.subject, variantId: resolved.variantId } : resolveContextSubject(subject, session.state);
+    };
+    const occurrence = session.interactions.filter(execution => execution.eventId === node.event!.id && execution.useId === use.id).length + 1;
+    const cacheKey = JSON.stringify({ eventId: node.event!.id, nodeId: node.id, useId: use.id, definitionId: use.definitionId, occurrence, participantTraces, frozenRoll,
+      context: Object.fromEntries((['actor', 'self', 'target'] as const).map(role => [role, frozenSubject(session.state.context?.[role])])),
+      skillSubject: (definition.mechanic.kind === 'skillcheck' || definition.mechanic.kind === 'dice') && definition.mechanic.skill?.kind === 'property' ? frozenSubject(definition.mechanic.skill.subject) : undefined });
+    session.interactions.push({ id: `execution:${++session.interactionSerial}`, cacheKey, useId: use.id, definitionId: use.definitionId, eventId: node.event!.id, ownerNodeId: node.id, moment: node.kind === 'interaction' ? 'before' : use.moment, status: 'pending', elapsedMs: 0, ...(participantTraces ? { participantTraces } : {}), ...(frozenRoll ? { skillValue: frozenRoll.skillValue, modifier: frozenRoll.modifier, modifierBreakdown: frozenRoll.modifierBreakdown } : {}) });
     const results = { ...session.state.interactionResults }; delete results[use.id]; session.state.interactionResults = results;
     session.trace.push({ kind: 'interaction', nodeId: node.id, id: use.id, message: 'Interaction started' });
+  }
+  return true;
+}
+function interactionResultUseIds(condition: ConditionInput | undefined) {
+  const useIds = new Set<string>();
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== 'object') return;
+    const expression = value as Record<string, unknown>;
+    if (expression.type === 'interactionResult' && typeof expression.useId === 'string') useIds.add(expression.useId);
+    for (const key of ['all', 'any', 'not']) if (key in expression) visit(expression[key]);
+  };
+  visit(condition);
+  return useIds;
+}
+function automaticRollUsesForSource(project: BranchingProject, sourceId: string) {
+  const node = nodeIndex(project).get(sourceId);
+  const event = node?.event ?? project.events.find(candidate =>
+    candidate.transitions?.some(transition => transition.from === sourceId) ||
+    candidate.interactionUses?.some(use => use.ownerNodeId === sourceId));
+  if (!event) return [];
+  const referenced = new Set<string>();
+  for (const transition of routes(project, sourceId)) {
+    for (const useId of interactionResultUseIds(effectiveConditions(transition))) referenced.add(useId);
+  }
+  if (node?.kind === 'decision' && node.decision) {
+    // The decision's own availability is checked before its interactions.
+    // Option conditions may request a roll from this decision's before uses.
+    for (const outcome of node.decision.outcomes) {
+      for (const useId of interactionResultUseIds(effectiveConditions(outcome))) referenced.add(useId);
+    }
+  }
+  return (event.interactionUses ?? []).filter(use => {
+    if (use.ownerNodeId !== sourceId || use.moment !== 'before' || !referenced.has(use.id)) return false;
+    const mechanic = event.interactionDefinitions?.find(definition => definition.id === use.definitionId)?.mechanic;
+    return mechanic?.kind === 'dice' || mechanic?.kind === 'skillcheck' || mechanic?.kind === 'opposedcheck';
+  });
+}
+function automaticRollUsesForNode(project: BranchingProject, node: ContentNode) {
+  return automaticRollUsesForSource(project, node.id);
+}
+function resolveAutomaticDecisionRolls(project: BranchingProject, session: AuthoringSession, node: ContentNode, uses: import('./domain.js').InteractionUse[], environment: InteractionEnvironment) {
+  for (const use of uses) {
+    if (session.state.interactionResults?.[use.id] && session.interactions.some(item => item.useId === use.id && item.eventId === node.event?.id && item.status === 'resolved')) continue;
+    let execution = [...session.interactions].reverse().find(item => item.useId === use.id && item.eventId === node.event?.id && item.ownerNodeId === node.id && item.status === 'pending');
+    if (!execution) {
+      if (!startInteractions(project, session, node, [use])) return false;
+      execution = [...session.interactions].reverse().find(item => item.useId === use.id && item.eventId === node.event?.id && item.ownerNodeId === node.id && item.status === 'pending');
+    }
+    if (!execution) { stop(session, 'Could not start the automatic decision roll', use.id); return false; }
+    finishInteraction(project, session, execution.id, {}, environment);
+    if (blocked(session) || execution.status !== 'resolved') return false;
   }
   return true;
 }
@@ -339,19 +435,32 @@ function finishInteraction(project: BranchingProject, session: AuthoringSession,
   const definition = project.events.find(e => e.id === execution.eventId)?.interactionDefinitions?.find(d => d.id === execution.definitionId);
   if (!definition) { stop(session, 'Missing interaction definition', execution.useId); return; }
   try {
-    const previous = !input.resultId ? session.interactionResolutions?.[execution.id] : undefined;
+    const cacheKey = execution.cacheKey ?? execution.id;
+    const previous = !input.resultId ? session.interactionResolutions?.[cacheKey] : undefined;
     const resolved = previous
-      ? { result: definition.results.find(r => r.id === previous.resultId)!, total: previous.total, rolls: previous.rolls, forced: previous.forced }
-      : resolveInteraction(project, session.state, definition, input, environment);
+      ? { result: definition.results.find(r => r.id === previous.resultId)!, total: previous.total, rolls: previous.rolls, forced: previous.forced, participantTraces: previous.participantTraces, participantResults: previous.participantResults, skillSource: previous.skillSource, skillLabel: previous.skillLabel, skillValue: previous.skillValue, modifier: previous.modifier, modifierBreakdown: previous.modifierBreakdown }
+      : resolveInteraction(project, session.state, definition, input, environment, execution.participantTraces, execution.skillValue, execution.modifier, execution.modifierBreakdown);
     if (!resolved.result) throw new Error('Cached interaction result no longer exists');
-    session.interactionResolutions = { ...session.interactionResolutions, [execution.id]: { resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced } };
-    if (!effects(project, session, resolved.result.effects, `interaction:${execution.id}`)) return;
-    Object.assign(execution, { status: 'resolved', resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced });
-    session.state.interactionResults = { ...session.state.interactionResults, [execution.useId]: { executionId, resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced } };
+    const dice = definition.mechanic.kind === 'dice'
+      ? { count: definition.mechanic.count, sides: definition.mechanic.sides, ...(definition.mechanic.minimum !== undefined ? { minimum: definition.mechanic.minimum } : {}), ...(definition.mechanic.groups ? { groups: structuredClone(definition.mechanic.groups) } : {}) }
+      : definition.mechanic.kind === 'skillcheck' ? definition.mechanic.dice : undefined;
+    session.interactionResolutions = { ...session.interactionResolutions, [cacheKey]: structuredClone({ resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, skillSource: resolved.skillSource, skillLabel: resolved.skillLabel, skillValue: resolved.skillValue, modifier: resolved.modifier, modifierBreakdown: resolved.modifierBreakdown, forced: resolved.forced, participantTraces: resolved.participantTraces, participantResults: resolved.participantResults }) };
+    // Consequences can inspect this execution's aggregate or per-rival result.
+    // Publish it provisionally so a failed consequence rolls back every state
+    // change while retaining the cached rolls for a deterministic retry.
+    const beforeEffects = session.state;
+    session.state = { ...structuredClone(beforeEffects), interactionResults: { ...beforeEffects.interactionResults, [execution.useId]: structuredClone({ executionId, resultId: resolved.result.id, resultName: resolved.result.name, resultKey: resolved.result.key, total: resolved.total, rolls: resolved.rolls, ...(dice && resolved.rolls?.length ? { dice } : {}), ...(resolved.skillSource ? { skillSource: resolved.skillSource, skillLabel: resolved.skillLabel } : {}), ...(resolved.skillValue !== undefined ? { skillValue: resolved.skillValue } : {}), ...(resolved.modifier !== undefined ? { modifier: resolved.modifier } : {}), ...(resolved.modifierBreakdown?.length ? { modifierBreakdown: resolved.modifierBreakdown } : {}), forced: resolved.forced, ...(resolved.participantTraces ? { participantTraces: resolved.participantTraces } : {}), ...(resolved.participantResults ? { participantResults: resolved.participantResults } : {}) }) } };
+    let consequencesApplied = false;
+    try { consequencesApplied = effects(project, session, resolved.result.effects, `interaction:${execution.id}`); }
+    finally { if (!consequencesApplied) session.state = beforeEffects; }
+    if (!consequencesApplied) return;
+    Object.assign(execution, { status: 'resolved', resultId: resolved.result.id, total: resolved.total, rolls: resolved.rolls, forced: resolved.forced, ...(resolved.participantTraces ? { participantTraces: structuredClone(resolved.participantTraces) } : {}), ...(resolved.participantResults ? { participantResults: structuredClone(resolved.participantResults) } : {}) });
+    if ((definition.mechanic.kind === 'skillcheck' || definition.mechanic.kind === 'dice') && !resolved.forced) session.trace.push({ kind: 'interaction', nodeId: execution.ownerNodeId, id: execution.useId, message: `Roll: ${resolved.rolls?.join(' + ') || '0'} + ${resolved.skillValue ?? 0} + ${resolved.modifier ?? definition.mechanic.modifier} = ${resolved.total}${definition.mechanic.kind === 'skillcheck' ? `; difficulty ${definition.mechanic.difficulty}` : ''}` });
+    for (const trace of resolved.participantTraces ?? []) session.trace.push({ kind: 'interaction', nodeId: execution.ownerNodeId, id: trace.participantId, message: `Participant ${trace.participantId}: ${trace.rolls?.join(' + ') || '0'} + ${trace.skillValue} + ${trace.modifier} = ${trace.total}` });
     session.trace.push({ kind: 'interaction', nodeId: execution.ownerNodeId, id: execution.useId, message: `${definition.name}: ${resolved.result.name}${resolved.total === undefined ? '' : ` (${resolved.total})`}${resolved.forced ? ' [forced]' : ''}` });
   } catch (error) { stop(session, error instanceof Error ? error.message : String(error), execution.useId); }
 }
-function advance(project: BranchingProject, session: AuthoringSession, destination: string | undefined, budget: { value: number }, resumeEntry = false) {
+function advance(project: BranchingProject, session: AuthoringSession, destination: string | undefined, budget: { value: number }, resumeEntry = false, environment: InteractionEnvironment = defaultInteractionEnvironment) {
   const index = nodeIndex(project);
   const seen = new Set<string>();
   while (destination && session.status !== 'blocked') {
@@ -373,6 +482,8 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
       node.kind === 'dialogue' ? undefined : node.when,
     ) : node.kind === 'dialogue' ? undefined : node.when;
     const gate = evaluate(project, session.state, node.kind === 'outcome' && session.confirmedOutcomeId === node.id ? undefined : inherited);
+    const autoRollUses = automaticRollUsesForNode(project, node);
+    const autoResolvedUseIds = new Set<string>();
     session.trace.push({ kind: 'condition', nodeId: node.id, message: gate.message, evaluation: gate });
     if (gate.status !== 'satisfied') { stop(session, gate.status === 'unsatisfied' ? 'This content is unavailable' : gate.message, node.id); break; }
     if (dialogueAvailability) {
@@ -394,7 +505,7 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
           stop(session, 'Dialogue condition failed and no outgoing route can continue the story', node.id);
           break;
         }
-        destination = route(project, session, node.id, budget);
+        destination = route(project, session, node.id, budget, environment);
         if (blocked(session)) break;
         if (!destination) {
           stop(session, 'Dialogue condition failed and no valid route can continue the story', node.id);
@@ -417,7 +528,14 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
       session.state.entityStates = entityStates;
     }
     if (!resumeEntry) {
-      const uses = node.kind === 'interaction' ? (node.event?.interactionUses ?? []).filter(u => u.id === node.rawId) : interactionUsesFor(node.event, node.id, 'before');
+      if (autoRollUses.length) {
+        const interactionResults = { ...session.state.interactionResults };
+        autoRollUses.forEach(use => delete interactionResults[use.id]);
+        session.state = { ...session.state, interactionResults };
+        if (!resolveAutomaticDecisionRolls(project, session, node, autoRollUses, environment)) break;
+        autoRollUses.forEach(use => autoResolvedUseIds.add(use.id));
+      }
+      const uses = node.kind === 'interaction' ? (node.event?.interactionUses ?? []).filter(u => u.id === node.rawId) : interactionUsesFor(node.event, node.id, 'before').filter(use => !autoResolvedUseIds.has(use.id));
       if (!startInteractions(project, session, node, uses)) break;
       if (uses.length) { session.waiting = { kind: 'entry', nodeId: node.id }; refreshView(project, session); return; }
     }
@@ -438,7 +556,7 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
     if (triggered || changed) { destination = triggered ?? changed; continue; }
     if (!node.automatic) { session.status = 'ready'; refreshView(project, session); return; }
     if (!startExit(project, session, node)) { refreshView(project, session); return; }
-    destination = structuralNext(project, session, node, budget);
+    destination = structuralNext(project, session, node, budget, environment);
     if (!destination && !blocked(session) && session.returns.length) {
       if (session.interactions.some(x => x.status === 'pending' && x.eventId === node.event?.id)) { stop(session, 'Wait at a barrier before returning from this event'); break; }
       const frame = session.returns.pop()!; session.nodeId = frame.nodeId; session.state.context = frame.context;
@@ -462,7 +580,7 @@ export function createAuthoringSession(project: BranchingProject, scenario?: Aut
   const start = session.startNodeId ?? (sequence ? `start:${sequence.id}` : project.events.length === 1 ? project.events[0].id : undefined);
   if (!start) { stop(session, 'Choose a story entry; several sequences are possible'); return session; }
   if (project.events.some(e => e.interactionDefinitions?.some(d => d.mechanic.kind === 'qte'))) session.interactionClockAt = environment.now();
-  advance(project, session, start, { value: 0 });
+  advance(project, session, start, { value: 0 }, false, environment);
   return session;
 }
 export function authoringCommand(project: BranchingProject, source: AuthoringSession, command: AuthoringCommand, environment: InteractionEnvironment = defaultInteractionEnvironment): AuthoringSession {
@@ -500,8 +618,8 @@ export function authoringCommand(project: BranchingProject, source: AuthoringSes
       const ready = waiting.kind === 'barrier' ? barrierReady(session, owner) : !session.interactions.some(x => x.status === 'pending' && x.ownerNodeId === owner.id && (waiting.kind === 'entry' && owner.kind === 'boundary' ? x.moment === 'after' : x.moment === (waiting.kind === 'entry' ? 'before' : 'after')));
       if (ready) {
         session.waiting = undefined;
-        if (waiting.kind === 'exit') { next = waiting.chosenNodeId ?? structuralNext(project, session, owner, budget); if (!blocked(session)) advance(project, session, next, budget); }
-        else advance(project, session, owner.id, budget, true);
+        if (waiting.kind === 'exit') { next = waiting.chosenNodeId ?? structuralNext(project, session, owner, budget, environment); if (!blocked(session)) advance(project, session, next, budget, false, environment); }
+        else advance(project, session, owner.id, budget, true, environment);
       }
     }
     refreshView(project, session); return session;
@@ -544,14 +662,14 @@ export function authoringCommand(project: BranchingProject, source: AuthoringSes
     if (node && !startExit(project, session, node)) { refreshView(project, session); return session; }
     if (node?.kind === 'decision') { stop(session, 'Choose a response before continuing', node.id); return session; }
     next = runRules(project, session, 'continue', node, budget) ?? immediate(project, session, node, budget);
-    if (!next && node && !blocked(session)) next = structuralNext(project, session, node, budget);
+    if (!next && node && !blocked(session)) next = structuralNext(project, session, node, budget, environment);
     if (!next && !blocked(session) && session.returns.length) {
       if (session.interactions.some(x => x.status === 'pending' && x.eventId === node?.event?.id)) { stop(session, 'Wait at a barrier before returning from this event'); return session; }
       const frame = session.returns.pop()!; session.nodeId = frame.nodeId; session.state.context = frame.context;
       session.trace.push({ kind: 'return', nodeId: frame.nodeId, message: 'Returned to the interrupted content' }); refreshView(project, session); return session;
     }
   }
-  if (!blocked(session)) advance(project, session, next, budget);
+  if (!blocked(session)) advance(project, session, next, budget, false, environment);
   return session;
 }
 

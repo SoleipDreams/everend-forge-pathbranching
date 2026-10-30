@@ -126,6 +126,19 @@ export type LocalExplorerProperty = {
   updatedAt: string;
 };
 
+/** Read-only schema snapshot from WorldNotion, keyed by stable property ID. */
+export type CanonPropertyDescriptor = {
+  id: string;
+  label: string;
+  valueType: string;
+  path: string[];
+  groupPath?: string[];
+  appliesToTypes?: string[];
+  min?: number;
+  max?: number;
+  defaultValue?: unknown;
+};
+
 export type AssetKind = "image" | "video" | "audio" | "document" | "other";
 export type ProjectAsset = {
   id: string;
@@ -159,7 +172,7 @@ export type LogicVariable = {
 export type EntityRuntimeStateRole = "owned" | "unlocked" | "discovered" | "present";
 
 export type LogicSubject =
-  | { kind: "entity"; entityId: string; source?: "canon" | "local" }
+  | { kind: "entity"; entityId: string; source?: "canon" | "local"; variantId?: string }
   | { kind: "instance"; instanceId: string }
   | { kind: "context"; role: "actor" | "self" | "target" }
   | { kind: "dataObject"; objectId: string }
@@ -238,6 +251,7 @@ export type LogicEffectOperation =
 export type LogicEffect =
   | {
       type: "state";
+      conditions?: ConditionInput;
       subject: LogicSubject;
       stateId: EntityRuntimeStateRole | string;
       operation: LogicEffectOperation;
@@ -245,6 +259,7 @@ export type LogicEffect =
     }
   | {
       type: "property";
+      conditions?: ConditionInput;
       subject: LogicSubject;
       propertyId: string;
       operation: LogicEffectOperation;
@@ -252,12 +267,14 @@ export type LogicEffect =
     }
   | {
       type: "value";
+      conditions?: ConditionInput;
       subject: LogicSubject;
       operation: LogicEffectOperation;
       value?: unknown;
     }
   | {
       type: "external";
+      conditions?: ConditionInput;
       subject: Extract<LogicSubject, { kind: "external" }>;
       operation: "call";
       arguments?: unknown[];
@@ -315,6 +332,8 @@ export type LogicPropertyOverride = {
   propertyId: string;
   source: "canon" | "local";
   conditionReadable?: boolean;
+  /** Explicitly follow the nearest group/type instead of legacy compatibility defaults. */
+  conditionReadableInherited?: boolean;
   actionWritable?: boolean;
   /** Allows values of this property to be presented as event entities. */
   entityPresentable?: boolean;
@@ -323,6 +342,8 @@ export type LogicPropertyOverride = {
   relationTargetTypes?: string[];
   /** For entity-type properties: entities of this type can be given/removed as a Consequence and checked as runtimeItem. */
   grantable?: boolean;
+  /** Child capability: owned entities of this type are inventory items selectable in copy queries and initial inventories. */
+  inventoryItem?: boolean;
   /** For entity-type properties: entities of this type can be selected as an Event/DialogueBeat location. */
   location?: boolean;
   container?: boolean;
@@ -336,6 +357,8 @@ export type LogicTypeOverride = {
   source: "canon" | "local";
   /** Entities of this type can be given/removed as a Consequence and checked as a runtimeItem Condition. */
   grantable?: boolean;
+  /** Child capability: owned entities of this type are inventory items selectable in copy queries and initial inventories. */
+  inventoryItem?: boolean;
   /** Entities of this type can be selected as an Event/DialogueBeat location. */
   location?: boolean;
   container?: boolean;
@@ -344,7 +367,11 @@ export type LogicTypeOverride = {
 };
 
 export type PlayerSimulationState = {
-  interactionResults?: Record<string, { executionId: string; resultId: string; total?: number; rolls?: number[]; forced: boolean }>;
+  interactionResults?: Record<string, {
+    executionId: string; resultId: string; resultName?: string; resultKey?: InteractionResult['key']; total?: number; rolls?: number[]; dice?: InteractionDice; skillSource?: InteractionValueSource; skillLabel?: string; skillValue?: number; modifier?: number; modifierBreakdown?: InteractionModifierTrace[]; forced: boolean;
+    participantTraces?: InteractionParticipantTrace[];
+    participantResults?: Record<string, InteractionParticipantResult>;
+  }>;
   inventory?: string[];
   unlockedCanonRefs?: string[];
   variables?: Record<string, unknown>;
@@ -358,6 +385,8 @@ export type PlayerSimulationState = {
       properties?: Record<string, unknown>;
     }
   >;
+  /** Non-base variants never inherit the mutable state of another variant. */
+  entityVariantStates?: Record<string, Record<string, { states?: Partial<Record<string, boolean>>; properties?: Record<string, unknown> }>>;
   visited?: string[];
   activeNodeId?: string;
   activeDecisionId?: string;
@@ -375,18 +404,31 @@ export type EntityOwner =
 export type EntityInstance = {
   id: string;
   entityId: string;
+  variantId?: string;
   name?: string;
   properties?: Record<string, unknown>;
   states?: Record<string, boolean>;
   owner?: EntityOwner;
 };
+/** Applied once per owned copy, while carried or explicitly equipped. */
+export type InventoryPropertyModifier = {
+  id: string;
+  propertyId: string;
+  amount: number;
+  activation: "carried" | "equipped";
+};
 export type EntityCapabilityOverride = {
   entityId: string;
   grantable?: boolean;
+  /** Per-entity exception for the type's inventory-item capability. Requires the entity to be ownable. */
+  inventoryItem?: boolean;
   location?: boolean;
   container?: boolean;
   runtimeRoles?: Partial<Record<EntityRuntimeStateRole | string, boolean>>;
   properties?: Record<string, { conditionReadable?: boolean; actionWritable?: boolean }>;
+  inventoryModifiers?: InventoryPropertyModifier[];
+  itemCatalogIncluded?: boolean;
+  itemCatalogEntryId?: string;
 };
 export type InstanceQuery = {
   type: "instanceQuery";
@@ -399,6 +441,7 @@ export type InstanceQuery = {
 };
 export type InstanceEffect = {
   type: "instanceEffect";
+  conditions?: ConditionInput;
   operation: "create" | "move" | "modify" | "remove";
   entityId?: string;
   instanceId?: string;
@@ -452,6 +495,7 @@ export type PlayerProfile = {
   id: string;
   name: string;
   playableCharacterRef?: string;
+  playableVariantId?: string;
   simulation: PlayerSimulationState;
 };
 
@@ -613,6 +657,9 @@ export type CanvasScope =
 export type Sequence = {
   id: string;
   name: string;
+  /** Canon characters who can lead the sequence across multiple points of view. */
+  characterRefs?: string[];
+  /** @deprecated Read for projects authored before multiple sequence leads were supported. */
   characterRef?: string;
   entryEventId: string;
   entryLabel?: string;
@@ -700,20 +747,69 @@ export type EventNode = {
 export type InteractionValueSource =
   | { kind: "variable"; variableId: string }
   | { kind: "property"; subject: LogicSubject; propertyId: string };
+export type InteractionModifierRule = { id: string; name: string; conditions?: ConditionInput; modifier: number };
+export type InteractionModifierTrace = { ruleId: string; name: string; modifier: number };
+/** A stable role in one local interaction, independent of canon identity. */
+export type InteractionParticipant = {
+  id: string;
+  subject: LogicSubject;
+  skill?: InteractionValueSource;
+  /** Missing dice uses the opposed check's common dice pool. */
+  dice?: InteractionDice;
+  modifier: number;
+  modifierRules?: InteractionModifierRule[];
+  dicePresetId?: string;
+};
+/** Captured at execution start; rolls and totals are filled once on resolution. */
+export type InteractionParticipantTrace = {
+  participantId: string;
+  subject: LogicSubject;
+  variantId?: string;
+  skillSource?: InteractionValueSource;
+  skillLabel?: string;
+  skillValue: number;
+  modifier: number;
+  dice?: InteractionDice;
+  modifierBreakdown?: InteractionModifierTrace[];
+  rolls?: number[];
+  total?: number;
+};
+/** Result is from the actor's perspective against this particular rival. */
+export type InteractionParticipantResult = {
+  resultId: string;
+  total: number;
+  rolls: number[];
+  subject: LogicSubject;
+  variantId?: string;
+  skillSource?: InteractionValueSource;
+  skillLabel?: string;
+  skillValue: number;
+  modifier: number;
+  dice?: InteractionDice;
+  modifierBreakdown?: InteractionModifierTrace[];
+};
+export type InteractionDiceGroup = { id: string; count: number; sides: number; minimum?: number };
+/** Without groups this is a homogeneous pool; groups, when present, are authoritative. */
+export type InteractionDice = { count: number; sides: number; minimum?: number; groups?: InteractionDiceGroup[] };
 export type InteractionMechanic =
-  | { kind: "dice"; count: number; sides: number; modifier: number }
-  | { kind: "skillcheck"; skill: InteractionValueSource; difficulty: number; modifier: number; dice?: { count: number; sides: number } }
+  | ({ kind: "dice"; modifier: number; actor?: LogicSubject; skill?: InteractionValueSource; modifierRules?: InteractionModifierRule[]; dicePresetId?: string } & InteractionDice)
+  | { kind: "skillcheck"; actor?: LogicSubject; skill?: InteractionValueSource; difficulty: number; difficultyOperator?: ">=" | ">"; modifier: number; modifierRules?: InteractionModifierRule[]; dice?: InteractionDice; dicePresetId?: string }
+  | { kind: "opposedcheck"; actor: InteractionParticipant; rivals: InteractionParticipant[]; aggregation: "all" | "any"; commonDice?: InteractionDice; commonDicePresetId?: string }
   | { kind: "qte"; key: string; durationMs: number }
   | { kind: "custom"; description: string; parameters?: Record<string, unknown> };
 export type InteractionResult = {
   id: string;
   name: string;
-  /** Inclusive total ranges for dice; keys success/failure/timeout for checks and QTE. */
-  key?: "success" | "failure" | "timeout";
-  range?: { min: number; max: number };
+  /** Legacy min/max ranges remain inclusive. Omitted bounds are open; endpoint flags control inclusion. */
+  key?: "success" | "failure" | "timeout" | "tie";
+  range?: { min?: number; max?: number; minInclusive?: boolean; maxInclusive?: boolean };
   effects?: NarrativeEffect[];
 };
-export type InteractionDefinition = { id: string; name: string; prompt?: StoryTextBlock & { translations?: Record<string, string> }; mechanic: InteractionMechanic; results: InteractionResult[] };
+export type InteractionPresetOrigin = { presetId: string; revision: number; customized?: boolean; baseline?: InteractionMechanic; resultBaseline?: InteractionResult[] };
+export type InteractionDefinition = { id: string; name: string; prompt?: StoryTextBlock & { translations?: Record<string, string> }; mechanic: InteractionMechanic; results: InteractionResult[]; presetOrigin?: InteractionPresetOrigin; mechanicPending?: boolean };
+/** Universe authoring catalog. Applied mechanics are copied into each story use. */
+export type InteractionMechanicPreset = { id: string; revision: number; name: string; description?: string; previewImageAssetId?: string; /** Pure reusable dice set. Recipe remains readable for existing documents. */ presetKind?: "dice" | "recipe"; mechanic: InteractionMechanic; results: InteractionResult[]; updatedAt?: string; builtIn?: boolean };
+export type InteractionMechanicsLibrary = { version: 1; presets: InteractionMechanicPreset[] };
 export type InteractionUse = {
   id: string;
   definitionId: string;
@@ -726,6 +822,13 @@ export type InteractionBarrier = { id: string; name: string; dialogueId?: string
 
 export type DecisionType = "dialogue" | "dice" | "qte" | string;
 export type OutcomePresentationStyle = "visibleText" | "iconOnly";
+/** Optional project-wide presentation overrides. Missing values keep per-node settings. */
+export type LogicFormats = {
+  decisionOptionStyle?: OutcomePresentationStyle;
+  unavailableBehavior?: "locked" | "hidden";
+  unavailableText?: string;
+  lockText?: string;
+};
 
 export type Decision = {
   id: string;
@@ -826,7 +929,7 @@ export type Outcome = {
 
 export type Condition =
   | LogicPredicate
-  | { type: "interactionResult"; useId: string; resultId: string; operator: "==" | "!=" }
+  | { type: "interactionResult"; useId: string; resultId: string; operator: "==" | "!="; participantId?: string }
   | {
       type: "canonEntryUnlocked";
       ref: string;
@@ -1005,8 +1108,10 @@ export type CanvasNodeAuthoringState = {
     x: number;
     y: number;
   };
-  /** Route gates follow their outgoing nodes until the author moves one by hand. */
+  /** The author explicitly dragged this route gate. */
   manual?: boolean;
+  /** A stable route-gate anchor captured when canvas positions are persisted. */
+  positionPinned?: boolean;
   collapsed?: boolean;
   auxiliaryPanels?: {
     directorNote?: boolean;
@@ -1018,6 +1123,8 @@ export type CanvasNodeAuthoringState = {
 
 export type ScopedCanvasAuthoringState = {
   nodes?: Record<string, CanvasNodeAuthoringState>;
+  /** Manually placed control points for transition paths in this canvas scope. */
+  edgeWaypoints?: Record<string, Array<{ x: number; y: number }>>;
   routeGateSources?: string[];
   /** Empty Entry ports explicitly added by the author in an event subcanvas. */
   entrySlots?: string[];
@@ -1041,6 +1148,8 @@ export type CanvasAuthoringState = {
   activeSequenceId?: string;
   activeScope?: CanvasScope;
   nodes?: Record<string, CanvasNodeAuthoringState>;
+  /** Manually placed control points for transition paths outside a scoped canvas. */
+  edgeWaypoints?: Record<string, Array<{ x: number; y: number }>>;
   routeGateSources?: string[];
   scopes?: Record<string, ScopedCanvasAuthoringState>;
   viewport?: {
@@ -1056,6 +1165,7 @@ export type PanelAuthoringState = {
 };
 
 export type BranchingProject = {
+  canonPropertyDescriptors?: CanonPropertyDescriptor[];
   specVersion: "0.1";
   projectId: string;
   storyId?: string;
@@ -1081,6 +1191,7 @@ export type BranchingProject = {
   integrationConfigOverride?: PathBranchingIntegrationConfig;
   logicVariableGroups?: LogicVariableGroup[];
   logicVariables?: LogicVariable[];
+  logicFormats?: LogicFormats;
   logicPropertyOverrides?: LogicPropertyOverride[];
   logicTypeOverrides?: LogicTypeOverride[];
   /** Image-gallery overrides for canon (WorldNotion) entities, keyed by canonRef id — pathbranching cannot write into the vault directly. */
@@ -1118,6 +1229,7 @@ export type RuntimeChoice = {
   consequences?: Consequence[];
   logic?: LogicMoment;
   unavailableBehavior?: "locked" | "hidden";
+  unavailableTextKey?: string;
   lockTextKey?: string;
 };
 
@@ -1139,6 +1251,7 @@ export type RuntimeNode = {
   coverImage?: RuntimeSceneImage;
   sceneImage?: RuntimeSceneImage;
   choices?: RuntimeChoice[];
+  decisionOptionStyle?: OutcomePresentationStyle;
   conditions?: ConditionInput;
   consequences?: Consequence[];
   logic?: LogicMoment;

@@ -3,12 +3,13 @@ import { conditionStructureIssues, conditionValueMatchesType } from "./condition
 import type { BranchingProject, ConditionInput, Consequence, EntityInstance, EntityOwner, EventNode, InstanceEffect, InstanceQuery, LogicEffect, LogicPredicate, NarrativeEffect, ScriptBlock, ValidationFinding } from "./domain.js";
 import { effectiveConditions, orderedTransitions, conditionInputsFromConsequences, walkConditions } from "./logic.js";
 import { mappingsForCanonRef } from "./integrationConfig.js";
-import { entitySupportsDialogueTrigger } from "./explorerSchema.js";
+import { entitySupportsDialogueTrigger, findLocalExplorerPropertyByReference, flattenLocalExplorerPropertyTree } from "./explorerSchema.js";
 import { logicEffectOperations, logicOperatorsFor, resolveLogicField } from "./logicCapabilities.js";
 import { isGenericSpeakerRef } from "./speakerRoles.js";
 import { canonVariantsForRef } from "./worldnotionVariants.js";
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue } from './authoringEntities.js';
 import { authoringNodeExists } from './authoringEngine.js';
+import { itemModifierIssues } from './itemCatalog.js';
 
 function finding(
   code: ValidationFinding["code"],
@@ -150,7 +151,9 @@ function validateConditionRefs(
   walkConditions(conditions, (condition, path) => {
     if (condition.type === 'interactionResult') {
       const use = projectRefs.project.events.flatMap(event => (event.interactionUses ?? []).map(use => ({ use, event }))).find(item => item.use.id === condition.useId);
-      if (!use || !use.event.interactionDefinitions?.find(d => d.id === use.use.definitionId)?.results.some(r => r.id === condition.resultId) || !['==','!='].includes(String(condition.operator))) findings.push(finding('invalid_condition','error',`${context} references an invalid interaction result`,{id:ownerId}));
+      const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
+      if (!use || !definition?.results.some(r => r.id === condition.resultId) || !['==','!='].includes(String(condition.operator))
+        || condition.participantId && (definition.mechanic.kind !== 'opposedcheck' || !definition.mechanic.rivals.some(rival => rival.id === condition.participantId))) findings.push(finding('invalid_condition','error',`${context} references an invalid interaction result`,{id:ownerId}));
       return;
     }
     if (condition.type === 'instanceQuery') {
@@ -266,10 +269,12 @@ function validateConsequenceCanonRefs(
   ownerId: string,
   context: string,
   consequences: Consequence[] | undefined,
+  validateEffectConditions = true,
 ) {
   consequences?.forEach((consequence) => {
     if ("subject" in consequence) {
       const effect = consequence as LogicEffect;
+      if (validateEffectConditions && effect.conditions) validateConditionRefs(findings, projectRefs, canonIds, ownerId, `${context} effect condition`, effect.conditions);
       const subject = effect.subject;
       if (subject.kind === "external" && !projectRefs.project.externalFunctions.some((externalFunction) => externalFunction.name === subject.functionId)) {
         findings.push(finding("invalid_consequence", "error", `${context} references missing external function "${subject.functionId}".`, { id: ownerId, ref: subject.functionId }));
@@ -314,7 +319,7 @@ function validateConsequenceCanonRefs(
       );
     }
 
-    conditionInputsFromConsequences([consequence]).forEach((conditionInput) => {
+    if (validateEffectConditions) conditionInputsFromConsequences([consequence]).forEach((conditionInput) => {
       validateConditionRefs(findings, projectRefs, canonIds, ownerId, `${context} gated consequence`, conditionInput);
     });
   });
@@ -1014,7 +1019,8 @@ function validateOwner(findings: ValidationFinding[], project: BranchingProject,
 function validateNarrativeEffects(findings: ValidationFinding[], refs: ProjectReferenceSets, canonIds: Set<string>, id: string, effects: NarrativeEffect[] | undefined) {
   const project=refs.project;
   for (const effect of effects ?? []) {
-    if (effect.type !== 'instanceEffect') { validateConsequenceCanonRefs(findings,refs,canonIds,id,`Effect in ${id}`,[effect as Consequence]); continue; }
+    if (effect.conditions) validateConditionRefs(findings, refs, canonIds, id, `Effect condition in ${id}`, effect.conditions);
+    if (effect.type !== 'instanceEffect') { validateConsequenceCanonRefs(findings,refs,canonIds,id,`Effect in ${id}`,[effect as Consequence], false); continue; }
     const e=effect as InstanceEffect;
     const fail=(message:string,ref?:string)=>findings.push(finding('invalid_consequence','error',message,{id,ref}));
     if (!['create','move','modify','remove'].includes(e.operation)) fail('Unknown copy operation.');
@@ -1027,7 +1033,7 @@ function validateNarrativeEffects(findings: ValidationFinding[], refs: ProjectRe
     if (e.query?.filters) validateConditionRefs(findings,refs,canonIds,id,'Copy effect filter',e.query.filters);
     if (e.query?.owner) validateOwner(findings,project,id,e.query.owner,'Copy filter');
     for (const [propertyId,value] of Object.entries(e.properties ?? {})) {
-      const property=project.localExplorerProperties?.find(p=>p.id===propertyId || p.id===`property:${propertyId}`);
+      const property=findLocalExplorerPropertyByReference(project.localExplorerProperties,propertyId);
       if (!property && (!e.entityId || !(propertyId in (entityDefinition(project,e.entityId)?.properties ?? {})))) fail('Copy effect references a missing property.',propertyId);
       if (!conditionValueMatchesType(value,property?.valueType)) fail('Copy effect property has an incompatible value.',propertyId);
     }
@@ -1042,13 +1048,14 @@ function validateAuthoringDefinitions(findings: ValidationFinding[], refs: Proje
   const pools=[copies,project.playerSimulation?.entityInstances ?? [],...(project.playerProfiles ?? []).map(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).map(s=>s.state?.entityInstances ?? [])];
   for(const pool of pools) for(const copy of pool) {
     const error=instanceOwnerIssue(project,pool,copy);if(error)findings.push(finding('invalid_consequence','error',error,{id:copy.id,ref:copy.entityId}));
-    for(const [propertyId,value] of Object.entries(copy.properties ?? {})) { const p=project.localExplorerProperties?.find(p=>p.id===propertyId || p.id===`property:${propertyId}`);if(!conditionValueMatchesType(value,p?.valueType)) findings.push(finding('invalid_consequence','error','Copy property has incompatible type.',{id:copy.id,ref:propertyId})); }
+    for(const [propertyId,value] of Object.entries(copy.properties ?? {})) { const p=findLocalExplorerPropertyByReference(project.localExplorerProperties,propertyId);if(!conditionValueMatchesType(value,p?.valueType)) findings.push(finding('invalid_consequence','error','Copy property has incompatible type.',{id:copy.id,ref:propertyId})); }
   }
   for(const override of project.entityOverrides ?? []) if(!entityDefinition(project,override.entityId)) findings.push(finding('missing_canon_ref','error','Capability override references missing entity.',{id:override.entityId}));
+  for (const override of project.entityOverrides ?? []) if (override.inventoryModifiers !== undefined) for (const issue of itemModifierIssues(project, override.inventoryModifiers)) findings.push(finding('invalid_consequence', 'error', issue, { id: override.entityId }));
   for(const duplicate of findDuplicates([...(project.narrativeActions ?? []).map(a=>a.id),...(project.narrativeRules ?? []).map(r=>r.id),...(project.authoringScenarios ?? []).map(s=>s.id)])) findings.push(finding('duplicate_id','error','Duplicate action, rule or scenario ID.',{id:duplicate}));
   for(const action of project.narrativeActions ?? []) {
     if(action.entityId && !entityDefinition(project,action.entityId)) findings.push(finding('missing_canon_ref','error','Action references a missing entity.',{id:action.id,ref:action.entityId}));
-    if(action.typeId && ![...project.canonRefs.map(e=>e.kind),...(project.localExplorerEntities ?? []).map(e=>e.type),...(project.localExplorerProperties ?? []).filter(p=>p.valueType==='entity-type').map(p=>p.id.replace(/^type:/,''))].some(t=>t?.replace(/^type:/,'')===action.typeId?.replace(/^type:/,''))) findings.push(finding('invalid_consequence','error','Action references a missing entity type.',{id:action.id,ref:action.typeId}));
+    if(action.typeId && ![...project.canonRefs.map(e=>e.kind),...(project.localExplorerEntities ?? []).map(e=>e.type),...flattenLocalExplorerPropertyTree(project.localExplorerProperties).filter(p=>p.valueType==='entity-type').map(p=>p.id.replace(/^type:/,''))].some(t=>t?.replace(/^type:/,'')===action.typeId?.replace(/^type:/,''))) findings.push(finding('invalid_consequence','error','Action references a missing entity type.',{id:action.id,ref:action.typeId}));
     if(action.overridesActionId && !project.narrativeActions?.some(a=>a.id===action.overridesActionId && a.typeId)) findings.push(finding('invalid_consequence','error','Action exception references a missing inherited action.',{id:action.id,ref:action.overridesActionId}));
     if(action.targetNodeId && !exists(action.targetNodeId)) findings.push(finding('broken_transition','error','Action has a missing narrative destination.',{id:action.id,ref:action.targetNodeId}));
     validateConditionRefs(findings,refs,canonIds,action.id,'Action availability',action.when);validateNarrativeEffects(findings,refs,canonIds,action.id,action.effects);

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { buildStoryCanvasModel, fitSubcanvasWorkspaceBounds, layoutSubcanvasNodes } from "../lib/canvas/storyCanvasModel.js";
 import { canvasReturnConnectors } from "../lib/canvas/returnConnectors.js";
 import { parseProject } from "../lib/projectSerialization.js";
-import { removeBoundaryPortSlot, resolveBoundaryPortSlot } from "../lib/projectMutations.js";
+import { deleteRoutesFromSource, deleteTransition as deleteTransitionMutation, removeBoundaryPortSlot, resolveBoundaryPortSlot } from "../lib/projectMutations.js";
 import { validateProject } from "../lib/validate.js";
 
 const fixturePath = new URL("../examples/worldnotion-bridge-demo-project.json", import.meta.url);
@@ -575,6 +575,7 @@ if (!model.nodes.some((node) => node.id === eventBeatId && node.data.kind === "s
   throw new Error("Expected event-level dialogue beats beside decisions in the event canvas.");
 }
 const decisionGateId = `route-gate:${parent.id}:${acceptOutcomeId}`;
+const eventScopeKey = `event:${parent.id}`;
 if (model.nodes.some((node) => node.id === decisionGateId)) {
   throw new Error("A single transition must stay direct; Logic Gates represent splits only.");
 }
@@ -594,6 +595,46 @@ const independentDecisionProject = {
     : event),
 };
 const independentModel = buildStoryCanvasModel(independentDecisionProject, { scope: { kind: "event", id: parent.id } });
+const acceptGate = independentModel.nodes.find((node) => node.id === decisionGateId);
+if (!acceptGate) throw new Error("Expected the branched Decision option to project its router.");
+const movedTargetsProject = structuredClone(independentDecisionProject);
+const savedEventNodes = movedTargetsProject.canvas?.scopes?.[eventScopeKey]?.nodes ?? {};
+movedTargetsProject.canvas = {
+  ...movedTargetsProject.canvas,
+  scopes: {
+    ...(movedTargetsProject.canvas?.scopes ?? {}),
+    [eventScopeKey]: {
+      ...(movedTargetsProject.canvas?.scopes?.[eventScopeKey] ?? {}),
+      nodes: {
+        ...savedEventNodes,
+        "event:route-a": { position: { x: 2000, y: 1200 } },
+        [parent.id]: { position: { x: 2200, y: -500 } },
+      },
+    },
+  },
+};
+const movedTargetsGate = buildStoryCanvasModel(movedTargetsProject, { scope: { kind: "event", id: parent.id } }).nodes.find((node) => node.id === decisionGateId);
+assert.deepEqual(movedTargetsGate?.position, acceptGate.position, "moving route destinations must not recenter an automatic gate");
+const manuallyPlacedProject = structuredClone(independentDecisionProject);
+manuallyPlacedProject.canvas = {
+  ...manuallyPlacedProject.canvas,
+  scopes: {
+    ...(manuallyPlacedProject.canvas?.scopes ?? {}),
+    [eventScopeKey]: {
+      ...(manuallyPlacedProject.canvas?.scopes?.[eventScopeKey] ?? {}),
+      nodes: { ...(manuallyPlacedProject.canvas?.scopes?.[eventScopeKey]?.nodes ?? {}), [decisionGateId]: { position: { x: 777, y: 888 }, manual: true } },
+    },
+  },
+};
+const manuallyPlacedGate = buildStoryCanvasModel(manuallyPlacedProject, { scope: { kind: "event", id: parent.id } }).nodes.find((node) => node.id === decisionGateId);
+assert.deepEqual(manuallyPlacedGate?.position, { x: 777, y: 888 }, "manual gate placement must survive projection");
+const acceptRoutes = independentDecisionProject.events.find((event) => event.id === parent.id).transitions.filter((transition) => transition.from === acceptOutcomeId);
+const afterSingleDelete = deleteTransitionMutation(independentDecisionProject, acceptRoutes[0].id).project;
+assert.ok(!buildStoryCanvasModel(afterSingleDelete, { scope: { kind: "event", id: parent.id } }).nodes.some((node) => node.id === decisionGateId), "one remaining route is displayed as a direct connection");
+const afterRouterDelete = deleteRoutesFromSource(manuallyPlacedProject, parent.id, acceptOutcomeId);
+assert.ok(!afterRouterDelete.events.find((event) => event.id === parent.id).transitions.some((transition) => transition.from === acceptOutcomeId), "deleting the router removes all its authored routes");
+assert.ok(!afterRouterDelete.canvas.scopes[eventScopeKey].nodes[decisionGateId], "deleting the router clears its saved position");
+assert.ok(!buildStoryCanvasModel(afterRouterDelete, { scope: { kind: "event", id: parent.id } }).nodes.some((node) => node.id === decisionGateId));
 const restartOutputId = `boundary:${parent.id}:output:restart`;
 const restartOutput = independentModel.nodes.find((node) => node.id === restartOutputId);
 if (restartOutput?.data.title !== parent.name || restartOutput?.data.details?.restart !== true) {
@@ -615,7 +656,6 @@ for (const outcomeId of [acceptOutcomeId, declineOutcomeId]) {
 if (buildStoryCanvasModel(independentDecisionProject).nodes.some((node) => node.id === restartOutputId)) {
   throw new Error("The restart output must remain hidden outside the event subcanvas.");
 }
-const eventScopeKey = `event:${parent.id}`;
 project.canvas = {
   ...project.canvas,
   scopes: {

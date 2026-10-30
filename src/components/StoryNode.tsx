@@ -2,8 +2,8 @@ import { useApplicationEffect } from "./useApplicationActivity.js";
 import { Handle, NodeToolbar, Position, useReactFlow, useUpdateNodeInternals, useStore, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { AlignLeft, BookOpen, ChevronRight, CircleAlert, CircleDot, CircleHelp, Clapperboard, CornerDownLeft, FileText, GitBranch, GripVertical, ImagePlus, Info, MessageSquare, Plus, Route, Split, Trash2, UserRound, X, Zap } from "lucide-react";
-import type { CanvasInfoBadge, StoryCanvasNode, StoryCanvasNodeData } from "../canvas/storyCanvasModel.js";
+import { AlignLeft, BookOpen, ChevronRight, CircleAlert, CircleDot, CircleHelp, Clapperboard, CornerDownLeft, Dices, FileText, GitBranch, GripVertical, ImagePlus, Info, Lightbulb, Link2Off, LogIn, LogOut, MessageSquare, MessageSquareText, MessagesSquare, PanelsTopLeft, PauseCircle, Play, Plus, Route, ScrollText, Split, Trash2, UserRound, WandSparkles, X, Zap, type LucideIcon } from "lucide-react";
+import type { CanvasInfoBadge, StoryCanvasNode, StoryCanvasNodeData, StoryCanvasNodeKind } from "../canvas/storyCanvasModel.js";
 import type { Outcome, SceneImageAttachment } from "../domain.js";
 import type { LocaleNames } from "../localization.js";
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "../speakerRoles.js";
@@ -24,15 +24,59 @@ function D20Icon({ size = 16 }: { size?: number }) {
   </svg>;
 }
 
+const nodeKindIcons = {
+  sequence: BookOpen,
+  start: Play,
+  boundary: LogOut,
+  workspace: PanelsTopLeft,
+  endAdder: Plus,
+  routeGate: Route,
+  branch: GitBranch,
+  event: ScrollText,
+  decision: Split,
+  dialogue: MessagesSquare,
+  dialogueStart: Zap,
+  speechBeat: MessageSquareText,
+  directionBeat: Clapperboard,
+  outcome: CircleDot,
+  inkSection: FileText,
+  knowledge: Lightbulb,
+  runtimeAction: WandSparkles,
+  interaction: Dices,
+  barrier: PauseCircle,
+  missingRef: Link2Off,
+} satisfies Record<StoryCanvasNodeKind, LucideIcon>;
+
+export function StoryCanvasNodeIcon({
+  kind,
+  details,
+  size = 16,
+  className,
+}: {
+  kind: StoryCanvasNodeKind;
+  details?: Record<string, unknown>;
+  size?: number;
+  className?: string;
+}) {
+  const Icon = kind === "boundary"
+    ? details?.restart === true
+      ? CornerDownLeft
+      : details?.direction === "input" ? LogIn : LogOut
+    : kind === "routeGate" && details?.junctionPresentation === "split"
+      ? GitBranch
+      : nodeKindIcons[kind];
+  return <Icon className={className} size={size} aria-hidden="true" />;
+}
+
 function nodeKindLabel(data: StoryCanvasNodeData, es: boolean) {
   const labels = es ? {
     sequence: "Capítulo", branch: "Rama", event: "Evento", decision: "Decisiones", dialogue: "Conversación",
-    dialogueStart: "Inicio de conversación", speechBeat: "Diálogo", directionBeat: "Acotación", outcome: "Opción", interaction: "Interacción", barrier: "Espera",
+    dialogueStart: "Activador", speechBeat: "Diálogo", directionBeat: "Acotación", outcome: "Opción", interaction: "Interacción", barrier: "Espera",
     start: "Inicio", boundary: data.details?.restart ? "Retorno" : data.details?.direction === "input" ? "Entrada" : "Salida",
     routeGate: "Rutas", workspace: "Área", endAdder: data.details?.direction === "input" ? "Añadir entrada" : "Añadir salida", inkSection: "Guion", knowledge: "Concepto", runtimeAction: "Acción", missingRef: "Referencia ausente",
   } : {
     sequence: "Chapter", branch: "Branch", event: "Event", decision: "Decisions", dialogue: "Conversation",
-    dialogueStart: "Conversation start", speechBeat: "Dialogue", directionBeat: "Stage direction", outcome: "Option", interaction: "Interaction", barrier: "Wait",
+    dialogueStart: "Trigger", speechBeat: "Dialogue", directionBeat: "Stage direction", outcome: "Option", interaction: "Interaction", barrier: "Wait",
     start: "Start", boundary: data.details?.restart ? "Return" : data.details?.direction === "input" ? "Entry" : "Exit",
     routeGate: "Routes", workspace: "Area", endAdder: data.details?.direction === "input" ? "Add entry" : "Add exit", inkSection: "Script", knowledge: "Concept", runtimeAction: "Action", missingRef: "Missing reference",
   };
@@ -41,10 +85,9 @@ function nodeKindLabel(data: StoryCanvasNodeData, es: boolean) {
 
 function CanvasIdentity({ data, es, title = data.title, onOpen }: { data: StoryCanvasNodeData; es: boolean; title?: string; onOpen: OpenInspectorSection }) {
   const emptyTitles: Record<string, string> = es ? { "No incoming route": "Sin ruta de entrada", "Add Entry": "Añadir entrada", "Add End": "Añadir salida", "Story entry": "Inicio de historia" } : { "Add Entry": "Add entry", "Add End": "Add exit" };
-  const shownTitle = title ? emptyTitles[title] ?? title : nodeKindLabel(data, es);
-  const Icon = data.details?.restart ? CornerDownLeft : data.kind === "decision" ? Split : data.kind === "speechBeat" || data.kind === "dialogue" ? MessageSquare : data.kind === "directionBeat" ? Clapperboard : data.kind === "outcome" ? CircleDot : BookOpen;
+  const shownTitle = data.kind === "dialogueStart" ? nodeKindLabel(data, es) : title ? emptyTitles[title] ?? title : nodeKindLabel(data, es);
   return <div className="node-identity" title={shownTitle}>
-    <span className="node-identity-kind"><Icon size={12} aria-hidden="true" />{nodeKindLabel(data, es)}</span>
+    <span className="node-identity-kind"><StoryCanvasNodeIcon kind={data.kind} details={data.details} size={12} />{nodeKindLabel(data, es)}</span>
     <strong className="node-identity-title">{shownTitle}</strong>
     <button type="button" className="node-identity-inspect nodrag nopan" title={es ? "Abrir inspector" : "Open inspector"} aria-label={`${es ? "Inspeccionar" : "Inspect"} ${shownTitle}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); onOpen("overview"); }}><Info size={13} aria-hidden="true" /></button>
   </div>;
@@ -215,8 +258,8 @@ type DecisionOption = {
 type InteractionCard = { id: string; name: string; moment: 'before' | 'during' | 'after'; mechanic?: { kind: string }; results?: unknown[] };
 type DecisionQuickEditor = {
   optionStyle: "visibleText" | "iconOnly";
-  onOptionStyleUpdate: (style: "visibleText" | "iconOnly") => void;
   onOutcomeUpdate: (outcomeId: string, updates: Partial<Pick<Outcome, "visibleText">>) => void;
+  onOutcomeReorder: (outcomeId: string, targetOutcomeId: string, position: "before" | "after") => void;
   onCreateOutcome: () => void;
   onDeleteOutcome: (outcomeId: string) => void;
 };
@@ -298,8 +341,8 @@ function isDecisionQuickEditor(value: unknown): value is DecisionQuickEditor {
       typeof value === "object" &&
       ((value as DecisionQuickEditor).optionStyle === "visibleText" ||
         (value as DecisionQuickEditor).optionStyle === "iconOnly") &&
-      typeof (value as DecisionQuickEditor).onOptionStyleUpdate === "function" &&
       typeof (value as DecisionQuickEditor).onOutcomeUpdate === "function" &&
+      typeof (value as DecisionQuickEditor).onOutcomeReorder === "function" &&
       typeof (value as DecisionQuickEditor).onCreateOutcome === "function" &&
       typeof (value as DecisionQuickEditor).onDeleteOutcome === "function",
   );
@@ -358,9 +401,8 @@ type BeatQuickEditor = {
     variants: Array<{ id: string; label: string; portraitUrl?: string }>;
   }>;
   onTextUpdate: (locale: string, value: string) => void;
-  onCharacterUpdate: (characterRef?: string) => void;
+  onCharacterUpdate: (characterRef?: string, characterVariantId?: string) => void;
   onCreateSpeaker?: (name: string) => void;
-  onCharacterVariantUpdate?: (variantId: string) => void;
   narrativeConnector?: NarrativeConnector;
 };
 
@@ -496,6 +538,62 @@ function stopCanvasInteraction(event: { stopPropagation: () => void }) {
   event.stopPropagation();
 }
 
+// WebView2 can reserve native drag/drop for file imports. Pointer capture also
+// keeps option reordering independent of React Flow's node dragging.
+function DecisionOptionDragHandle({ outcomeId, letter, es, onReorder, onStep }: {
+  outcomeId: string; letter: string; es: boolean;
+  onReorder: (source: string, target: string, position: "before" | "after") => void;
+  onStep: (direction: -1 | 1) => void;
+}) {
+  const gesture = useRef<{ pointerId: number; x: number; y: number; moved: boolean; target?: HTMLElement; position?: "before" | "after" } | undefined>(undefined);
+  const clear = () => {
+    gesture.current?.target?.classList.remove("drag-over");
+    gesture.current = undefined;
+  };
+  useEffect(() => clear, []);
+  return <button type="button" className="decision-option-drag nodrag nopan"
+    aria-label={`${es ? "Arrastrar para reordenar opción" : "Drag to reorder option"} ${letter}`}
+    title={es ? "Arrastra para reordenar" : "Drag to reorder"}
+    onPointerDown={event => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      event.preventDefault(); event.stopPropagation();
+      clear();
+      gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }}
+    onPointerMove={event => {
+      const current = gesture.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      event.stopPropagation();
+      current.moved ||= Math.hypot(event.clientX - current.x, event.clientY - current.y) >= 6;
+      if (!current.moved) return;
+      current.target?.classList.remove("drag-over");
+      current.target = undefined;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(".decision-option[data-outcome-id]");
+      if (!target || target.dataset.outcomeId === outcomeId || target.closest(".decision-options") !== event.currentTarget.closest(".decision-options")) return;
+      const bounds = target.getBoundingClientRect();
+      current.target = target;
+      current.position = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      target.classList.add("drag-over");
+    }}
+    onPointerUp={event => {
+      const current = gesture.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      event.stopPropagation();
+      const targetId = current.target?.dataset.outcomeId;
+      const position = current.position;
+      clear();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (current.moved && targetId && position) onReorder(outcomeId, targetId, position);
+    }}
+    onPointerCancel={clear} onLostPointerCapture={clear} onClick={stopCanvasInteraction}
+    onKeyDown={event => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      event.preventDefault(); event.stopPropagation();
+      onStep(event.key === "ArrowUp" ? -1 : 1);
+    }}><GripVertical size={13} aria-hidden="true" /></button>;
+}
+
 function EndAdderControl({
   data,
   positionAbsoluteX,
@@ -559,7 +657,7 @@ function EndAdderControl({
         return;
       }
       const chrome = flowRoot?.querySelectorAll<HTMLElement>(
-        ".canvas-modebar, .pb-canvas-tool-row, .pb-canvas-locale-tools, .react-flow__controls, .react-flow__minimap, .workspace-resize-handle",
+        ".canvas-modebar, .pb-canvas-tool-row, .pb-canvas-locale-tools, .react-flow__controls, .canvas-minimap, .workspace-resize-handle",
       ) ?? [];
       if (Array.from(chrome).some((element) => {
         const rect = element.getBoundingClientRect();
@@ -594,7 +692,7 @@ function EndAdderControl({
       const node = underlying.closest<HTMLElement>(".react-flow__node");
       if (
         (node && !node.querySelector(".story-node.workspace-node")) ||
-        underlying.closest(".react-flow__edge, .react-flow__controls, .react-flow__minimap")
+        underlying.closest(".react-flow__edge, .react-flow__controls, .canvas-minimap")
       ) {
         setPointer(undefined);
         return;
@@ -653,7 +751,7 @@ function EndAdderControl({
           if (
             target && pane && pane.contains(target) &&
             (!targetNode || targetNode.querySelector(".story-node.workspace-node")) &&
-            !target.closest(".react-flow__edge, .react-flow__controls, .react-flow__minimap")
+            !target.closest(".react-flow__edge, .react-flow__controls, .canvas-minimap")
           ) {
             setPointer(placement);
             return;
@@ -878,7 +976,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       : nodeData.kind === "boundary" && nodeData.details?.direction === "output"
         ? "output"
         : undefined;
-  const focusClass = `${typeof nodeData.focusState === "string" ? ` focus-${nodeData.focusState}` : ""}${zoom < 0.65 && !selected ? " canvas-node-overview" : ""}`;
+  const focusClass = `${typeof nodeData.focusState === "string" ? ` focus-${nodeData.focusState}` : ""}${nodeData.validationHighlight === true ? " validation-find-highlight" : ""}${zoom < 0.65 && !selected ? " canvas-node-overview" : ""}`;
   const inspectorFocusClass =
     typeof nodeData.inspectorState === "string"
       ? ` inspector-${nodeData.inspectorState}`
@@ -1007,9 +1105,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       (nodeData.onOpenInspectorSection as OpenInspectorSection)(section, target);
     } else if (section === "conditions" || section === "consequences") openLogicPart?.(section);
   };
-  const showDecisionNodeTitle = nodeData.kind !== "decision" || nodeData.canvasLayerMode !== "logic";
-  const identityTitle = showDecisionNodeTitle ? nodeData.title : nodeKindLabel(nodeData, es);
-  const identity = <CanvasIdentity data={nodeData} es={es} title={identityTitle} onOpen={openInspectorSection} />;
+  const identity = <CanvasIdentity data={nodeData} es={es} title={nodeData.title} onOpen={openInspectorSection} />;
   const conditionEditable = ["event", "dialogue", "dialogueStart", "speechBeat", "directionBeat", "outcome"].includes(nodeData.kind);
   const interactionEditable = conditionEditable || nodeData.kind === "interaction" || nodeData.kind === "barrier";
   const interactionConfigured = nodeData.kind === "interaction" || nodeData.kind === "barrier" || Array.isArray(nodeData.details?.interactionCards) && nodeData.details.interactionCards.length > 0;
@@ -1065,7 +1161,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
         /> : null}
       </> : <>
         <div className="route-gate-heading">
-          <div className="route-gate-kicker"><Split size={12} />{es ? "Enrutador" : "Router"}</div>
+          <div className="route-gate-kicker"><StoryCanvasNodeIcon kind="routeGate" details={nodeData.details} size={12} />{es ? "Enrutador" : "Router"}</div>
         </div>
         <div className="route-gate-metrics" aria-label={es ? "Resumen del enrutador" : "Router summary"}>
           <button type="button" className="route-gate-route-summary" title={es ? "Abrir las rutas del enrutador" : "Open router routes"} aria-label={`${es ? "Rutas del enrutador" : "Router routes"}: ${routeSummaryLabel}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("connections"); }}>
@@ -1111,7 +1207,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
   if (nodeData.kind === "start") {
     return (
       <div className={`story-node start sequence-start${focusClass}${inspectorFocusClass}${selected ? " selected" : ""}`} style={colorStyle} title={`${es ? "Inicio de" : "Start of"} ${nodeData.title}`}>
-        <span className="node-start-icon" aria-hidden="true" />
+        <span className="node-start-icon"><StoryCanvasNodeIcon kind="start" size={13} /></span>
         <strong className="node-start-title">START</strong>
         {canSource ? <Handle type="source" position={Position.Right} /> : null}
       </div>
@@ -1233,7 +1329,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
             style={{ opacity: 0, pointerEvents: "none" }}
           />
         ) : null}
-        <span className="node-boundary-icon" aria-hidden="true" />
+        <span className="node-boundary-icon"><StoryCanvasNodeIcon kind="boundary" details={nodeData.details} size={14} /></span>
         {identity}
         {routeEditor ? (
           <NodeToolbar nodeId={id} isVisible={selected} position={Position.Bottom} offset={14}>
@@ -1307,43 +1403,19 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       >
         <Handle type="target" position={Position.Left} />
         {identity}
-        <CanvasInfoBadges badges={infoBadges} />
-        {decisionEditor ? (
-          <div className="decision-style-toggle nodrag nopan" role="group" aria-label="Decision option display">
-              <button
-                type="button"
-                className={optionStyle === "iconOnly" ? "active" : ""}
-                aria-pressed={optionStyle === "iconOnly"}
-                onPointerDown={stopCanvasInteraction}
-                onClick={(event) => {
-                  stopCanvasInteraction(event);
-                  decisionEditor.onOptionStyleUpdate("iconOnly");
-                }}
-              >
-                {es ? "Iconos" : "Icons"}
-              </button>
-              <button
-                type="button"
-                className={optionStyle === "visibleText" ? "active" : ""}
-                aria-pressed={optionStyle === "visibleText"}
-                onPointerDown={stopCanvasInteraction}
-                onClick={(event) => {
-                  stopCanvasInteraction(event);
-                  decisionEditor.onOptionStyleUpdate("visibleText");
-                }}
-              >
-                {es ? "Texto" : "Text"}
-              </button>
-          </div>
-        ) : (
-          <span className="decision-style">{optionStyle === "iconOnly" ? (es ? "Iconos" : "Icons") : (es ? "Texto" : "Text")}</span>
-        )}
+        <span className="decision-style">{optionStyle === "iconOnly" ? (es ? "Iconos" : "Icons") : (es ? "Texto" : "Text")}</span>
         {nodeData.subtitle ? <div className="node-subtitle">{nodeData.subtitle}</div> : null}
         <div className="decision-options">
           {options.map((option, index) => {
             const optionLetter = String.fromCharCode(65 + index);
             return (
-              <div className={`decision-option${optionStyle === "iconOnly" ? " icon-mode" : ""}`} key={option.id}>
+              <div className={`decision-option${optionStyle === "iconOnly" ? " icon-mode" : ""}`} key={option.id} data-outcome-id={option.id}>
+                {decisionEditor ? <DecisionOptionDragHandle outcomeId={option.id} letter={optionLetter} es={es}
+                  onReorder={decisionEditor.onOutcomeReorder}
+                  onStep={direction => {
+                    const target = options[index + direction];
+                    if (target) decisionEditor.onOutcomeReorder(option.id, target.id, direction < 0 ? "before" : "after");
+                  }} /> : null}
                 {decisionEditor ? (
                   <button
                     type="button"
@@ -1360,11 +1432,41 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
                   </button>
                 ) : null}
                 {optionStyle === "iconOnly" ? (
-                  <span className="decision-option-icon">{optionLetter}</span>
+                  (
+                    <button
+                      type="button"
+                      className="decision-option-icon decision-option-open nodrag nopan"
+                      aria-label={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
+                      title={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
+                      onPointerDown={stopCanvasInteraction}
+                      onClick={(event) => {
+                        stopCanvasInteraction(event);
+                        openInspectorSection("choices", { type: "node", id: option.handleId });
+                      }}
+                    >
+                      {optionLetter}
+                    </button>
+                  )
                 ) : (
                   <>
-                    <span className="decision-option-key">{optionLetter}</span>
-                    {nodeData.canvasLayerMode === "logic" ? null : decisionEditor ? (
+                    {(
+                      <button
+                        type="button"
+                        className="decision-option-key decision-option-open nodrag nopan"
+                        aria-label={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
+                        title={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
+                        onPointerDown={stopCanvasInteraction}
+                        onClick={(event) => {
+                          stopCanvasInteraction(event);
+                          openInspectorSection("choices", { type: "node", id: option.handleId });
+                        }}
+                      >
+                        {optionLetter}
+                      </button>
+                    )}
+                    {nodeData.canvasLayerMode === "logic" ? (
+                      <span className="decision-option-label" title={option.visibleText ?? option.name}>{option.visibleText ?? option.name}</span>
+                    ) : decisionEditor ? (
                       <button
                         type="button"
                         className={`decision-option-edit-trigger nodrag nopan${(option.visibleText ?? option.name) ? "" : " empty"}`}
@@ -1383,10 +1485,8 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
                     )}
                   </>
                 )}
-                {nodeData.canvasLayerMode === "logic" ? <>
-                  <button type="button" className={`decision-option-condition nodrag nopan${option.logicSummary?.when ? " configured" : ""}${option.logicSummary?.warningCount ? " has-warning" : ""}`} aria-label={option.logicSummary?.warningCount ? `${es ? "Revisar condición de opción" : "Review option condition"} ${optionLetter}` : option.logicSummary?.when ? `${es ? "Editar condición de opción" : "Edit option condition"} ${optionLetter}` : `${es ? "Añadir condición a opción" : "Add option condition"} ${optionLetter}`} title={option.logicSummary?.warningCount ? (es ? "Revisar la condición de esta opción" : "Review this option's condition") : option.logicSummary?.when ? (es ? "Editar condición de esta opción" : "Edit this option's condition") : (es ? "Añadir condición a esta opción" : "Add a condition to this option")} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("conditions", { type: "node", id: option.handleId }); }}><GitBranch size={12} aria-hidden="true" /></button>
-                  <button type="button" className={`decision-option-interaction nodrag nopan${option.interactionCards?.length ? " configured" : ""}`} aria-label={option.interactionCards?.length ? `${es ? "Editar interacción de opción" : "Edit option interaction"} ${optionLetter}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} title={option.interactionCards?.length ? `${es ? "Interacciones de opción" : "Option interactions"} ${optionLetter}: ${option.interactionCards.map(card => `${({ before: es ? "Antes" : "Before", during: es ? "Durante" : "During", after: es ? "Después" : "After" })[card.moment]} · ${card.name} · ${card.mechanic?.kind ?? ""}`).join("; ")}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("interactions", { type: "node", id: option.handleId }); }}><D20Icon size={13} />{(option.interactionCards?.length ?? 0) > 1 ? <span className="decision-option-interaction-count" aria-hidden="true">{option.interactionCards!.length}</span> : null}</button>
-                </> : null}
+                {nodeData.canvasLayerMode === "logic" || option.logicSummary?.when ? <button type="button" className={`decision-option-condition nodrag nopan${option.logicSummary?.when ? " configured" : ""}${option.logicSummary?.warningCount ? " has-warning" : ""}`} aria-label={option.logicSummary?.warningCount ? `${es ? "Revisar condición de opción" : "Review option condition"} ${optionLetter}` : option.logicSummary?.when ? `${es ? "Editar condición de opción" : "Edit option condition"} ${optionLetter}` : `${es ? "Añadir condición a opción" : "Add option condition"} ${optionLetter}`} title={option.logicSummary?.warningCount ? (es ? "Revisar la condición de esta opción" : "Review this option's condition") : option.logicSummary?.when ? (es ? "Editar la condición de esta opción" : "Edit this option's condition") : (es ? "Añadir condición a esta opción" : "Add a condition to this option")} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("conditions", { type: "node", id: option.handleId }); }}><GitBranch size={12} aria-hidden="true" /></button> : null}
+                {nodeData.canvasLayerMode === "logic" || option.interactionCards?.length ? <button type="button" className={`decision-option-interaction nodrag nopan${option.interactionCards?.length ? " configured" : ""}`} aria-label={option.interactionCards?.length ? `${es ? "Editar interacción de opción" : "Edit option interaction"} ${optionLetter}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} title={option.interactionCards?.length ? `${es ? "Interacciones de opción" : "Option interactions"} ${optionLetter}: ${option.interactionCards.map(card => `${({ before: es ? "Antes" : "Before", during: es ? "Durante" : "During", after: es ? "Después" : "After" })[card.moment]} · ${card.name} · ${card.mechanic?.kind ?? ""}`).join("; ")}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("interactions", { type: "node", id: option.handleId }); }}><D20Icon size={13} />{(option.interactionCards?.length ?? 0) > 1 ? <span className="decision-option-interaction-count" aria-hidden="true">{option.interactionCards!.length}</span> : null}</button> : null}
                 {decisionEditor && editingDecisionOptionId === option.id ? (
                   <div className="decision-option-editor-popover nodrag nopan">
                     <div className="decision-option-editor-header">
@@ -1481,32 +1581,19 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
             <div className="speech-beat-menu-anchor nodrag nopan" onPointerDown={stopCanvasInteraction}>
               <SpeakerSelector
                 value={speakerRef}
+                variantId={selectedVariantId}
+                selectVariant
                 displayLabel={speakerDisplayName}
                 options={speakerOptions}
                 presentEntityIds={quickEditor?.presentEntityIds ?? []}
-                onChange={(characterId) => {
-                  quickEditor?.onCharacterUpdate(characterId);
+                onChange={(characterId, variantId) => {
+                  quickEditor?.onCharacterUpdate(characterId, variantId);
                 }}
                 onCreateSpeaker={quickEditor?.onCreateSpeaker}
                 onClose={() => setOpenBeatMenu(false)}
                 onCanvasInteraction={stopCanvasInteraction}
               />
             </div>
-            {selectedSpeaker && selectedSpeaker.variants.length > 1 ? (
-              <label className="speech-beat-variant nodrag nopan">
-                <select
-                  value={selectedVariantId}
-                  onPointerDown={stopCanvasInteraction}
-                  onChange={(event) => quickEditor?.onCharacterVariantUpdate?.(event.target.value)}
-                >
-                  {selectedSpeaker.variants.map((variant) => (
-                    <option key={variant.id} value={variant.id}>
-                      {variant.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
           </div> : null}
           <div
             className={`speech-beat-dialogue nodrag nopan${textCounter ? " has-counter" : ""}`}

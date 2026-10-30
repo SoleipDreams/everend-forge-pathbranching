@@ -1,11 +1,17 @@
 import { useApplicationEffect } from "./useApplicationActivity.js";
-import { BookOpen, ChevronDown, ChevronRight, CircleDot, FileImage, FileText, Film, FolderUp, MapPin, MoreHorizontal, Music, Package, Plus, Search, Trash2, UserRound, X } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, CircleDot, FileImage, FileText, Film, FolderUp, MapPin, MoreHorizontal, Music, Package, Plus, Search, Trash2, UserRound, X } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { Selection } from "../appTypes.js";
 import type { AssetKind, BranchingProject, CanonRef, LocalExplorerEntity, ProjectAsset, ProjectDataObject } from "../domain.js";
 import { ExplorerMenu, ExplorerPane, useExplorerOverlayBounds } from "./ExplorerPresentation.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
 import { AccessibleTabs } from "./AccessibleTabs.js";
+import { InteractionLibraryPanel } from './InteractionLibraryPanel.js';
+import { InteractionUsesPanel } from './InteractionUsesPanel.js';
+import { CharacterSheetsPanel, type CharacterSheetsPanelProps } from './CharacterSheetsPanel.js';
+import { ItemCatalogPanel } from './ItemCatalogPanel.js';
+import { useItemCatalog } from './ItemCatalogContext.js';
+import { useInteractionAuthoringContext } from './InteractionAuthoringContext.js';
 import { panelUiText, useInterfaceLocale } from "../i18n.js";
 import { useOverlayFocus } from "./useOverlayFocus.js";
 
@@ -48,7 +54,10 @@ function explorerIconFor(type: string): ComponentType<{ size?: number }> {
 
 function explorerRows(project: BranchingProject): ExplorerRow[] {
   return [
-    ...project.canonRefs.map((ref) => ({ kind: "canon" as const, id: ref.id, type: ref.kind ?? "canon", label: ref.label ?? ref.id, search: [ref.id, ref.label, ref.kind, ...(ref.aliases ?? []), ...(ref.tags ?? [])].filter(Boolean).join(" ").toLowerCase(), source: "Canon" as const, value: ref, parentId: ref.parentId })),
+    ...project.canonRefs
+      // A stale folderDescription flag must not hide a typed canon entity.
+      .filter((ref) => ref.kind !== "folder-description" && !(ref.missingIdentity && ref.folderDescription))
+      .map((ref) => ({ kind: "canon" as const, id: ref.id, type: ref.kind ?? "canon", label: ref.label ?? ref.id, search: [ref.id, ref.label, ref.kind, ...(ref.aliases ?? []), ...(ref.tags ?? [])].filter(Boolean).join(" ").toLowerCase(), source: "Canon" as const, value: ref, parentId: ref.parentId })),
     ...(project.localExplorerEntities ?? []).map((entity) => ({ kind: "local" as const, id: entity.id, type: entity.type, label: entity.name, search: [entity.id, entity.name, entity.type, ...(entity.aliases ?? []), ...(entity.tags ?? [])].filter(Boolean).join(" ").toLowerCase(), source: (entity.publishedPath ? "Published" : "Local") as "Local" | "Published", value: entity })),
     ...(project.projectDataObjects ?? []).map((data) => ({ kind: "data" as const, id: data.id, type: `data:${data.classId}`, label: data.name, search: [data.id, data.name, data.classId, ...(data.tags ?? [])].filter(Boolean).join(" ").toLowerCase(), source: "Project Data" as const, value: data })),
   ];
@@ -84,12 +93,17 @@ export function AssetsPanel({
   onCollapsedChange,
   onContextMenu,
   onImport,
+  onImportInteractionImage,
   selected,
   onSelect,
   onOpenInspector,
   onCreateEntity,
   onDeleteEntity,
   onInitializeProperties,
+  onUpdateProject,
+  currentEventId,
+  currentDialogueId,
+  characterSheets,
 }: {
   project: BranchingProject;
   propertiesConfig?: Record<string, unknown>;
@@ -97,20 +111,35 @@ export function AssetsPanel({
   onCollapsedChange: (collapsed: boolean) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
   onImport: () => void;
+  onImportInteractionImage: () => Promise<ProjectAsset[]>;
   selected?: Selection;
   onSelect: (selection: Selection) => void;
   onOpenInspector: (selection: Selection) => void;
   onCreateEntity: (type: string, name: string) => void;
   onDeleteEntity: (id: string) => void;
   onInitializeProperties?: () => void;
+  onUpdateProject: (project: BranchingProject) => void;
+  currentEventId?: string;
+  currentDialogueId?: string;
+  characterSheets?: Omit<CharacterSheetsPanelProps, 'project' | 'context'>;
 }) {
   const locale = useInterfaceLocale();
   const t = (text: string) => panelUiText(locale, text);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<AssetKind | "all">("all");
   const [origin, setOrigin] = useState<"all" | ProjectAsset["origin"]>("all");
-  const [view, setView] = useState<"entities" | "files">("entities");
-  const [itemFilter, setItemFilter] = useState<"all" | "canon" | "local" | "data">("all");
+  const [view, setView] = useState<"entities" | "sheets" | "items" | "interactions" | "files">("entities");
+  const itemCatalog = useItemCatalog();
+  useEffect(() => { if (view === 'items') void itemCatalog?.refresh(); }, [view]);
+  const [interactionTab, setInteractionTab] = useState<'mechanics' | 'uses'>('mechanics');
+  const interactionAuthoring = useInteractionAuthoringContext();
+  useEffect(() => {
+    if (interactionAuthoring?.libraryEditor?.projectId === project.projectId) { setView('interactions'); setInteractionTab('mechanics'); }
+  }, [interactionAuthoring?.libraryEditor?.revision]);
+  useEffect(() => {
+    if (view === 'interactions') void interactionAuthoring?.refreshLibrary?.();
+  }, [view]);
+  const [itemFilter, setItemFilter] = useState<"all" | "canon" | "local">("all");
   const [newEntityType, setNewEntityType] = useState("concept");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const [actionsForId, setActionsForId] = useState<{ id: string; top: number; left: number } | undefined>();
@@ -131,7 +160,22 @@ export function AssetsPanel({
     [deferredQuery, kind, origin, project.assets],
   );
   const allExplorerRows = useMemo(() => explorerRows(project), [project]);
-  const propertyTypeMap = useMemo(() => new Map((project.localExplorerProperties ?? []).filter((prop) => prop.valueType === "entity-type").map((prop) => [prop.id, prop.label])), [project.localExplorerProperties]);
+  const propertyTypeMap = useMemo(() => {
+    const labels = new Map<string, string>();
+    (project.localExplorerProperties ?? [])
+      .filter((prop) => prop.valueType === "entity-type")
+      .forEach((prop) => {
+        labels.set(prop.id, prop.label);
+        // Older migrations could prefix an already-prefixed local type twice.
+        if (prop.id.startsWith("type:type:")) {
+          labels.set(prop.id.slice("type:".length), prop.label);
+        }
+      });
+    (project.localExplorerTypes ?? []).forEach((type) => {
+      if (!labels.has(type.id)) labels.set(type.id, type.label);
+    });
+    return labels;
+  }, [project.localExplorerProperties, project.localExplorerTypes]);
   const explorerTypes = useMemo(() => Array.from(new Set(["concept", ...allExplorerRows.filter((row) => row.kind !== "data").map((row) => row.type), ...(project.localExplorerTypes ?? []).map((type) => type.id), ...(project.localExplorerProperties ?? []).filter((prop) => prop.valueType === "entity-type").map((prop) => prop.id)])).sort((left, right) => {
     const labelLeft = propertyTypeMap.get(left) || left;
     const labelRight = propertyTypeMap.get(right) || right;
@@ -139,24 +183,12 @@ export function AssetsPanel({
   }), [allExplorerRows, project.localExplorerTypes, project.localExplorerProperties, propertyTypeMap]);
   const explorerGroups = useMemo(() => {
     const grouped = new Map<string, ExplorerRow[]>();
-    const canonById = new Map(project.canonRefs.map((ref) => [ref.id, ref]));
-    const rootCanonType = (ref: CanonRef) => {
-      let current = ref;
-      const seen = new Set<string>();
-      while (current.parentId && !seen.has(current.id)) {
-        seen.add(current.id);
-        const parent = canonById.get(current.parentId);
-        if (!parent) break;
-        current = parent;
-      }
-      return current.kind ?? ref.kind ?? "canon";
-    };
     allExplorerRows.filter((row) => (itemFilter === "all" || row.kind === itemFilter) && (!deferredQuery || row.search.includes(deferredQuery))).forEach((row) => {
       let group: string;
       if (row.kind === "data") {
         group = `Project Data · ${row.type.replace(/^data:/, "")}`;
       } else if (row.kind === "canon") {
-        group = displayType(rootCanonType(row.value));
+        group = displayType(row.value.kind ?? "canon");
       } else {
         // Check if this type is an entity-type property
         group = propertyTypeMap.get(row.type) || displayType(row.type);
@@ -170,7 +202,7 @@ export function AssetsPanel({
       }
     });
     return Array.from(grouped.entries()).sort(([left], [right]) => left.localeCompare(right));
-  }, [allExplorerRows, deferredQuery, itemFilter, project.canonRefs, project.localExplorerProperties, propertyTypeMap]);
+  }, [allExplorerRows, deferredQuery, itemFilter, project.localExplorerProperties, propertyTypeMap]);
 
   useEffect(() => {
     if (!isInitialized) {
@@ -220,8 +252,10 @@ export function AssetsPanel({
     };
   }, [actionsForId]);
 
-  const expandAllAssets = () => setCollapsedGroups(new Set());
-  const collapseAllAssets = () => setCollapsedGroups(new Set(explorerGroups.map(([group]) => group)));
+  const hasExpandedGroups = explorerGroups.some(([group]) => !collapsedGroups.has(group));
+  const toggleAllAssets = () => setCollapsedGroups(
+    hasExpandedGroups ? new Set(explorerGroups.map(([group]) => group)) : new Set(),
+  );
 
   const handleCreateEntity = () => {
     const trimmedName = newEntityName.trim();
@@ -257,11 +291,30 @@ export function AssetsPanel({
 
   return (
     <WorkspaceSidePanel title={t("Assets")} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
-      <AccessibleTabs className="explorer-view-tabs" ariaLabel={t("Asset views")} value={view} onChange={(value) => setView(value as "entities" | "files")} tabs={[{id:"entities",label:t("Entities")},{id:"files",label:t("Files")}]} />
+      <AccessibleTabs className="explorer-view-tabs resources-view-tabs" ariaLabel={t("Asset views")} value={view} onChange={(value) => setView(value as typeof view)} tabs={[
+        { id: 'entities', label: t('Entities') },
+        { id: 'sheets', label: locale === 'es' ? 'Fichas de Personajes' : 'Character Sheets' },
+        { id: 'items', label: locale === 'es' ? 'Catálogo de ítems' : 'Item catalog' },
+        { id: 'interactions', label: locale === 'es' ? 'Interacciones' : 'Interactions' },
+        { id: 'files', label: t('Files') },
+      ]} />
+      <ExplorerPane active={view === 'sheets'}>
+        <CharacterSheetsPanel project={project} context={{ eventId: currentEventId, dialogueId: currentDialogueId }} {...characterSheets} />
+      </ExplorerPane>
+      <ExplorerPane active={view === 'items'}><ItemCatalogPanel project={project} onUpdate={onUpdateProject} /></ExplorerPane>
+      <ExplorerPane active={view === 'interactions'}>
+        <AccessibleTabs className="explorer-view-tabs interaction-view-tabs" ariaLabel={locale === 'es' ? 'Vistas de interacciones' : 'Interaction views'} value={interactionTab} onChange={value => setInteractionTab(value as typeof interactionTab)} tabs={[
+          { id: 'mechanics', label: locale === 'es' ? 'Mecánicas' : 'Mechanics' },
+          { id: 'uses', label: locale === 'es' ? 'Usos en la historia' : 'Story uses' },
+        ]} />
+        {interactionAuthoring?.libraryError ? <p role="alert" className="authoring-field-error">{interactionAuthoring.libraryError}</p> : null}
+        {interactionTab === 'mechanics' && interactionAuthoring && !interactionAuthoring.libraryError ? <InteractionLibraryPanel library={interactionAuthoring.library} project={project} onChange={interactionAuthoring.onLibraryChange ?? (() => undefined)} onImportImage={onImportInteractionImage} request={interactionAuthoring.libraryEditor?.projectId === project.projectId ? interactionAuthoring.libraryEditor : undefined} /> : null}
+        {interactionTab === 'uses' ? <InteractionUsesPanel project={project} currentEventId={currentEventId} onUpdate={onUpdateProject} onInspect={id => onOpenInspector({ type: 'node', id })} /> : null}
+      </ExplorerPane>
       <ExplorerPane active={view === "entities"}>
           <div className="explorer-toolbar">
             <label className="explorer-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t("Search entities")} placeholder={t("Search entities")} /></label>
-            <button type="button" aria-label={t("New local entity")} title={t("New local entity")} onClick={(event) => {
+            <button type="button" className="explorer-toolbar-action" aria-label={t("New local entity")} title={t("New local entity")} onClick={(event) => {
               if (createEntityMenu) {
                 setCreateEntityMenu(undefined);
                 return;
@@ -276,10 +329,9 @@ export function AssetsPanel({
                 left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
               });
             }}><Plus size={15} /></button>
-            <button type="button" aria-label={t("Expand all entities")} title={t("Expand all entities")} onClick={expandAllAssets}><ChevronDown size={15} /></button>
-            <button type="button" aria-label={t("Collapse all entities")} title={t("Collapse all entities")} onClick={collapseAllAssets}><ChevronRight size={15} /></button>
+            <button type="button" className="explorer-toolbar-action" aria-label={t(hasExpandedGroups ? "Collapse all entities" : "Expand all entities")} title={t(hasExpandedGroups ? "Collapse all entities" : "Expand all entities")} onClick={toggleAllAssets}><span className="sr-only">{t(hasExpandedGroups ? "Collapse all entities" : "Expand all entities")}</span>{hasExpandedGroups ? <ChevronsUp size={15} /> : <ChevronsDown size={15} />}</button>
           </div>
-          <AccessibleTabs className="explorer-filter-row" ariaLabel={t("Entity origin filter")} value={itemFilter} onChange={(value) => setItemFilter(value as typeof itemFilter)} tabs={(["all", "canon", "local", "data"] as const).map((id) => ({id,label:t(id === "all" ? "All" : id === "data" ? "Data" : id === "canon" ? "Canon" : "Local")}))} />
+          <AccessibleTabs className="explorer-filter-row" ariaLabel={t("Entity origin filter")} value={itemFilter} onChange={(value) => setItemFilter(value as typeof itemFilter)} tabs={(["all", "local", "canon"] as const).map((id) => ({id,label:t(id === "all" ? "All" : id === "canon" ? "Canon" : "Local")}))} />
           <div className="explorer-tree asset-explorer-tree">
             {explorerGroups.map(([group, rows]) => {
               const expanded = !collapsedGroups.has(group);

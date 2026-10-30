@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 const core = path.resolve(process.env.EVEREND_CORE_OUTPUT ?? "lib");
 const { STORAGE_VERSION, loadPathBranchingWorkspace, serializeModularStoryFiles, serializePathBranchingManifest, storyPath, sequencePath, eventPath, eventEvpathPath } = await import(pathToFileURL(path.join(core, "pathBranchingWorkspace.js")));
 const { normalizeProject } = await import(pathToFileURL(path.join(core, "projectSerialization.js")));
-const { universeBatchFiles, saveUniverseStory } = await import(pathToFileURL(path.join(core, "projectPersistence.js")));
+const { universeBatchFiles, obsoleteSequenceSidecarPaths, saveUniverseStory } = await import(pathToFileURL(path.join(core, "projectPersistence.js")));
 
 const story = { id: "storage-test", name: "Authoring Storage", path: storyPath("storage-test") };
 const canon = { relativePath: "Canon/key.md", content: "---\nid: key\ntype: item\nname: Key\n---\n# Key\n" };
@@ -91,6 +91,25 @@ try {
   assert.equal(textBaseline.expectedContent, files.find((file) => file.relativePath === textBaseline.relativePath).content, "canonical text participates in exact conflict detection");
   const newBaseline = universeBatchFiles([], [{ relativePath: "new.json", content: "{}" }]);
   assert.equal(newBaseline[0].expectedExists, false);
+  const staleSequenceRoot = ".everend/.pathbranching/stories/storage-test/sequences/removed";
+  const staleFiles = [
+    { relativePath: `${staleSequenceRoot}/sequence.json`, content: "{}" },
+    { relativePath: `${staleSequenceRoot}/events/old.json`, content: "{}" },
+    { relativePath: `${staleSequenceRoot}/events/old.evpath`, content: "" },
+    { relativePath: `${staleSequenceRoot}/branches/old.json`, content: "{}" },
+    { relativePath: `${staleSequenceRoot}/custom/keep.json`, content: "{}" },
+    { relativePath: ".everend/.pathbranching/stories/another-story/sequences/removed/events/keep.json", content: "{}" },
+  ];
+  const removedSequenceOutput = serializeModularStoryFiles({ ...project, sequences: [], events: [], branches: [] }, story);
+  const obsolete = obsoleteSequenceSidecarPaths(staleFiles, removedSequenceOutput, story.id);
+  assert.deepEqual(obsolete, [
+    `${staleSequenceRoot}/sequence.json`,
+    `${staleSequenceRoot}/events/old.json`,
+    `${staleSequenceRoot}/events/old.evpath`,
+    `${staleSequenceRoot}/branches/old.json`,
+  ], "removing a sequence should delete its modular sidecars without touching unrelated files");
+  const deletions = universeBatchFiles(staleFiles, [], obsolete);
+  assert.ok(deletions.every((file) => file.delete && file.expectedExists && file.expectedContent !== undefined));
   const withoutCanon = loadPathBranchingWorkspace(files.filter((file) => file.relativePath !== canon.relativePath));
   assert.ok(withoutCanon.activeProject.canonRefs.some((ref) => ref.id === "key"), "missing canon must remain diagnosable");
   console.log("Authoring storage 0.5: metadata, disk reopen, compatibility, corruption guards and all-file conflict baselines passed.");

@@ -23,6 +23,12 @@ const portNodes = [
 for (const [id, eventId] of [['entry', 'event:previous'], ['exit', 'event:next'], ['restart', 'event:current'], ['sequence-entry', 'event:current']]) {
   assert.deepEqual(canvasInspectorTarget(portProject, { type: 'node', id }, portNodes), { type: 'node', id: eventId }, 'Inspect semantic event references even when route source is a nested object.');
 }
+assert.equal(canvasInspectorTarget(portProject, { type: 'edge', id: 'edge:transition:route:incoming' }, portNodes), undefined, 'Transition lines have no inspector.');
+const optionProject = normalizeProject({ ...moduleDocument, events: [{id:'e',name:'E',type:'normal',decisions:[{id:'d',name:'Decisiones 1',type:'dialogue',outcomes:[{id:'a',name:'A',visibleText:'Open the door'},{id:'b',name:'B',visibleText:'Wait'}]}]}] });
+const optionTarget = {type:'node',id:'outcome:e:d:a'};
+assert.deepEqual(canvasInspectorTarget(optionProject, optionTarget, []), optionTarget, 'Options open their own inspector instead of redirecting to the decision.');
+assert.deepEqual(narrativeInspectorModules(optionProject, optionTarget.id).map(module => module.id), ['content','conditions','consequences','interactions','connections']);
+assert.deepEqual(narrativeInspectorModules(optionProject, 'decision:e:d').map(module => module.id), ['decisionSettings','narrativeDecision','connections']);
 assert.equal(canvasInspectorTarget(portProject, { type: 'node', id: 'start:sequence' }, portNodes), undefined);
 assert.equal(canvasInspectorTarget(portProject, { type: 'node', id: 'broken' }, portNodes), undefined, 'An unresolved reference must not silently inspect its owner.');
 assert.deepEqual(canvasInspectorTarget(portProject, { type: 'node', id: 'event:current' }, portNodes), { type: 'node', id: 'event:current' });
@@ -33,7 +39,7 @@ const interactionModules = narrativeInspectorModules(interactionDocument, 'exist
 assert.equal(interactionModules.find(module => module.id === 'interactions')?.hasContent, true);
 assert.ok(resolveInspectorModulePreferences(interactionModules).visible.includes('interactions'), 'Existing interactions expose their dedicated section by default.');
 assert.equal(narrativeInspectorModules(interactionDocument, 'dialogue:existing:dialogue').find(module => module.id === 'interactions')?.hasContent, true, 'A dialogue exposes interactions belonging to its scope.');
-assert.deepEqual(narrativeInspectorModules(interactionDocument, 'interaction:existing:use').map(module => module.id), ['overview', 'connections'], 'An interaction node has configuration and connections without a duplicate interaction section.');
+assert.deepEqual(narrativeInspectorModules(interactionDocument, 'interaction:existing:use').map(module => module.id), ['overview', 'consequences', 'connections'], 'An interaction node keeps configuration, result consequences and connections in separate inspector tabs.');
 assert.deepEqual(resolveInspectorModulePreferences(emptyModules), { visible: ['overview', 'connections'], active: 'overview' });
 const existingModules = narrativeInspectorModules(moduleDocument, 'existing');
 assert.deepEqual(resolveInspectorModulePreferences(existingModules).visible, ['overview', 'connections', 'path']);

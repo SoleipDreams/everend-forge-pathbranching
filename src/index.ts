@@ -29,6 +29,8 @@ export * from "./conditionEditing.js";
 
 export * from "./authoringEngine.js";
 export * from "./authoringEntities.js";
+export * from './itemCatalog.js';
+export * from './inventoryModifiers.js';
 export * from "./authoringDrafts.js";
 
 export * from './interactions.js';

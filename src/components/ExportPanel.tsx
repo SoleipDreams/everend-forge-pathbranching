@@ -174,7 +174,7 @@ function ExportPanelContent({ project, collapsed, onCollapsedChange, onContextMe
   const cardProps = { locale, onPreview, onExport, onLocateDiagnostic };
   const globalDiagnostics = useMemo(() => previewResult.error ? [presentDiagnostic(project, { message: previewResult.error }, locale)] : [], [project, previewResult.error, locale]);
   const inkDiagnostics = useMemo(() => preview?.inkExport.diagnostics?.map((diagnostic) => presentDiagnostic(project, diagnostic, locale)) ?? globalDiagnostics, [project, preview, locale, globalDiagnostics]);
-  const interactionDiagnostics = useMemo(() => modularExportDiagnostics(project).filter(d => d.feature === 'interactions-v1').map(d => presentDiagnostic(project, d, locale)), [project, locale]);
+  const interactionDiagnostics = useMemo(() => modularExportDiagnostics(project).filter(d => ['interactions-v1', 'contextual-dice-v1', 'compound-dice-v1', 'opposed-interactions-v1'].includes(d.feature)).map(d => presentDiagnostic(project, d, locale)), [project, locale]);
   return <WorkspaceSidePanel onboardingTarget="pathbranching.export" title={c.title} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
     <div className="explorer-view-tabs export-view-tabs" role="tablist" aria-label={c.tabs}>
       <button id={`${id}-export-tab`} ref={exportTabRef} type="button" role="tab" tabIndex={tab === "export" ? 0 : -1} aria-selected={tab === "export"} aria-controls={`${id}-export-view`} className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} onKeyDown={tabKey}>{c.export}</button>

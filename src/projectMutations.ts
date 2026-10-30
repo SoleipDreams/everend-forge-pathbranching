@@ -1,6 +1,7 @@
 import type {
   Branch,
   BranchingProject,
+  CanvasNodeAuthoringState,
   CanonEditSuggestion,
   ConditionInput,
   Consequence,
@@ -956,23 +957,16 @@ export function deleteDecision(
   if (!event) {
     return { project, message: "Event not found." };
   }
-  const transitionUsesDecision = project.events.some((item) =>
-    item.transitions?.some((transition) =>
-      transition.from.includes(decisionId),
-    ),
-  );
-  if (transitionUsesDecision) {
-    return {
-      project,
-      message: "Decision deletion is blocked while transitions reference it.",
-    };
-  }
   const removedNodeIds = new Set([
     `decision:${eventId}:${decisionId}`,
     ...(event.decisions
       ?.find((decision) => decision.id === decisionId)
       ?.outcomes ?? [])
       .map((outcome) => `outcome:${eventId}:${decisionId}:${outcome.id}`),
+  ]);
+  const removedProgressTargets = new Set([
+    decisionId,
+    ...(event.decisions?.find((item) => item.id === decisionId)?.outcomes ?? []).map((outcome) => outcome.id),
   ]);
   const updated = updateEvent(project, eventId, {
     decisions: (event.decisions ?? []).filter(
@@ -986,18 +980,58 @@ export function deleteDecision(
       members: (dialogue.members ?? []).filter((member) => !(member.kind === "decision" && member.id === decisionId)),
     })),
   });
+  const withoutRoutes: BranchingProject = {
+    ...updated.project,
+    events: updated.project.events.map((item) => ({
+      ...item,
+      transitions: item.transitions?.filter(
+        (transition) =>
+          !removedNodeIds.has(transition.from) &&
+          !removedNodeIds.has(transition.to) &&
+          !referencesProgressTarget(transition, removedProgressTargets),
+      ),
+    })),
+  };
   return {
     ...updated,
-    project: {
-      ...updated.project,
-      events: updated.project.events.map((item) => ({
-        ...item,
-        transitions: item.transitions?.filter(
-          (transition) =>
-            !removedNodeIds.has(transition.from) &&
-            !removedNodeIds.has(transition.to),
-        ),
-      })),
+    project: pruneDanglingNarrativeMetadata(removeCanvasNodeReferences(withoutRoutes, removedNodeIds)),
+  };
+}
+
+function referencesProgressTarget(value: unknown, targetIds: ReadonlySet<string>): boolean {
+  if (Array.isArray(value)) return value.some((item) => referencesProgressTarget(item, targetIds));
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (
+    (item.type === "visited" && (item.targetType === "decision" || item.targetType === "outcome") &&
+      typeof item.targetId === "string" && targetIds.has(item.targetId)) ||
+    (item.kind === "progress" && (item.targetType === "decision" || item.targetType === "outcome") &&
+      typeof item.targetId === "string" && targetIds.has(item.targetId))
+  ) return true;
+  return Object.values(item).some((child) => referencesProgressTarget(child, targetIds));
+}
+
+/** Remove persisted layout and routing hints for nodes that no longer exist. */
+export function removeCanvasNodeReferences(project: BranchingProject, nodeIds: ReadonlySet<string>): BranchingProject {
+  if (!project.canvas || nodeIds.size === 0) return project;
+  const canvas = project.canvas;
+  const filterNodes = (nodes: typeof canvas.nodes) => nodes
+    ? Object.fromEntries(Object.entries(nodes).filter(([id]) => !nodeIds.has(id)))
+    : undefined;
+  const scopes = canvas.scopes
+    ? Object.fromEntries(Object.entries(canvas.scopes).map(([key, scope]) => [key, {
+        ...scope,
+        nodes: filterNodes(scope.nodes),
+        routeGateSources: scope.routeGateSources?.filter((id) => !nodeIds.has(id)),
+      }]))
+    : undefined;
+  return {
+    ...project,
+    canvas: {
+      ...canvas,
+      nodes: filterNodes(canvas.nodes),
+      routeGateSources: canvas.routeGateSources?.filter((id) => !nodeIds.has(id)),
+      ...(scopes ? { scopes } : {}),
     },
   };
 }
@@ -1049,6 +1083,40 @@ export function updateOutcome(
   });
 }
 
+export type OutcomeDropPosition = "before" | "after";
+
+/** Reorder decision options while keeping their stable IDs and connected routes intact. */
+export function reorderOutcomeList<T extends { id: string }>(
+  outcomes: T[],
+  outcomeId: string,
+  targetOutcomeId: string,
+  position: OutcomeDropPosition = "before",
+): T[] {
+  const sourceIndex = outcomes.findIndex((outcome) => outcome.id === outcomeId);
+  const targetIndex = outcomes.findIndex((outcome) => outcome.id === targetOutcomeId);
+  if (sourceIndex < 0 || targetIndex < 0 || outcomeId === targetOutcomeId) return outcomes;
+  const reordered = [...outcomes];
+  const [moved] = reordered.splice(sourceIndex, 1);
+  const adjustedTargetIndex = reordered.findIndex((outcome) => outcome.id === targetOutcomeId);
+  const insertionIndex = adjustedTargetIndex + (position === "after" ? 1 : 0);
+  reordered.splice(insertionIndex, 0, moved);
+  return reordered;
+}
+
+export function reorderOutcome(
+  project: BranchingProject,
+  eventId: string,
+  decisionId: string,
+  outcomeId: string,
+  targetOutcomeId: string,
+  position: OutcomeDropPosition = "before",
+): MutationResult {
+  const decision = findEvent(project, eventId)?.decisions?.find((item) => item.id === decisionId);
+  if (!decision) return { project, message: "Decision not found." };
+  const outcomes = reorderOutcomeList(decision.outcomes, outcomeId, targetOutcomeId, position);
+  return outcomes === decision.outcomes ? { project } : updateDecision(project, eventId, decisionId, { outcomes });
+}
+
 export function deleteOutcome(
   project: BranchingProject,
   eventId: string,
@@ -1060,21 +1128,74 @@ export function deleteOutcome(
   if (!event || !decision) {
     return { project, message: "Decision not found." };
   }
-  const outcomeNodeIdPrefix = `outcome:${eventId}:${decisionId}:${outcomeId}`;
-  const transitionUsesOutcome = project.events.some((item) =>
-    item.transitions?.some(
-      (transition) => transition.from === outcomeNodeIdPrefix,
-    ),
+  const outcome = decision.outcomes.find((item) => item.id === outcomeId);
+  if (!outcome) return { project, message: "Outcome not found." };
+
+  const outcomeNodeId = `outcome:${eventId}:${decisionId}:${outcomeId}`;
+  const removedUseIds = new Set(
+    (event.interactionUses ?? [])
+      .filter((use) => use.ownerNodeId === outcomeNodeId)
+      .map((use) => use.id),
   );
-  if (transitionUsesOutcome) {
-    return {
-      project,
-      message: "Outcome deletion is blocked while transitions reference it.",
-    };
-  }
-  return updateDecision(project, eventId, decisionId, {
+  const removedDefinitionIds = new Set(
+    (event.interactionUses ?? [])
+      .filter((use) => removedUseIds.has(use.id))
+      .map((use) => use.definitionId),
+  );
+  const removedBarrierIds = new Set(
+    (event.interactionBarriers ?? [])
+      .filter((barrier) => barrier.useIds.length > 0 && barrier.useIds.every((id) => removedUseIds.has(id)))
+      .map((barrier) => barrier.id),
+  );
+  const removedNodeIds = new Set([
+    outcomeNodeId,
+    ...Array.from(removedBarrierIds, (id) => `barrier:${eventId}:${id}`),
+  ]);
+  const removedProgressTargets = new Set([outcomeId]);
+  const updated = updateDecision(project, eventId, decisionId, {
     outcomes: decision.outcomes.filter((outcome) => outcome.id !== outcomeId),
   });
+  const withoutReferences: BranchingProject = {
+    ...updated.project,
+    events: updated.project.events.map((item) => {
+      const isOwnerEvent = item.id === eventId;
+      const remainingUses = isOwnerEvent
+        ? (item.interactionUses ?? []).filter((use) => !removedUseIds.has(use.id))
+        : item.interactionUses;
+      return {
+        ...item,
+        ...(isOwnerEvent ? {
+          interactionUses: remainingUses,
+          interactionDefinitions: item.interactionDefinitions?.filter((definition) =>
+            !removedDefinitionIds.has(definition.id) || remainingUses?.some((use) => use.definitionId === definition.id),
+          ),
+          interactionBarriers: (item.interactionBarriers ?? [])
+            .filter((barrier) => !removedBarrierIds.has(barrier.id))
+            .map((barrier) => ({ ...barrier, useIds: barrier.useIds.filter((id) => !removedUseIds.has(id)) })),
+        } : {}),
+        transitions: item.transitions?.filter((transition) =>
+          !removedNodeIds.has(transition.from) &&
+          !removedNodeIds.has(transition.to) &&
+          !referencesProgressTarget(transition, removedProgressTargets) &&
+          !referencesInteractionUseReference(transition, removedUseIds),
+        ),
+        boundaryBindings: item.boundaryBindings?.filter((binding) => !removedNodeIds.has(binding.nodeId)),
+      };
+    }),
+  };
+  return {
+    ...updated,
+    project: pruneDanglingNarrativeMetadata(removeCanvasNodeReferences(withoutReferences, removedNodeIds)),
+  };
+}
+
+function referencesInteractionUseReference(value: unknown, useIds: ReadonlySet<string>): boolean {
+  if (!useIds.size) return false;
+  if (Array.isArray(value)) return value.some((item) => referencesInteractionUseReference(item, useIds));
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (item.type === "interactionResult" && typeof item.useId === "string" && useIds.has(item.useId)) return true;
+  return Object.values(item).some((child) => referencesInteractionUseReference(child, useIds));
 }
 
 export function createDialogue(
@@ -1974,6 +2095,30 @@ export function deleteTransition(
         ),
       })),
     },
+  };
+}
+
+/** Delete every authored transition owned by one visual route gate and forget its saved placement. */
+export function deleteRoutesFromSource(project: BranchingProject, eventId: string, sourceId: string): BranchingProject {
+  const gateIds = new Set([`route-gate:${eventId}:${sourceId}`, `route-gate:${sourceId}`]);
+  const cleanNodes = (nodes: Record<string, CanvasNodeAuthoringState> | undefined) =>
+    nodes ? Object.fromEntries(Object.entries(nodes).filter(([id]) => !gateIds.has(id))) : undefined;
+  const canvas = project.canvas ? {
+    ...project.canvas,
+    nodes: cleanNodes(project.canvas.nodes),
+    routeGateSources: project.canvas.routeGateSources?.filter(id => id !== sourceId),
+    scopes: project.canvas.scopes ? Object.fromEntries(Object.entries(project.canvas.scopes).map(([key, scope]) => [key, {
+      ...scope,
+      nodes: cleanNodes(scope.nodes),
+      routeGateSources: scope.routeGateSources?.filter(id => id !== sourceId),
+    }])) : undefined,
+  } : project.canvas;
+  return {
+    ...project,
+    canvas,
+    events: project.events.map(event => event.id === eventId
+      ? { ...event, transitions: event.transitions?.filter(transition => transition.from !== sourceId) }
+      : event),
   };
 }
 

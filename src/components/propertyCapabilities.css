@@ -1,0 +1,59 @@
+.property-capability-groups {
+  display: grid;
+  gap: 20px;
+  margin-block: 16px;
+  min-width: 0;
+}
+
+.property-capability-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--wn-border);
+}
+
+.property-capability-group > header {
+  display: grid;
+  gap: 4px;
+}
+
+.property-capability-group h3 {
+  margin: 0;
+  color: var(--wn-text);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.property-capability-group > header p {
+  margin: 0;
+  color: var(--wn-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.property-capability-cards {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.property-capability-cards .logic-capability-card {
+  width: 100%;
+  min-width: 0;
+}
+
+.property-capability-cards .logic-capability-card.nested {
+  width: calc(100% - 16px);
+}
+
+.property-capability-cards .logic-capability-card:focus-visible {
+  outline: 2px solid var(--wn-accent);
+  outline-offset: 2px;
+}
+
+.property-read-permission { display: grid; gap: 6px; }
+.property-permission-origin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-inline: 10px; }
+.property-permission-origin > span { flex: 1 1 160px; color: var(--wn-muted); font-size: 0.7rem; line-height: 1.5; }
+.property-permission-origin > button { border: 0; background: transparent; color: var(--wn-accent); padding: 4px 0; font-size: 0.7rem; cursor: pointer; }

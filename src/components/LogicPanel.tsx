@@ -1,24 +1,17 @@
 import { useApplicationEffect } from "./useApplicationActivity.js";
 import {
   Boxes,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Circle,
   CircleDot,
   Info,
   LockKeyhole,
-  MapPin,
-  MessageSquare,
   MoreHorizontal,
-  Package,
-  Pencil,
   Plus,
   Search,
   ShieldCheck,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -36,6 +29,7 @@ import type {
   ExplorerPropertyOption,
   LocalExplorerProperty,
   LogicPropertyOverride,
+  LogicFormats,
   LogicTypeOverride,
   LogicVariable,
   LogicVariableGroup,
@@ -44,6 +38,9 @@ import type {
 import {
   canonExplorerPropertyTypes,
   canonExplorerTypeProperty,
+  findLocalExplorerPropertyInTree,
+  flattenLocalExplorerPropertyTree,
+  isLocalExplorerSubproperty,
   flattenCanonExplorerProperties,
   propertyCapability,
   typeCapability,
@@ -52,7 +49,7 @@ import {
 import { ExplorerGroup, ExplorerPane, useExplorerOverlayBounds } from "./ExplorerPresentation.js";
 import { WorkspaceSidePanel } from "./WorkspaceSidePanel.js";
 import { AccessibleTabs } from "./AccessibleTabs.js";
-import { LogicAuthoringCatalog } from "./LogicAuthoringCatalog.js";
+import { PropertyCapabilitiesEditor } from "./PropertyCapabilitiesEditor.js";
 import { panelUiText, useInterfaceLocale } from "../i18n.js";
 import { useOverlayFocus } from "./useOverlayFocus.js";
 
@@ -64,6 +61,8 @@ const propertyTypes = [
   ["number", "Number"],
   ["boolean", "Boolean"],
   ["date", "Date"],
+  ["entity-ref", "Entity reference"],
+  ["entity-ref-list", "Entity reference list"],
   ["select", "Select"],
   ["multiselect", "Multi-select"],
   ["group", "Group (nested properties)"],
@@ -91,8 +90,7 @@ export function LogicPanel({
   onUpdateLogicPropertyOverride,
   onUpdateLogicTypeOverride,
   onDeleteLocalExplorerProperty,
-  currentEventId,
-  currentDialogueId,
+  propertyFocusRequest,
 }: {
   project: BranchingProject;
   propertiesConfig?: Record<string, unknown>;
@@ -103,8 +101,7 @@ export function LogicPanel({
   selected?: Selection;
   onSelect: (selection: Selection) => void;
   onOpenInspector: (selection: Selection) => void;
-  currentEventId?: string;
-  currentDialogueId?: string;
+  propertyFocusRequest?: { id: string; source: PropertySource; revision: number };
   onCreateProperty: (
     label: string,
     valueType: LocalExplorerProperty["valueType"],
@@ -118,6 +115,7 @@ export function LogicPanel({
       color?: string;
       suggestedFolder?: string;
     },
+    parentPropertyId?: string,
   ) => void;
   onInitializeProperties?: () => void;
   onUpdateLocalExplorerProperty: (id: string, updates: Partial<LocalExplorerProperty>) => void;
@@ -131,19 +129,28 @@ export function LogicPanel({
     source: PropertySource,
     changes: Partial<LogicTypeOverride>,
   ) => void;
-  onDeleteLocalExplorerProperty?: (id: string) => void;
+  onDeleteLocalExplorerProperty?: (id: string) => boolean | void;
   onCreateType?: () => void;
 }) {
   const locale = useInterfaceLocale();
   const t = (text: string) => panelUiText(locale, text);
-  const [tab, setTab] = useState<"properties" | "variables" | "actions" | "rules">("properties");
+  const [tab, setTab] = useState<"properties" | "variables" | "formats">("properties");
   const [propertySearch, setPropertySearch] = useState("");
-  const [collapsedCanonTypes, setCollapsedCanonTypes] = useState<Set<string>>(() => {
+  useEffect(() => {
+    if (!propertyFocusRequest) return;
+    setTab('properties');
+    setPropertySearch(propertyFocusRequest.source === 'canon'
+      ? project.canonPropertyDescriptors?.find(field => field.id === propertyFocusRequest.id)?.label ?? propertyFocusRequest.id
+      : findLocalExplorerPropertyInTree(project.localExplorerProperties, propertyFocusRequest.id)?.label ?? propertyFocusRequest.id);
+  }, [propertyFocusRequest]);
+  const [collapsedPropertyGroups, setCollapsedPropertyGroups] = useState<Set<string>>(() => {
     const canonPropertyTypes = canonExplorerPropertyTypes(propertiesConfig);
-    return new Set(canonPropertyTypes.map((type) => type.id));
+    const localProperties = flattenLocalExplorerPropertyTree(project.localExplorerProperties)
+      .map((property) => property.id);
+    return new Set([...canonPropertyTypes.map((type) => type.id), ...localProperties]);
   });
   const [propertyEditor, setPropertyEditor] = useState<PropertyEditorState>();
-  const [createPropertyMenu, setCreatePropertyMenu] = useState<{ top: number; left: number } | undefined>();
+  const [createPropertyMenu, setCreatePropertyMenu] = useState<{ top: number; left: number; parentPropertyId?: string } | undefined>();
   const [newPropertyState, setNewPropertyState] = useState<{
     label: string;
     valueType: LocalExplorerProperty["valueType"];
@@ -163,6 +170,9 @@ export function LogicPanel({
     options: [],
     targetTypes: [],
     appliesToTypes: [],
+    icon: undefined,
+    color: undefined,
+    suggestedFolder: undefined,
   });
   const editorRef = useRef<HTMLDivElement>(null);
   const createPropertyRef = useRef<HTMLDivElement | null>(null);
@@ -181,12 +191,14 @@ export function LogicPanel({
   const editingProperty = propertyEditor
     ? propertyEditor.source === "canon"
       ? canonProperties.find((property) => property.id === propertyEditor.id)
-      : localProperties.find((property) => property.id === propertyEditor.id)
+      : findLocalExplorerPropertyInTree(localProperties, propertyEditor.id)
     : undefined;
   const editingCapability = editingProperty && propertyEditor
     ? propertyCapability(project, propertyEditor.source, editingProperty.id)
     : undefined;
   const isCanonEditor = propertyEditor?.source === "canon";
+  const isLocalSubproperty = Boolean(propertyEditor?.source === "local"
+    && isLocalExplorerSubproperty(localProperties, propertyEditor.id));
   const editingTypeId = editingProperty?.id.startsWith("type:") ? editingProperty.id : undefined;
   const editingTypeCapability = editingTypeId && propertyEditor
     ? typeCapability(project, propertyEditor.source, editingTypeId)
@@ -230,6 +242,7 @@ export function LogicPanel({
 
   const updateGroups = (next: LogicVariableGroup[]) => onUpdate({ ...project, logicVariableGroups: next });
   const updateVariables = (next: LogicVariable[]) => onUpdate({ ...project, logicVariables: next });
+  const updateFormats = (changes: Partial<LogicFormats>) => onUpdate({ ...project, logicFormats: { ...project.logicFormats, ...changes } });
   const addGroup = () => updateGroups([...groups, { id: `group:${crypto.randomUUID()}`, name: `Group ${groups.length + 1}`, order: groups.length }]);
   const addVariable = (groupId: string) => updateVariables([
     ...(project.logicVariables ?? []),
@@ -237,16 +250,37 @@ export function LogicPanel({
   ]);
   const variableValue = (variable: LogicVariable) => variable.type === "list" && Array.isArray(variable.value) ? variable.value.join(", ") : String(variable.value);
   const updateVariable = (id: string, changes: Partial<LogicVariable>) => updateVariables((project.logicVariables ?? []).map((variable) => variable.id === id ? { ...variable, ...changes } : variable));
-  const toggleCanonType = (typeId: string) => setCollapsedCanonTypes((current) => {
+  const togglePropertyGroup = (propertyId: string) => setCollapsedPropertyGroups((current) => {
     const next = new Set(current);
-    if (next.has(typeId)) next.delete(typeId); else next.add(typeId);
+    if (next.has(propertyId)) next.delete(propertyId); else next.add(propertyId);
     return next;
   });
   const expandAllProperties = () => {
-    setCollapsedCanonTypes(new Set());
+    setCollapsedPropertyGroups(new Set());
   };
   const collapseAllProperties = () => {
-    setCollapsedCanonTypes(new Set(canonPropertyTypes.map((type) => type.id)));
+    setCollapsedPropertyGroups(new Set([
+      ...canonPropertyTypes.map((type) => type.id),
+      ...flattenLocalExplorerPropertyTree(localProperties).map((property) => property.id),
+    ]));
+  };
+  const revealLocalPropertyPath = (propertyId: string) => {
+    const path: string[] = [];
+    const visit = (properties: LocalExplorerProperty[]): boolean => {
+      for (const property of properties) {
+        if (property.id === propertyId) {
+          path.push(property.id);
+          return true;
+        }
+        if (property.children?.length && visit(property.children)) {
+          path.unshift(property.id);
+          return true;
+        }
+      }
+      return false;
+    };
+    if (!visit(localProperties)) return;
+    setCollapsedPropertyGroups((current) => new Set([...current].filter((id) => !path.includes(id))));
   };
 
   const clearPendingInspectorClick = () => {
@@ -268,7 +302,8 @@ export function LogicPanel({
       icon: newPropertyState.icon || undefined,
       color: newPropertyState.color || undefined,
       suggestedFolder: newPropertyState.suggestedFolder || undefined,
-    });
+    }, createPropertyMenu?.parentPropertyId);
+    if (createPropertyMenu?.parentPropertyId) revealLocalPropertyPath(createPropertyMenu.parentPropertyId);
     setCreatePropertyMenu(undefined);
     setNewPropertyState({
       label: "",
@@ -278,6 +313,9 @@ export function LogicPanel({
       options: [],
       targetTypes: [],
       appliesToTypes: [],
+      icon: undefined,
+      color: undefined,
+      suggestedFolder: undefined,
     });
   };
 
@@ -314,8 +352,46 @@ export function LogicPanel({
     onSelect({ type: "explorerProperty", id, source });
   };
 
+  const openCreatePropertyMenu = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    parentPropertyId?: string,
+  ) => {
+    event.stopPropagation();
+    if (createPropertyMenu) {
+      setCreatePropertyMenu(undefined);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const width = 340;
+    const height = 600;
+    const viewportWidth = typeof window === "undefined" ? width + 24 : window.innerWidth;
+    const viewportHeight = typeof window === "undefined" ? height + 24 : window.innerHeight;
+    setCreatePropertyMenu({
+      top: Math.max(8, Math.min(rect.bottom + 4, viewportHeight - height - 8)),
+      left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
+      ...(parentPropertyId ? { parentPropertyId } : {}),
+    });
+    setNewPropertyState((current) => ({
+      ...current,
+      label: "",
+      valueType: "text",
+      description: "",
+      required: false,
+      options: [],
+      targetTypes: [],
+      appliesToTypes: [],
+      icon: undefined,
+      color: undefined,
+      suggestedFolder: undefined,
+    }));
+  };
+
   const propertySelected = (id: string, source: PropertySource) => selected?.type === "explorerProperty" && selected.id === id && selected.source === source;
   const propertyCount = (properties: CanonExplorerProperty[]): number => properties.reduce((count, property) => count + 1 + propertyCount(property.children), 0);
+  const localPropertyCount = (properties: LocalExplorerProperty[]): number => properties.reduce(
+    (count, property) => count + 1 + localPropertyCount(property.children ?? []),
+    0,
+  );
 
   const updateLocal = (changes: Partial<LocalExplorerProperty>) => {
     if (propertyEditor?.source === "local" && editingProperty) {
@@ -348,31 +424,6 @@ export function LogicPanel({
     }
   };
   const updateOptions = (options: ExplorerPropertyOption[]) => updateLocal({ options: options.length ? options : undefined });
-
-  const renderCapabilityCard = (
-    icon: ReactNode,
-    title: string,
-    description: string,
-    checked: boolean,
-    onChange: (checked: boolean) => void,
-    nested?: boolean,
-  ) => (
-    <button
-      type="button"
-      className={`logic-capability-card${checked ? " active" : ""}${nested ? " nested" : ""}`}
-      onClick={() => onChange(!checked)}
-      aria-pressed={checked}
-    >
-      <div className="logic-capability-icon">{icon}</div>
-      <div className="logic-capability-content">
-        <strong>{t(title)}</strong>
-        <span>{t(description)}</span>
-      </div>
-      <div className="logic-capability-toggle">
-        {checked ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-      </div>
-    </button>
-  );
 
   const renderEditorOptions = () => {
     if (!editingProperty) return null;
@@ -433,98 +484,87 @@ export function LogicPanel({
     </div>
   );
 
-  const renderLocalProperty = (property: LocalExplorerProperty) => (
-    <div className="asset-explorer-tree-node" key={property.id}>
-      <div className={`explorer-entity-row ${propertySelected(property.id, "local") ? "active" : ""}`}>
-        <button
-          type="button"
-          className="explorer-entity-open"
-          title={property.label}
-          onClick={(event) => { if (event.detail === 0) onSelect({type:"explorerProperty",id:property.id,source:"local"}); }}
-          onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
-          onPointerUp={() => handlePropertyPointerUp(property.id, "local")}
-          onPointerLeave={clearPendingInspectorClick}
-        >
-          <CircleDot size={14} />
-          <span className="explorer-entity-name">{property.label}</span>
-          <em className="explorer-origin local">{t(property.valueType)}</em>
-        </button>
-        <div className="explorer-row-actions">
+  const renderLocalProperty = (property: LocalExplorerProperty, depth = 0): ReactNode => {
+    const children = property.children ?? [];
+    const count = localPropertyCount(children);
+    const hasChildren = children.length > 0;
+    const expanded = hasChildren && (Boolean(propertySearch) || !collapsedPropertyGroups.has(property.id));
+    return (
+      <div className="asset-explorer-tree-node" key={`${property.id}-${depth}`} style={{ "--asset-tree-depth": depth } as CSSProperties}>
+        <div className="logic-local-property-heading">
           <button
             type="button"
-            className="icon-only"
-            title={t("Edit property")}
-            aria-label={`${t("Edit property")}: ${property.label}`}
-            onClick={(event) => openPropertyEditor(event, property.id, "local")}
+            className="logic-property-tree-toggle"
+            disabled={!hasChildren}
+            aria-label={`${t(expanded ? "Collapse" : "Expand")} ${property.label}`}
+            aria-expanded={expanded}
+            onClick={() => togglePropertyGroup(property.id)}
           >
-            <MoreHorizontal size={15} />
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Local entity types share the same card structure as canon entity types,
-  // minus the lock and the chevron (no nested children to expand).
-  const renderLocalTypeCard = (property: LocalExplorerProperty) => (
-    <section className="explorer-type-group" key={property.id}>
-      <div className="logic-canon-type-heading">
-        <div className={`explorer-entity-row ${propertySelected(property.id, "local") ? "active" : ""}`}>
-          <button
-            type="button"
-            className="explorer-entity-open logic-canon-type-row"
-            title={property.label}
-            onClick={(event) => { if (event.detail === 0) onSelect({type:"explorerProperty",id:property.id,source:"local"}); }}
-          onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
-            onPointerUp={() => handlePropertyPointerUp(property.id, "local")}
-            onPointerLeave={clearPendingInspectorClick}
-          >
-            <CircleDot size={14} />
-            <span className="explorer-entity-name">{property.label}</span>
-          </button>
-          <div className="explorer-row-actions">
-            {renderPropertyAction(property, "local")}
+          <div className={`explorer-entity-row ${propertySelected(property.id, "local") ? "active" : ""}`}>
+            <button
+              type="button"
+              className="explorer-entity-open logic-property-tree-row"
+              title={property.label}
+              onClick={(event) => { if (event.detail === 0) onSelect({ type: "explorerProperty", id: property.id, source: "local" }); }}
+              onPointerDown={() => handlePropertyPointerDown(property.id, "local")}
+              onPointerUp={() => handlePropertyPointerUp(property.id, "local")}
+              onPointerLeave={clearPendingInspectorClick}
+            >
+              {property.valueType === "group" ? <Boxes size={14} /> : <CircleDot size={14} />}
+              <span className="explorer-entity-name">{property.label}</span>
+              <em className="explorer-origin local">{t(property.valueType)}</em>
+              <span className="logic-property-tree-count">{count}</span>
+            </button>
+            <div className="explorer-row-actions">
+              {property.valueType === "group" ? <button
+                type="button"
+                className="icon-only"
+                title={t("Add subproperty")}
+                aria-label={`${t("Add subproperty")}: ${property.label}`}
+                onClick={(event) => openCreatePropertyMenu(event, property.id)}
+              ><Plus size={14} /></button> : null}
+              {renderPropertyAction(property, "local")}
+            </div>
           </div>
         </div>
+        {expanded ? <div className="asset-explorer-tree-children">
+          {children.map((child) => renderLocalProperty(child, depth + 1))}
+        </div> : null}
       </div>
-    </section>
-  );
+    );
+  };
+
+  const localPropertyMatchesSearch = (property: LocalExplorerProperty, query: string): boolean =>
+    property.label.toLowerCase().includes(query)
+      || (property.children ?? []).some((child) => localPropertyMatchesSearch(child, query));
 
   const panelTitle = t("Logic");
+  const createParentProperty = createPropertyMenu?.parentPropertyId
+    ? findLocalExplorerPropertyInTree(localProperties, createPropertyMenu.parentPropertyId)
+    : undefined;
 
   return (
     <WorkspaceSidePanel onboardingTarget="pathbranching.logic" title={panelTitle} side="left" collapsed={collapsed} onCollapsedChange={onCollapsedChange} onContextMenu={onContextMenu}>
-      <AccessibleTabs className="explorer-view-tabs logic-view-tabs" ariaLabel={t("Logic views")} value={tab} onChange={(value) => setTab(value as typeof tab)} tabs={[{id:"properties",label:t("Properties")},{id:"variables",label:t("Variables")},{id:"actions",label:locale === "es" ? "Acciones" : "Actions"},{id:"rules",label:locale === "es" ? "Reglas" : "Rules"}]} />
+      <AccessibleTabs className="explorer-view-tabs logic-view-tabs" ariaLabel={t("Logic views")} value={tab} onChange={(value) => setTab(value as typeof tab)} tabs={[{id:"properties",label:t("Properties")},{id:"variables",label:t("Variables")},{id:"formats",label:locale === "es" ? "Formatos" : "Formats"}]} />
       <ExplorerPane active={tab === "properties"}>
           <div className="explorer-toolbar">
             <label className="explorer-search">
               <Search size={14} />
               <input value={propertySearch} onChange={(event) => setPropertySearch(event.target.value)} aria-label={t("Search properties")} placeholder={t("Search properties")} />
             </label>
-            <button type="button" title={t("Add property")} onClick={(event) => {
-              if (createPropertyMenu) {
-                setCreatePropertyMenu(undefined);
-                return;
-              }
-              const rect = event.currentTarget.getBoundingClientRect();
-              const width = 340;
-              const height = 600;
-              const viewportWidth = typeof window === "undefined" ? width + 24 : window.innerWidth;
-              const viewportHeight = typeof window === "undefined" ? height + 24 : window.innerHeight;
-              setCreatePropertyMenu({
-                top: Math.max(8, Math.min(rect.bottom + 4, viewportHeight - height - 8)),
-                left: Math.max(8, Math.min(rect.right - width, viewportWidth - width - 8)),
-              });
-            }}><Plus size={15} /></button>
+            <button type="button" title={t("Add property")} onClick={(event) => openCreatePropertyMenu(event)}><Plus size={15} /></button>
             <button type="button" title={t("Expand all properties")} onClick={expandAllProperties}><ChevronDown size={15} /></button>
             <button type="button" title={t("Collapse all properties")} onClick={collapseAllProperties}><ChevronRight size={15} /></button>
           </div>
           <div className="explorer-tree asset-explorer-tree">
             {canonPropertyTypes.map((type) => {
-              const typeExpanded = !collapsedCanonTypes.has(type.id);
+              const typeExpanded = Boolean(propertySearch) || !collapsedPropertyGroups.has(type.id);
               const count = propertyCount(type.properties);
               const typeProperty = canonExplorerTypeProperty(type);
-              const typeMatchesSearch = !propertySearch || type.label.toLowerCase().includes(propertySearch.toLowerCase());
+              const typeMatchesSearch = !propertySearch || type.label.toLowerCase().includes(propertySearch.toLowerCase())
+                || flattenCanonExplorerProperties(type.properties).some(property => property.label.toLowerCase().includes(propertySearch.toLowerCase()));
               return typeMatchesSearch ? (
                 <section className="explorer-type-group" key={type.id}>
                   <div className="logic-canon-type-heading">
@@ -532,7 +572,7 @@ export function LogicPanel({
                       type="button"
                       className="logic-canon-type-toggle"
                       aria-label={`${t(typeExpanded ? "Collapse" : "Expand")} ${type.label}`}
-                      onClick={() => toggleCanonType(type.id)}
+                      onClick={() => togglePropertyGroup(type.id)}
                     >
                       {typeExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
@@ -561,8 +601,8 @@ export function LogicPanel({
               ) : null;
             })}
             {localProperties
-              .filter((property) => !propertySearch || property.label.toLowerCase().includes(propertySearch.toLowerCase()))
-              .map((property) => property.valueType === "entity-type" ? renderLocalTypeCard(property) : renderLocalProperty(property))}
+              .filter((property) => !propertySearch || localPropertyMatchesSearch(property, propertySearch.toLowerCase()))
+              .map((property) => renderLocalProperty(property))}
             {canonPropertyTypes.length === 0 && localProperties.length === 0 ? (
               !propertiesConfig ? (
                 <div className="empty-state" style={{ padding: "16px", textAlign: "center" }}>
@@ -592,73 +632,29 @@ export function LogicPanel({
           {propertyEditor && editingProperty ? <div ref={editorRef} className="logic-property-editor" style={{ top: propertyEditor.top, left: propertyEditor.left }} role="dialog" aria-label={t(isCanonEditor ? "View imported property" : "Edit property")} aria-modal="true">
         <header className="logic-property-editor-header">
           <span className="logic-property-editor-icon">{isCanonEditor ? <LockKeyhole size={15} /> : <ShieldCheck size={15} />}</span>
-          <div><strong>{editingProperty.label}</strong><small>{t(isCanonEditor ? "Imported canon property" : "Local property")}</small></div>
+          <div><strong>{editingProperty.label}</strong><small>{t(isCanonEditor ? "Imported canon property" : isLocalSubproperty ? "Local subproperty" : "Local property")}</small></div>
           <div style={{ display: "flex", gap: "4px" }}>
-            {!isCanonEditor ? <button type="button" className="icon-only" title={t("Delete property")} aria-label={t("Delete property")} onClick={() => { onDeleteLocalExplorerProperty?.(editingProperty.id); setPropertyEditor(undefined); }}><Trash2 size={15} /></button> : null}
+            {!isCanonEditor ? <button type="button" className="icon-only" title={t("Delete property")} aria-label={t("Delete property")} onClick={() => { if (onDeleteLocalExplorerProperty?.(editingProperty.id) !== false) setPropertyEditor(undefined); }}><Trash2 size={15} /></button> : null}
             <button type="button" className="icon-only" data-overlay-focus aria-label={t("Close property editor")} onClick={() => setPropertyEditor(undefined)}><X size={15} /></button>
           </div>
         </header>
         <div className={`logic-property-protection ${isCanonEditor ? "canon" : "local"}`}><LockKeyhole size={13} />{t(isCanonEditor ? "Canon property — only capabilities can be overridden" : "Local property")}</div>
-        <div className="logic-property-capabilities">
-          <div className="logic-property-editor-subheading"><strong>{t("PathBranching capabilities")}</strong><span>{t("Configure behavior")}</span></div>
-          {(editingTypeId || editingProperty?.valueType === "entity-type") ? renderCapabilityCard(
-            <Package size={16} />,
-            "Grantable",
-            "Entities of this type can be granted/removed as a consequence and checked as a condition",
-            editingTypeCapability?.grantable ?? false,
-            (checked) => updateTypeCapability({ grantable: checked }),
-          ) : null}
-          {(editingTypeId || editingProperty?.valueType === "entity-type") ? renderCapabilityCard(
-            <MapPin size={16} />,
-            "Location",
-            "Entities of this type can be selected as an event or speech beat location",
-            editingTypeCapability?.location ?? false,
-            (checked) => updateTypeCapability({ location: checked }),
-          ) : null}
-          {renderCapabilityCard(
-            <ShieldCheck size={16} />,
-            "Available in conditions",
-            "Can be used in conditions and logic checks",
-            editingCapability?.conditionReadable ?? true,
-            (checked) => updateCapability({ conditionReadable: checked }),
-          )}
-          {renderCapabilityCard(
-            <Pencil size={16} />,
-            "Writable in actions",
-            "Can be modified by story actions",
-            editingCapability?.actionWritable ?? propertyEditor.source === "local",
-            (checked) => updateCapability({ actionWritable: checked }),
-          )}
-          {renderCapabilityCard(
-            <UserRound size={16} />,
-            "Present as entity",
-            "Values can appear as characters/items in events",
-            editingCapability?.entityPresentable ?? false,
-            (checked) => updateCapability({
-              entityPresentable: checked,
-              dialogueTrigger: checked ? editingCapability?.dialogueTrigger : false
-            }),
-          )}
-          {editingCapability?.entityPresentable ? renderCapabilityCard(
-            <MessageSquare size={16} />,
-            "Dialogue trigger source",
-            "Can start dialogue based on property value",
-            editingCapability.dialogueTrigger ?? false,
-            (checked) => updateCapability({ dialogueTrigger: checked }),
-            true,
-          ) : null}
-          <label className="field-label">{t("Can relate to")}<input value={(editingCapability?.relationTargetTypes ?? []).join(", ")} placeholder={t("character, worldbuilding")} onChange={(event) => updateCapability({ relationTargetTypes: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
-        </div>
+        <PropertyCapabilitiesEditor locale={locale} project={project} source={propertyEditor.source} propertyId={editingProperty.id} propertiesConfig={propertiesConfig}
+          descriptor={propertyEditor.source === "canon" ? editingProperty as CanonExplorerProperty : undefined}
+          isEntityType={Boolean(editingTypeId || editingProperty.valueType === "entity-type")}
+          valueType={editingProperty.valueType} property={editingCapability} entityType={editingTypeCapability}
+          onPropertyChange={updateCapability} onTypeChange={updateTypeCapability} />
         <details className="logic-property-technical-info">
-          <summary><Info size={12} /> {t("Schema fields")}</summary>
+          <summary><Info size={12} /> {locale === "es" ? "Definición" : "Definition"}</summary>
           <div className="logic-property-technical-content">
             <label className="field-label">{t("Name")}<input value={editingProperty.label} disabled={isCanonEditor} onChange={(event) => updateLocal({ label: event.target.value })} /></label>
-            <label className="field-label">{t("Value type")}<select value={editingProperty.valueType} disabled={isCanonEditor} onChange={(event) => updateLocal({ valueType: event.target.value as LocalExplorerProperty["valueType"] })}>{!propertyTypes.some(([value]) => value === editingProperty.valueType) ? <option value={editingProperty.valueType}>{editingProperty.valueType}</option> : null}{propertyTypes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
-            <label className="field-label">{t("Applies to types")}<input value={(editingProperty.appliesToTypes ?? []).join(", ")} disabled={isCanonEditor} placeholder={t("All types")} onChange={(event) => updateLocal({ appliesToTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
+            <label className="field-label">{t("Value type")}<select value={editingProperty.valueType} disabled={isCanonEditor || Boolean((editingProperty as LocalExplorerProperty).children?.length)} onChange={(event) => updateLocal({ valueType: event.target.value as LocalExplorerProperty["valueType"] })}>{!propertyTypes.some(([value]) => value === editingProperty.valueType) ? <option value={editingProperty.valueType}>{editingProperty.valueType}</option> : null}{propertyTypes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}</select></label>
+            <label className="field-label">{t("Applies to types")}<input value={(editingProperty.appliesToTypes ?? []).join(", ")} disabled={isCanonEditor} placeholder={t(isLocalSubproperty ? "Inherited from parent property" : "All types")} onChange={(event) => updateLocal({ appliesToTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
             {!isCanonEditor && (editingProperty.valueType === "entity-ref" || editingProperty.valueType === "entity-ref-list") ? (
               <label className="field-label">{t("Target entity types")}<input value={((editingProperty as LocalExplorerProperty).targetTypes ?? []).join(", ")} placeholder={t("All entities")} onChange={(event) => updateLocal({ targetTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label>
             ) : null}
             <label className="field-label">{t("Description")}<textarea rows={3} value={editingProperty.description ?? ""} disabled={isCanonEditor} onChange={(event) => updateLocal({ description: event.target.value })} /></label>
+            <label className="field-label">{t("Can relate to")}<input value={(editingCapability?.relationTargetTypes ?? []).join(", ")} placeholder={t("character, worldbuilding")} onChange={(event) => updateCapability({ relationTargetTypes: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} /></label>
             <label className="logic-property-checkbox"><input type="checkbox" checked={editingProperty.required ?? false} disabled={isCanonEditor} onChange={(event) => updateLocal({ required: event.target.checked })} /> {t("Required")}</label>
             {renderEditorOptions()}
           </div>
@@ -698,12 +694,42 @@ export function LogicPanel({
             <button type="button" className="logic-add-variable" onClick={() => addVariable(group.id)}><Plus size={13} /> {t("Variable")}</button>
           </section>)}</div>
       </ExplorerPane>
-      {(["actions", "rules"] as const).map(kind => <ExplorerPane key={kind} active={tab === kind}><LogicAuthoringCatalog kind={kind} project={project} propertiesConfig={propertiesConfig} selected={selected} currentEventId={currentEventId} currentDialogueId={currentDialogueId} onUpdate={onUpdate} onOpenInspector={onOpenInspector} /></ExplorerPane>)}
+      <ExplorerPane active={tab === "formats"}>
+        <div className="logic-formats-panel">
+          <section className="logic-formats-card">
+            <header><h3>{locale === "es" ? "Condiciones y disponibilidad" : "Conditions and availability"}</h3><p className="empty-line">{locale === "es" ? "Define cómo se muestran las opciones cuando sus condiciones no se cumplen." : "Choose how options appear when their conditions are not met."}</p></header>
+            <label className="field-label">{locale === "es" ? "Opciones no disponibles" : "Unavailable options"}
+              <select value={project.logicFormats?.unavailableBehavior ?? "perOutcome"} onChange={event => updateFormats({ unavailableBehavior: event.target.value === "perOutcome" ? undefined : event.target.value as LogicFormats["unavailableBehavior"] })}>
+                <option value="perOutcome">{locale === "es" ? "Conservar los ajustes guardados" : "Keep saved settings"}</option>
+                <option value="locked">{locale === "es" ? "Mostrar bloqueadas" : "Show as locked"}</option>
+                <option value="hidden">{locale === "es" ? "Ocultar" : "Hide"}</option>
+              </select>
+            </label>
+            {(project.logicFormats?.unavailableBehavior ?? "perOutcome") !== "hidden" ? <>
+              <label className="field-label">{locale === "es" ? "Texto de la opción bloqueada" : "Locked option text"}<input value={project.logicFormats?.unavailableText ?? ""} placeholder={locale === "es" ? "Vacío conserva el texto de cada opción" : "Blank keeps each option's text"} onChange={event => updateFormats({ unavailableText: event.target.value })} /></label>
+              <label className="field-label">{locale === "es" ? "Explicación del bloqueo" : "Lock explanation"}<input value={project.logicFormats?.lockText ?? ""} placeholder={locale === "es" ? "Vacío usa el diagnóstico de la condición" : "Blank uses the condition details"} onChange={event => updateFormats({ lockText: event.target.value })} /></label>
+            </> : null}
+          </section>
+          <section className="logic-formats-card">
+            <header><h3>{locale === "es" ? "Decisiones" : "Decisions"}</h3><p className="empty-line">{locale === "es" ? "Elige cómo se presentan las opciones de todas las decisiones." : "Choose how options are presented across decisions."}</p></header>
+            <label className="field-label">{locale === "es" ? "Presentación de las opciones" : "Option presentation"}
+              <select value={project.logicFormats?.decisionOptionStyle ?? "perDecision"} onChange={event => updateFormats({ decisionOptionStyle: event.target.value === "perDecision" ? undefined : event.target.value as LogicFormats["decisionOptionStyle"] })}>
+                <option value="perDecision">{locale === "es" ? "Conservar los ajustes guardados" : "Keep saved settings"}</option>
+                <option value="visibleText">{locale === "es" ? "Texto" : "Text"}</option>
+                <option value="iconOnly">{locale === "es" ? "Iconos" : "Icons"}</option>
+              </select>
+            </label>
+          </section>
+        </div>
+      </ExplorerPane>
     {createPropertyMenu ? (
       <div ref={createPropertyRef} className="logic-property-editor explorer-create-menu" style={{ top: createPropertyMenu.top, left: createPropertyMenu.left }} role="dialog" aria-modal="true" aria-label={t("Create new property")} >
         <header className="logic-property-editor-header">
           <span className="logic-property-editor-icon"><Plus size={15} /></span>
-          <div><strong>{t("New property")}</strong><small>{t("Declare a local property")}</small></div>
+          <div>
+            <strong>{t(createParentProperty ? "New subproperty" : "New property")}</strong>
+            <small>{createParentProperty ? `${t("Subproperty of")} ${createParentProperty.label}` : t("Declare a local property")}</small>
+          </div>
           <button type="button" className="icon-only" aria-label={t("Close create property menu")} onClick={() => setCreatePropertyMenu(undefined)}><X size={15} /></button>
         </header>
         <div className="modal-body" style={{ maxHeight: "calc(100vh - 200px)", overflowY: "auto" }}>
@@ -722,7 +748,7 @@ export function LogicPanel({
               />
             </label>
             <label className="field-label">
-              <span>{t("Type")}</span>
+              <span>{t("Value type")}</span>
               <select value={newPropertyState.valueType} onChange={(event) => setNewPropertyState({ ...newPropertyState, valueType: event.target.value as LocalExplorerProperty["valueType"], options: [], targetTypes: [] })}>
                 {propertyTypes.map(([value, label]) => <option key={value} value={value}>{t(label)}</option>)}
               </select>
@@ -859,7 +885,7 @@ export function LogicPanel({
                   ...newPropertyState,
                   appliesToTypes: e.target.value.split(",").map((v) => v.trim()).filter(Boolean),
                 })}
-                placeholder={t("Leave blank for all types")}
+                placeholder={t(createParentProperty ? "Inherited from parent property" : "Leave blank for all types")}
               />
             </label>
             </ExplorerGroup>

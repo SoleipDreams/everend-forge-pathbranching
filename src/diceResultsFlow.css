@@ -1,0 +1,59 @@
+@scope (.pathbranching-app) {
+.dice-results-flow { display:grid; gap:14px; min-width:0; }
+.dice-flow-source { display:grid; justify-items:center; gap:6px; padding:8px 0 22px; position:relative; }
+.dice-flow-source::after { content:""; position:absolute; height:20px; border-left:1px solid var(--wn-accent); bottom:0; left:50%; }
+.dice-flow-source-layout { display:grid; grid-template-columns:minmax(0,1fr) 144px minmax(0,1fr); align-items:center; gap:18px; width:min(100%,820px); min-width:0; justify-self:center; position:relative; padding:8px 0 22px; }
+.dice-flow-source-layout.dice-flow-source-context { grid-template-columns:minmax(0,1fr) minmax(0,1fr); padding:8px 0 4px; }
+.dice-flow-source-mechanic { grid-column:1/-1; grid-row:1; min-width:0; height:190px; position:relative; }
+.dice-flow-source-mechanic::after { content:""; position:absolute; left:50%; bottom:-22px; height:20px; border-left:1px solid var(--wn-accent); }
+.dice-flow-source-mechanic > .mechanic-selector { width:100%; height:100%; }
+.dice-flow-source-name { grid-column:3; grid-row:1; z-index:1; min-width:0; padding:14px; border:1px solid var(--wn-border); border-radius:10px; background:var(--wn-panel); }
+.dice-flow-source-context .dice-flow-source-name { grid-column:2; width:min(100%,480px); justify-self:end; }
+.dice-flow-source-name > .authoring-text-field { margin:0; }
+.dice-flow-source-name input { min-height:44px; }
+.dice-flow-source-layout:has(.mechanic-selector.open) .dice-flow-source-name { display:none; }
+.interactions-editor .dice-results-flow button.dice-flow-symbol { display:grid; justify-items:center; gap:8px; min-width:96px; padding:12px; color:var(--wn-accent); border-color:var(--wn-accent); }
+.dice-flow-source small,.dice-flow-axis { color:var(--wn-muted); font-size:12px; }
+.dice-flow-configuration { display:grid; gap:12px; padding:14px; border:1px solid var(--wn-border); border-radius:10px; }
+.dice-flow-raw-domain { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding:9px 12px; border:1px solid var(--wn-border); border-radius:8px; color:var(--wn-muted); font-size:12px; }
+.dice-flow-raw-domain strong { color:var(--wn-text); }
+.dice-flow-raw-domain b { margin-left:auto; color:var(--wn-accent); font-variant-numeric:tabular-nums; }
+.dice-flow-range-list { display:grid; gap:8px; border-top:1px solid var(--wn-border); padding-top:12px; }
+.interactions-editor .dice-results-flow .dice-flow-range-list button { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; text-align:left; padding:11px 13px; }
+.dice-flow-range-list button small { color:var(--wn-muted); }
+.interactions-editor .dice-results-flow .dice-flow-range-list button.selected { border-color:var(--wn-accent); background:var(--wn-accent-soft); }
+.dice-flow-axis { display:flex; justify-content:space-between; gap:8px; font-variant-numeric:tabular-nums; }
+.dice-flow-interval-editor { display:grid; gap:8px; min-width:0; margin:10px 0 4px; }
+.dice-flow-coverage { display:flex; min-height:14px; overflow:hidden; border:1px solid var(--wn-border); border-radius:5px; }
+.dice-flow-coverage .covered { background:color-mix(in srgb,var(--wn-accent) 65%,var(--wn-panel)); }
+.dice-flow-coverage .uncovered { background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--wn-danger,#d44) 75%,transparent) 0 4px,var(--wn-danger,#d44) 4px 6px); }
+.dice-flow-coverage .overlap { background:var(--wn-danger,#c55); }
+.dice-flow-branches { display:grid; gap:12px; padding:12px 0; border-top:1px solid var(--wn-border); }
+.dice-flow-track { position:relative; min-height:54px; background:var(--wn-panel-2); border-radius:8px; }
+.interactions-editor .dice-results-flow button.dice-flow-interval { position:absolute; left:var(--interval-left); width:var(--interval-width); height:54px; min-width:0; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 10px; overflow:hidden; border:1px solid var(--wn-border); background:var(--wn-panel); }
+.interactions-editor .dice-results-flow .selected button.dice-flow-interval { border-color:var(--wn-accent); color:var(--wn-accent); background:var(--wn-accent-soft); }
+.dice-flow-interval > span:not(.dice-flow-result-letter) { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.dice-flow-result-letter { flex:none; font-weight:800; }
+.dice-flow-interval small { flex:none; font-variant-numeric:tabular-nums; }
+.interactions-editor .dice-results-flow button.dice-flow-interval.invalid { border-style:dashed; color:var(--wn-danger,#c55); }
+.interactions-editor .dice-results-flow button.dice-flow-handle { position:absolute; top:5px; height:44px; width:12px; min-width:12px; max-width:12px; padding:0; border:0; border-radius:4px; background:var(--wn-accent); cursor:ew-resize; touch-action:none; }
+.dice-flow-handle.min { left:clamp(0px, var(--interval-left), calc(100% - 12px)); }
+.dice-flow-handle.max { left:clamp(0px, calc(var(--interval-left) + var(--interval-width) - 12px), calc(100% - 12px)); }
+.dice-flow-diagnostics { padding:10px 12px; border:1px solid var(--wn-danger,#c55); border-radius:8px; color:var(--wn-danger,#e66); background:color-mix(in srgb,var(--wn-danger,#c55) 9%,transparent); }
+.dice-flow-diagnostics p { margin:3px 0; overflow-wrap:anywhere; }
+.dice-flow-complete { color:var(--wn-muted); font-size:12px; margin:0; }
+.dice-flow-interval-status { margin:8px 0; color:var(--wn-muted); }
+.dice-flow-add { justify-self:center; display:flex; align-items:center; gap:8px; }
+.dice-flow-result-editor { position:relative; padding-top:16px; }
+.dice-flow-result-editor::before { content:""; position:absolute; top:0; height:16px; left:50%; border-left:1px solid var(--wn-accent); }
+.dice-flow-result-editor fieldset { border:1px solid var(--wn-border); border-radius:10px; padding:14px; }
+@container (max-width:560px) { .dice-flow-source-layout { grid-template-columns:minmax(0,1fr); gap:10px; width:min(100%,420px); } .dice-flow-source-layout::after { content:""; position:absolute; left:50%; bottom:0; height:20px; border-left:1px solid var(--wn-accent); } .dice-flow-source-mechanic { grid-column:1; grid-row:1; } .dice-flow-source-mechanic::after { display:none; } .dice-flow-source-name,.dice-flow-source-context .dice-flow-source-name { grid-column:1; grid-row:1; width:100%; } .dice-flow-source-layout.dice-flow-source-context::after { display:none; } }
+.dice-results-flow:has(.interaction-dice-context .mechanic-selector-context):not(:has(.mechanic-selector-context.open)) .dice-flow-source-name { display:none; }
+.dice-results-flow:has(.mechanic-selector-context.open) { grid-template-columns:minmax(0,1fr) minmax(88px,.45fr) minmax(0,1.2fr); align-items:stretch; gap:12px; min-height:344px; padding:12px; border:1px solid var(--wn-border); border-radius:12px; background:var(--wn-panel); }
+.dice-results-flow:has(.mechanic-selector-context.open) > :not(.dice-flow-source-layout,.dice-flow-configuration) { display:none; }
+.dice-results-flow:has(.mechanic-selector-context.open) .dice-flow-source-layout,.dice-results-flow:has(.mechanic-selector-context.open) .dice-flow-configuration,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-context,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-context-grid,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-versus,.dice-results-flow:has(.mechanic-selector-context.open) .mechanic-selector-context { display:contents; }
+.dice-results-flow:has(.mechanic-selector-context.open) .dice-flow-configuration > .interaction-fields-row,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-actor-card,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-target-card,.dice-results-flow:has(.mechanic-selector-context.open) .interaction-dice-versus > :not(.mechanic-selector-context) { display:none; }
+.dice-results-flow:has(.mechanic-selector-context.open) .dice-flow-source-name { grid-column:1; grid-row:1; align-self:center; width:100%; }
+.dice-results-flow:has(.mechanic-selector-context.open) .mechanic-selector-selection { grid-column:2; grid-row:1; }
+.dice-results-flow:has(.mechanic-selector-context.open) .mechanic-selector-panel { grid-column:3; grid-row:1; width:100%; height:100%; min-height:320px; }
+}

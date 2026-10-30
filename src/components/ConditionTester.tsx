@@ -80,7 +80,7 @@ function TestValueControl({control, project, state, onChange, locale}: {control:
   const id = useId();
   const c = conditionUiCopy(locale);
   const resolved = resolveConditionValue(control.predicate, project, state);
-  const value = resolved.value;
+  const value = resolved.unmodifiedValue ?? resolved.value;
   const external = control.predicate.type === 'external';
   const boolean = ['state', 'visited', 'external'].includes(control.predicate.type) || ['boolean', 'bool'].includes(control.valueType ?? '');
   const list = ['list', 'multiselect', 'entity-ref-list'].includes(control.valueType ?? '');
@@ -92,6 +92,7 @@ function TestValueControl({control, project, state, onChange, locale}: {control:
   const defaultValue = boolean ? false : list ? [] : number ? 0 : '';
   return <div className="condition-test-control">
     <strong id={`${id}-label`}>{control.label}</strong>
+    {resolved.modifiers?.length ? <small>{locale === 'es' ? 'Valor actual' : 'Current value'}: {String(resolved.value)} ({resolved.unmodifiedValue} {resolved.modifiers.map(modifier => `${modifier.amount >= 0 ? '+' : '−'} ${Math.abs(modifier.amount)} · ${modifier.name}`).join(' ')})</small> : null}
     <div className="condition-test-input">
       {boolean ? <select id={id} aria-labelledby={`${id}-label`} aria-describedby={descriptionId} disabled={Boolean(resolved.error)} aria-invalid={Boolean(error)} value={defined ? String(value) : ''} onChange={event => onChange(event.target.value === '' ? undefined : event.target.value === 'true')}>
         {!defined || external ? <option value="">{external ? c.unresolved : c.isUndefined}</option> : null}{defined && typeof value !== 'boolean' ? <option value={String(value)}>{String(value)} · {c.invalid}</option> : null}<option value="true">{c.yes}</option><option value="false">{c.no}</option>

@@ -14,6 +14,7 @@ export type BrowserFileHandle = {
 export type BrowserDirectoryHandle = {
   name: string;
   entries: () => AsyncIterableIterator<[string, BrowserDirectoryHandle | BrowserFileHandle]>;
+  removeEntry: (name: string) => Promise<void>;
   getDirectoryHandle: (
     name: string,
     options?: { create?: boolean },
@@ -151,4 +152,15 @@ export async function writeBrowserUniverseFile(
   await writable.write(content);
   await writable.close();
   return (await handle.getFile()).lastModified;
+}
+
+export async function deleteBrowserUniverseFile(
+  root: BrowserDirectoryHandle,
+  relativePath: string,
+): Promise<void> {
+  const parts = pathParts(relativePath);
+  const name = parts.pop();
+  if (!name) throw new Error("Browser universe file paths must include a filename.");
+  const directory = await directoryFor(root, parts, false);
+  await directory.removeEntry(name);
 }

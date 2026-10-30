@@ -16,6 +16,7 @@ import { serializeIntegrationConfigYaml } from "./integrationConfig.js";
 import { isTauriRuntime } from "./utils/appEnvironment.js";
 import {
   browserUniversePath,
+  deleteBrowserUniverseFile,
   ensureBrowserUniverseWritePermission,
   pickBrowserUniverse,
   readBrowserUniverse,
@@ -60,6 +61,7 @@ export type SaveUniverseStoryResult = WriteResult & {
 export type UniverseBatchFile = {
   relativePath: string;
   content: string;
+  delete?: boolean;
   expectedExists: boolean;
   expectedContent?: string;
   expectedModifiedMs?: number;
@@ -96,8 +98,17 @@ export type BridgeStatus = {
 export type ImportedAsset = Omit<ProjectAsset, "id" | "origin" | "importedAt">;
 
 let selectedBrowserUniverse: BrowserDirectoryHandle | undefined;
+const sharedBrowserUniverses = new Map<string, BrowserDirectoryHandle>();
+
+/** Register a folder selected by an integrated browser shell before loading its shared path. */
+export function registerSharedBrowserUniverse(path: string, root: BrowserDirectoryHandle): void {
+  sharedBrowserUniverses.set(path, root);
+  selectedBrowserUniverse = root;
+}
 
 function currentBrowserUniverse(path: string): BrowserDirectoryHandle | undefined {
+  const shared = sharedBrowserUniverses.get(path);
+  if (shared) return shared;
   if (!selectedBrowserUniverse || path !== browserUniversePath(selectedBrowserUniverse)) return undefined;
   return selectedBrowserUniverse;
 }
@@ -268,10 +279,80 @@ export async function saveUniverseTextFile(
 }
 
 /** Compare both exact bytes and timestamps: millisecond timestamps alone miss rapid external edits. */
-export function universeBatchFiles(files: UniverseFile[], output: Array<{ relativePath: string; content: string }>): UniverseBatchFile[] {
-  return output.map((file) => {
+export function universeBatchFiles(
+  files: UniverseFile[],
+  output: Array<{ relativePath: string; content: string }>,
+  deletePaths: string[] = [],
+): UniverseBatchFile[] {
+  const previousByPath = new Map(files.map((file) => [file.relativePath, file]));
+  const writes = output.map((file) => {
     const previous = files.find((candidate) => candidate.relativePath === file.relativePath);
     return { ...file, expectedExists: Boolean(previous), expectedContent: previous?.content, expectedModifiedMs: previous?.modifiedMs };
+  });
+  const deletions = deletePaths.flatMap((relativePath) => {
+    const previous = previousByPath.get(relativePath);
+    return previous ? [{
+      relativePath,
+      content: "",
+      delete: true,
+      expectedExists: true,
+      expectedContent: previous.content,
+      expectedModifiedMs: previous.modifiedMs,
+    }] : [];
+  });
+  return [...writes, ...deletions];
+}
+
+/** Shared compare-and-swap writer for universe app catalogs as well as story sidecars. */
+export async function saveUniverseBatch(universePath: string, files: UniverseBatchFile[]): Promise<UniverseBatchResult> {
+  const browserUniverse = currentBrowserUniverse(universePath);
+  if (!browserUniverse) {
+    assertDesktopRuntime('Saving universe app data');
+    return invoke<UniverseBatchResult>('save_universe_story_batch', { universePath, files });
+  }
+  const before = await readBrowserUniverse(browserUniverse);
+  const conflict = files.find(file => {
+    const current = before.find(item => item.relativePath === file.relativePath);
+    return Boolean(current) !== file.expectedExists || current && (current.content !== file.expectedContent || file.expectedModifiedMs !== undefined && current.modifiedMs !== file.expectedModifiedMs);
+  });
+  if (conflict) return { ok: false, path: conflict.relativePath, files: [], message: 'Universe file changed on disk. Reopen before overwriting.' };
+  const changed: UniverseBatchFile[] = [];
+  try {
+    for (const file of files) {
+      if (file.delete) await deleteBrowserUniverseFile(browserUniverse, file.relativePath);
+      else await writeBrowserUniverseFile(browserUniverse, file.relativePath, file.content);
+      changed.push(file);
+    }
+    const after = await readBrowserUniverse(browserUniverse);
+    return { ok: true, path: universePath, files: files.map(file => ({ relativePath: file.relativePath, modifiedMs: after.find(item => item.relativePath === file.relativePath)?.modifiedMs })) };
+  } catch (error) {
+    const latest = await readBrowserUniverse(browserUniverse);
+    for (const file of changed.reverse()) {
+      const previous = before.find(item => item.relativePath === file.relativePath), current = latest.find(item => item.relativePath === file.relativePath);
+      if (file.delete && previous && !current || !file.delete && previous && current?.content === file.content) await writeBrowserUniverseFile(browserUniverse, file.relativePath, previous!.content);
+      else if (!file.delete && !previous && current?.content === file.content) await deleteBrowserUniverseFile(browserUniverse, file.relativePath);
+    }
+    return { ok: false, path: universePath, files: [], message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function obsoleteSequenceSidecarPaths(
+  files: UniverseFile[],
+  output: Array<{ relativePath: string }>,
+  storyId: string,
+): string[] {
+  const prefix = `${pathBranchingMetadataPaths.stories}/${storyId}/sequences/`;
+  const outputPaths = new Set(output.map((file) => file.relativePath));
+  return files.flatMap((file) => {
+    if (!file.relativePath.startsWith(prefix) || outputPaths.has(file.relativePath)) return [];
+    const segments = file.relativePath.slice(prefix.length).split("/");
+    const [, category, name, ...extra] = segments;
+    const isSequenceFile = segments.length === 2 && segments[1] === "sequence.json";
+    const isEventSidecar = segments.length === 3 && category === "events" && /\.(?:json|evpath)$/i.test(name ?? "");
+    const isBranchSidecar = segments.length === 3 && category === "branches" && name?.endsWith(".json");
+    return extra.length === 0 && (isSequenceFile || isEventSidecar || isBranchSidecar)
+      ? [file.relativePath]
+      : [];
   });
 }
 
@@ -298,7 +379,8 @@ export async function saveUniverseStory(
     stories: workspace.manifest.stories.map((item) => item.id === story.id ? { ...item, path: normalizedStory.path, updatedAt: new Date().toISOString() } : item),
   };
   output.push({ relativePath: pathBranchingMetadataPaths.manifest, content: serializePathBranchingManifest(manifest) });
-  const batch = universeBatchFiles(workspace.files, output);
+  const deletePaths = obsoleteSequenceSidecarPaths(workspace.files, output, story.id);
+  const batch = universeBatchFiles(workspace.files, output, deletePaths);
   const storyBatch = batch.find((file) => file.relativePath === normalizedStory.path);
   if (storyBatch?.expectedExists && expectedModifiedMs !== undefined) storyBatch.expectedModifiedMs = expectedModifiedMs;
   const browserUniverse = currentBrowserUniverse(universePath);
@@ -312,20 +394,31 @@ export async function saveUniverseStory(
       return Boolean(disk) !== file.expectedExists || (disk && (disk.content !== file.expectedContent || (file.expectedModifiedMs !== undefined && disk.modifiedMs !== file.expectedModifiedMs)));
     });
     if (conflict) return { ok: false, path: conflict.relativePath, message: "Universe file changed on disk. Reopen before overwriting." };
-    const written: UniverseFile[] = [];
+    const changed: UniverseBatchFile[] = [];
     try {
       const ordered = [...batch].sort((left, right) => Number(left.relativePath === pathBranchingMetadataPaths.manifest || left.relativePath === normalizedStory.path) - Number(right.relativePath === pathBranchingMetadataPaths.manifest || right.relativePath === normalizedStory.path));
       for (const file of ordered) {
-        const modifiedMs = await writeBrowserUniverseFile(browserUniverse, file.relativePath, file.content);
-        written.push({ relativePath: file.relativePath, content: file.content, modifiedMs });
+        if (file.delete) {
+          await deleteBrowserUniverseFile(browserUniverse, file.relativePath);
+        } else {
+          await writeBrowserUniverseFile(browserUniverse, file.relativePath, file.content);
+        }
+        changed.push(file);
       }
-      result = { ok: true, path: universePath, files: written };
+      const after = await readBrowserUniverse(browserUniverse);
+      result = { ok: true, path: universePath, files: batch.map((file) => ({ relativePath: file.relativePath, modifiedMs: after.find((candidate) => candidate.relativePath === file.relativePath)?.modifiedMs })) };
     } catch (error) {
       const latest = await readBrowserUniverse(browserUniverse);
-      for (const file of written.reverse()) {
+      for (const file of changed.reverse()) {
         const old = current.find((candidate) => candidate.relativePath === file.relativePath);
         const disk = latest.find((candidate) => candidate.relativePath === file.relativePath);
-        if (old && disk?.content === file.content) await writeBrowserUniverseFile(browserUniverse, file.relativePath, old.content);
+        if (file.delete) {
+          if (old && !disk) await writeBrowserUniverseFile(browserUniverse, file.relativePath, old.content);
+        } else if (old && disk?.content === file.content) {
+          await writeBrowserUniverseFile(browserUniverse, file.relativePath, old.content);
+        } else if (!old && disk?.content === file.content) {
+          await deleteBrowserUniverseFile(browserUniverse, file.relativePath);
+        }
       }
       return { ok: false, path: universePath, message: error instanceof Error ? error.message : String(error) };
     }
@@ -334,7 +427,7 @@ export async function saveUniverseStory(
     result = await invoke<UniverseBatchResult>("save_universe_story_batch", { universePath, files: batch });
   }
   if (!result.ok) return result;
-  const savedFiles = batch.map((file) => ({ relativePath: file.relativePath, content: file.content, modifiedMs: result.files.find((entry) => entry.relativePath === file.relativePath)?.modifiedMs }));
+  const savedFiles = batch.filter((file) => !file.delete).map((file) => ({ relativePath: file.relativePath, content: file.content, modifiedMs: result.files.find((entry) => entry.relativePath === file.relativePath)?.modifiedMs }));
   const storyModifiedMs = savedFiles.find((file) => file.relativePath === normalizedStory.path)?.modifiedMs;
   return { ...result, path: normalizedStory.path, modifiedMs: storyModifiedMs, storyPath: normalizedStory.path, storyModifiedMs, manifest, manifestModifiedMs: savedFiles.find((file) => file.relativePath === pathBranchingMetadataPaths.manifest)?.modifiedMs, savedFiles };
 }

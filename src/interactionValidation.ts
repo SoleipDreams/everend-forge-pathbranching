@@ -1,8 +1,10 @@
-import type { BranchingProject, ValidationFinding } from './domain.js';
-import { barrierNodeId, interactionDefinitionIssues, interactionNodeId } from './interactions.js';
+import type { BranchingProject, ConditionInput, ValidationFinding } from './domain.js';
+import { barrierNodeId, freezeInteractionParticipants, interactionDefinitionIssues, interactionNodeId } from './interactions.js';
 import { authoringNodeExists, authoringNodeOptions } from './authoringEngine.js';
 import { resolveConditionValue } from './conditionEvaluation.js';
 import { initialAuthoringState } from './authoringEntities.js';
+import { resolveCharacterSubject } from './characterStats.js';
+import { effectiveConditions, walkConditions } from './logic.js';
 
 export function validateInteractions(project: BranchingProject): ValidationFinding[] {
   const findings: ValidationFinding[] = [];
@@ -17,8 +19,31 @@ export function validateInteractions(project: BranchingProject): ValidationFindi
       for (const message of interactionDefinitionIssues(d)) issue(d.id, message);
       if (d.mechanic.kind === 'skillcheck') {
         const skill = d.mechanic.skill;
-        const resolved = resolveConditionValue(skill.kind === 'variable' ? { type: 'value', subject: { kind: 'variable', variableId: skill.variableId }, operator: '>=' } : { type: 'property', subject: skill.subject, propertyId: skill.propertyId, operator: '>=' }, project, initialAuthoringState(project));
-        if (resolved.error || (!resolved.unresolved && (typeof resolved.value !== 'number' || !Number.isFinite(resolved.value)))) issue(d.id, resolved.error ?? 'Skill source must be numeric');
+        if (skill) {
+          const resolved = resolveConditionValue(skill.kind === 'variable' ? { type: 'value', subject: { kind: 'variable', variableId: skill.variableId }, operator: '>=' } : { type: 'property', subject: skill.subject, propertyId: skill.propertyId, operator: '>=' }, project, initialAuthoringState(project));
+          if (resolved.error || (!resolved.unresolved && (typeof resolved.value !== 'number' || !Number.isFinite(resolved.value)))) issue(d.id, resolved.error ?? 'Skill source must be numeric');
+        }
+      }
+      if (d.mechanic.kind === 'opposedcheck' && d.mechanic.actor && Array.isArray(d.mechanic.rivals)) {
+        const state = initialAuthoringState(project);
+        const participants = [d.mechanic.actor, ...d.mechanic.rivals];
+        // Missing dynamic actor context may be supplied by a scenario. Concrete
+        // identities and values must still be checked before executing a use.
+        const allResolved = participants.every(participant => participant.subject && resolveCharacterSubject(project, state, participant.subject).subject);
+        if (allResolved) {
+          try { freezeInteractionParticipants(project, state, d); }
+          catch (error) { issue(d.id, error instanceof Error ? error.message : String(error)); }
+        } else for (const participant of participants) {
+          if (!participant.subject) continue;
+          const resolvedSubject = resolveCharacterSubject(project, state, participant.subject);
+          if (resolvedSubject.error) { issue(d.id, resolvedSubject.error); continue; }
+          const subject = resolvedSubject.subject;
+          if (!subject || !participant.skill) continue;
+          const skill = participant.skill;
+          const resolved = resolveConditionValue(skill.kind === 'variable' ? { type: 'value', subject: { kind: 'variable', variableId: skill.variableId }, operator: '>=' }
+            : { type: 'property', subject, propertyId: skill.propertyId, operator: '>=' }, project, state);
+          if (resolved.error || !resolved.unresolved && (typeof resolved.value !== 'number' || !Number.isFinite(resolved.value))) issue(d.id, resolved.error ?? `Participant ${participant.id} skill must be numeric`);
+        }
       }
     }
     const outgoing = (id: string) => (event.transitions ?? []).filter(t => t.from === id);
@@ -49,6 +74,23 @@ export function validateInteractions(project: BranchingProject): ValidationFindi
       if (use.ownerNodeId && !authoringNodeExists(project, use.ownerNodeId)) issue(use.id, 'Missing interaction owner');
       if (use.ownerNodeId && authoringNodeOptions(project).find(n => n.id === use.ownerNodeId)?.eventId !== event.id) issue(use.id, 'Interaction owner belongs to another event');
       const nodeId = use.ownerNodeId ?? interactionNodeId(event.id, use.id);
+      const decision = event.decisions?.find(item => `decision:${event.id}:${item.id}` === nodeId || item.outcomes.some(outcome => `outcome:${event.id}:${item.id}:${outcome.id}` === nodeId));
+      const outcome = decision?.outcomes.find(item => `outcome:${event.id}:${decision.id}:${item.id}` === nodeId);
+      const dialogue = event.dialogues?.find(item => item.id === use.dialogueId || `dialogue:${event.id}:${item.id}` === nodeId || item.beats?.some(beat => `beat:${event.id}:${beat.id}` === nodeId) || decision && (decision.dialogueId === item.id || item.members?.some(member => member.kind === 'decision' && member.id === decision.id)));
+      const beat = [...(event.dialogueBeats ?? []), ...(dialogue?.beats ?? [])].find(item => `beat:${event.id}:${item.id}` === nodeId);
+      const dependsOnUse = (conditions: ConditionInput | undefined) => {
+        let found = false;
+        walkConditions(conditions, condition => { if (condition.type === 'interactionResult' && condition.useId === use.id) found = true; });
+        return found;
+      };
+      const gates = [
+        ...project.sequences.filter(sequence => sequence.eventIds.includes(event.id)).map(effectiveConditions),
+        ...project.branches.filter(branch => branch.eventIds.includes(event.id)).map(effectiveConditions),
+        effectiveConditions(event), dialogue ? effectiveConditions(dialogue) : undefined, decision ? effectiveConditions(decision) : undefined,
+        outcome ? effectiveConditions(outcome) : undefined, beat ? effectiveConditions(beat) : undefined,
+      ];
+      if (gates.some(dependsOnUse)) issue(use.id, 'Interaction result is required before this interaction can start. Execute it before the availability gate or use a result route.');
+      for (const route of event.transitions ?? []) if (route.to === nodeId && dependsOnUse(effectiveConditions(route))) issue(use.id, 'An incoming route requires this interaction result before the interaction can start.');
       if (!use.ownerNodeId && !outgoing(nodeId).length) issue(use.id, 'Interaction node requires a continuation');
       if (use.moment === 'during' && use.ownerNodeId) {
         const barriers = event.interactionBarriers?.filter(b => b.useIds.includes(use.id)) ?? [];

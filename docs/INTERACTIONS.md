@@ -12,8 +12,10 @@ Independent nodes and barriers appear as editable rows on explicit single-route
 segments. Branches and shared script blocks retain the conversation editor's
 existing protections. Inspect the row to edit its parameters, result routes or
 wait references. Canvas interaction nodes provide result output ports; connecting
-one creates an ordered `interactionResult` condition. The ordinary output is a
-shared continuation. Concurrent result routing uses a referenced barrier.
+one creates an interaction-managed route for that result. Configure the result
+and its continuation in **Interacciones**; it is no longer a generic condition
+type. The ordinary output is a shared continuation. Concurrent result routing
+uses a referenced barrier.
 
 Definitions support dice (1–100 dice, 2–1,000,000 sides, finite modifier and
 inclusive nonoverlapping ranges covering the possible totals), skill checks
@@ -24,11 +26,15 @@ use the existing narrative effect editor. Prompt translations are edited by
 language and retained with the definition. Legacy decisions labelled dice/QTE
 remain unchanged until the author explicitly converts and configures them.
 
-Before/after and independent nodes block until resolution. During uses run until
-a wait barrier; every referenced use must have started and resolved. Resolution
-updates state and consequences once per execution, refreshes available responses,
-and leaves navigation to the next connection/barrier. A confirmed response stays
-confirmed. Multiple pending interactions are supported within one narrative flow.
+Before/after and independent nodes block until resolution. A dice, skill or
+opposed check attached before a decision resolves automatically on entry when an
+outcome condition references its result; Play then refreshes which options are
+available. Other before/after and independent interactions wait for explicit
+resolution. During uses run until a wait barrier; every referenced use must have
+started and resolved. Resolution updates state and consequences once per
+execution, refreshes available responses, and leaves navigation to the next
+connection/barrier. A confirmed response stays confirmed. Multiple pending
+interactions are supported within one narrative flow.
 Leaving/ending an event with pending interactions blocks. Returning calls suspend
 the caller's interactions and QTE clock until the caller resumes.
 

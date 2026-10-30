@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { diceFormula, diceGroups, diceFaceLabel, diceGroupFormula } from '../interactionDice.js';
+import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useApplicationEffect } from "./useApplicationActivity.js";
-import { Bug, ChevronDown, Crosshair, ExternalLink, Fullscreen, GripHorizontal, LockKeyhole, Maximize2, MoveDiagonal2, PanelRightClose, PanelRightOpen, Pause, Play, RotateCcw, Shrink, Square, UserRound, X } from "lucide-react";
+import { Bug, ChevronDown, Crosshair, ExternalLink, Fullscreen, Gift, GripHorizontal, LockKeyhole, Maximize2, MoveDiagonal2, PanelRightClose, PanelRightOpen, Pause, Play, RotateCcw, Shrink, Square, UserRound, X } from "lucide-react";
 import type { Locale } from "../i18n.js";
 import { storyTestFieldText, storyTestSubjectValue, type StoryTestCopy, type StoryTestField, type StoryTestSnapshot, type StoryTestUiCommand } from "../storyTestController.js";
 import type { ConditionEvaluationResult } from "../conditionEvaluation.js";
@@ -17,7 +18,7 @@ function DraftField({ field, snapshot, dispatch, locale, disabled }: StoryTestVi
   const boolean = field.type === "boolean" || field.type === "bool";
   const state = field.type === "state";
   const list = ["list", "multiselect", "multiSelect", "entity-ref-list", "canonRefList", "dataRefList"].includes(field.type);
-  const label = state ? ({ unlocked: es ? "Desbloqueo" : "Unlocked", discovered: es ? "Descubrimiento" : "Discovered", present: es ? "Presencia" : "Presence" } as Record<string, string>)[field.label] ?? field.label : field.label;
+  const label = state ? ({ unlocked: es ? "Desbloqueo" : "Unlocked", discovered: es ? "Descubrimiento" : "Discovered", present: es ? "Presencia" : "Presence", equipped: es ? "Equipado" : "Equipped" } as Record<string, string>)[field.label] ?? field.label : field.label;
   const emptyLabel = field.type === "owner" ? es ? "Sin poseedor" : "No owner" : field.key === "scenario:actor" ? es ? "Elegir protagonista o personaje" : "Choose protagonist or character" : field.key === "scenario:start" ? es ? "Entrada de la historia" : "Story entry" : es ? "Sin valor" : "No value";
   const groupedOptions = field.options?.reduce((groups, option) => {
     const key = option.group ?? "";
@@ -40,6 +41,27 @@ function CopyFields({ copy, scope, snapshot, dispatch, locale = snapshot.locale,
     {copy.availableProperties.length ? <label className="field-label">{es ? "Añadir propiedad propia" : "Add copy property"}<select value="" disabled={disabled} onChange={event => { if (event.target.value) dispatch({ type: "copyProperty", scope, copyId: copy.id, propertyId: event.target.value }); }}><option value="">{es ? "Elegir propiedad" : "Choose property"}</option>{copy.availableProperties.map(property => <option key={property.id} value={property.id}>{property.label}</option>)}</select></label> : null}
     {copy.states.length ? <fieldset><legend>{es ? "Estados propios" : "Copy states"}</legend>{copy.states.map(field => <DraftField key={field.key} field={field} snapshot={snapshot} dispatch={dispatch} locale={locale} disabled={disabled} />)}</fieldset> : null}
     {scope === "scenario" ? <button type="button" onClick={() => dispatch({ type: "scenarioCopy", operation: "remove", id: copy.id })}>{es ? "Retirar del escenario" : "Remove from scenario"}</button> : null}
+  </details>;
+}
+
+function ScenarioInventoryFields({ snapshot, dispatch, locale = snapshot.locale }: StoryTestViewProps) {
+  const es = locale === "es";
+  const copies = snapshot.scenarioCopies.filter(copy => copy.inventoryItem);
+  const items = snapshot.entities.filter(entity => entity.inventoryItem);
+  return <section className="story-test-initial-state-group"><h3 className="inspector-group-title">{es ? "Inventario del escenario" : "Scenario inventory"}</h3>
+    <p className="story-test-empty-setting">{es ? "Prepara los ítems y quién los lleva al comenzar. El estado Equipado activa los bonos que lo requieren." : "Set up items and their holder at the start. Equipped activates modifiers that require it."}</p>
+    {copies.length ? copies.map(copy => <CopyFields key={copy.id} copy={copy} scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />) : <p className="story-test-empty-setting">{es ? "No hay ítems en el inventario inicial." : "No items in the starting inventory."}</p>}
+    <div className="story-test-initial-state-card"><label className="field-label inspector-field">{es ? "Añadir ítem" : "Add item"}<select value="" onChange={event => { if (event.target.value) dispatch({ type: "scenarioInventoryCopy", id: event.target.value }); }}><option value="">{items.length ? es ? "Elegir ítem de inventario" : "Choose inventory item" : es ? "No hay ítems habilitados" : "No inventory items enabled"}</option>{items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
+  </section>;
+}
+
+function OtherScenarioCopiesFields({ snapshot, dispatch, locale = snapshot.locale }: StoryTestViewProps) {
+  const es = locale === "es";
+  const copies = snapshot.scenarioCopies.filter(copy => !copy.inventoryItem);
+  const entities = snapshot.entities.filter(entity => !entity.inventoryItem);
+  return <details><summary>{es ? "Otras copias y estados iniciales" : "Other initial copies and states"}</summary>
+    {copies.length ? copies.map(copy => <CopyFields key={copy.id} copy={copy} scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />) : <p className="story-test-empty-setting">{es ? "No hay otras copias preparadas." : "No other copies prepared."}</p>}
+    <label className="field-label">{es ? "Preparar otra copia" : "Prepare another copy"}<select value="" onChange={event => { if (event.target.value) dispatch({ type: "scenarioCopy", operation: "add", id: event.target.value }); }}><option value="">{es ? "Elegir entidad" : "Choose entity"}</option>{entities.map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label>
   </details>;
 }
 
@@ -69,7 +91,8 @@ export function StoryTestPlaybackSettings({ snapshot, dispatch, locale = snapsho
       <details className="story-test-initial-state"><summary className="inspector-panel-title">{es ? "Estado inicial" : "Initial state"}</summary>
         <div className="story-test-initial-state-content">
           <section className="story-test-initial-state-group"><h3 className="inspector-group-title">{es ? "Variables iniciales" : "Initial variables"}</h3>{snapshot.scenarioVariables.length ? snapshot.scenarioVariables.map(field => <div className="story-test-initial-state-card" key={field.key}><DraftField field={field} snapshot={snapshot} dispatch={dispatch} locale={locale} /></div>) : <p className="story-test-empty-setting">{es ? "No hay variables iniciales." : "No initial variables."}</p>}</section>
-          <section className="story-test-initial-state-group"><h3 className="inspector-group-title">{es ? "Copias y pertenencias" : "Copies and ownership"}</h3>{snapshot.scenarioCopies.length ? snapshot.scenarioCopies.map(copy => <CopyFields key={copy.id} copy={copy} scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />) : <p className="story-test-empty-setting">{es ? "No hay copias preparadas." : "No prepared copies."}</p>}<div className="story-test-initial-state-card"><label className="field-label inspector-field">{es ? "Preparar una copia" : "Prepare a copy"}<select value="" onChange={event => { if (event.target.value) dispatch({ type: "scenarioCopy", operation: "add", id: event.target.value }); }}><option value="">{es ? "Elegir entidad" : "Choose entity"}</option>{snapshot.entities.map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label></div></section>
+          <ScenarioInventoryFields snapshot={snapshot} dispatch={dispatch} locale={locale} />
+          <section className="story-test-initial-state-group"><OtherScenarioCopiesFields snapshot={snapshot} dispatch={dispatch} locale={locale} /></section>
         </div>
       </details>
       <div className="story-test-scenario-actions"><button type="button" className="story-test-scenario-button primary" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "applyScenarioDrafts" })}>{es ? "Aplicar escenario" : "Apply scenario"}</button><button type="button" className="story-test-scenario-button" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "discardDrafts", scope: "scenario" })}>{es ? "Descartar" : "Discard"}</button><button type="button" className="story-test-scenario-button danger" onClick={() => dispatch({ type: "deleteScenario" })}>{es ? "Eliminar escenario" : "Delete scenario"}</button></div>
@@ -107,7 +130,7 @@ export function StoryTestDebug({ snapshot, dispatch, locale = snapshot.locale, i
         <DraftField field={{ key: "scenario:actor", id: "actor", label: "Actor", type: "select", value: storyTestSubjectValue(snapshot.scenario.actor), options: snapshot.scenarioSubjects }} snapshot={snapshot} dispatch={dispatch} locale={locale} />
         <DraftField field={{ key: "scenario:start", id: "start", label: es ? "Punto inicial" : "Starting point", type: "select", value: snapshot.scenario.startNodeId ?? "", options: snapshot.startNodes.map(node => ({ value: node.id, label: node.label })) }} snapshot={snapshot} dispatch={dispatch} locale={locale} />
         {snapshot.scenarioVariables.map(field => <DraftField key={field.key} field={field} snapshot={snapshot} dispatch={dispatch} locale={locale} />)}
-        <details><summary>{es ? "Copias, pertenencias y estados iniciales" : "Initial copies, ownership and states"}</summary>{snapshot.scenarioCopies.map(copy => <CopyFields key={copy.id} copy={copy} scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />)}<label className="field-label">{es ? "Preparar una copia" : "Prepare a copy"}<select value="" onChange={event => { if (event.target.value) dispatch({ type: "scenarioCopy", operation: "add", id: event.target.value }); }}><option value="">{es ? "Elegir entidad" : "Choose entity"}</option>{snapshot.entities.map(entity => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></label></details>
+        <details><summary>{es ? "Estado inicial" : "Initial state"}</summary><ScenarioInventoryFields snapshot={snapshot} dispatch={dispatch} locale={locale} /><OtherScenarioCopiesFields snapshot={snapshot} dispatch={dispatch} locale={locale} /></details>
         <RawStateDraft scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />
         <div className="story-test-row"><button type="button" className="story-test-primary" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "applyScenarioDrafts" })}>{es ? "Aplicar escenario" : "Apply scenario"}</button><button type="button" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "discardDrafts", scope: "scenario" })}>{es ? "Descartar borradores" : "Discard drafts"}</button></div>
         <p><button type="button" className="danger" onClick={() => dispatch({ type: "deleteScenario" })}>{es ? "Eliminar escenario" : "Remove scenario"}</button></p>
@@ -117,6 +140,100 @@ export function StoryTestDebug({ snapshot, dispatch, locale = snapshot.locale, i
 }
 
 type StoryTestViewProps = { snapshot: StoryTestSnapshot; dispatch: (command: StoryTestUiCommand) => void; locale?: Locale };
+
+function StoryTestConsequenceNotice({ snapshot, locale }: { snapshot: StoryTestSnapshot; locale: Locale }) {
+  const [dismissed, setDismissed] = useState<string>();
+  let index = snapshot.trace.length - 1;
+  while (index >= 0 && !(snapshot.trace[index].kind === 'effect' && snapshot.trace[index].consequences?.length)) index--;
+  const latest = snapshot.trace[index];
+  const key = latest ? JSON.stringify([snapshot.sessionId, snapshot.draftEpochs.run, index, latest.id, latest.consequences]) : '';
+  if (!snapshot.active || !latest || dismissed === key) return null;
+  const es = locale === 'es';
+  return <aside key={key} className="story-test-consequence-notice" role="status" aria-live="polite" aria-atomic="true" aria-label={es ? 'Última consecuencia' : 'Latest consequence'} onClick={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()}>
+    <header><Gift size={16} aria-hidden="true" /><strong>{es ? 'Última consecuencia' : 'Latest consequence'}</strong><button type="button" className="story-test-icon" aria-label={es ? 'Cerrar aviso de consecuencia' : 'Dismiss consequence notice'} onClick={() => setDismissed(key)}><X size={14} aria-hidden="true" /></button></header>
+    <ul>{latest.consequences!.map((line, lineIndex) => <li key={lineIndex}>{line}</li>)}</ul>
+  </aside>;
+}
+
+type StoryTestDiceGroup = { id: string; label: string; sides?: number; rollSides?: number[]; rollLabels?: string[]; rolls: number[]; total?: number };
+type StoryTestDiceNotice = { id: string; groups: StoryTestDiceGroup[]; rolling: boolean };
+
+function storyTestDiceNotices(snapshot: StoryTestSnapshot, locale: Locale): Omit<StoryTestDiceNotice, "rolling">[] {
+  const es = locale === "es";
+  return Object.values(snapshot.state.interactionResults ?? {})
+    .filter(result => !result.forced)
+    .map(result => {
+      const traces = result.participantTraces?.filter(trace => Boolean(trace.rolls?.length)) ?? [];
+      const groups: StoryTestDiceGroup[] = traces.length
+        ? traces.map(trace => ({
+            id: trace.participantId,
+            label: snapshot.scenarioSubjects.find(option => option.value === storyTestSubjectValue(trace.subject))?.label ?? trace.participantId,
+            sides: trace.dice?.sides,
+            rollSides: trace.dice ? diceGroups(trace.dice).flatMap(group => Array.from({ length: group.count }, () => group.sides)) : undefined,
+            rollLabels: trace.dice ? diceGroups(trace.dice).flatMap(group => Array.from({ length: group.count }, () => diceFaceLabel(group))) : undefined,
+            rolls: trace.rolls ?? [],
+            total: trace.total,
+          }))
+        : result.rolls?.length
+          ? [{ id: result.executionId, label: result.dice ? diceFormula(result.dice) : es ? "Tirada" : "Roll", sides: result.dice?.sides, rollSides: result.dice ? diceGroups(result.dice).flatMap(group => Array.from({ length: group.count }, () => group.sides)) : undefined, rollLabels: result.dice ? diceGroups(result.dice).flatMap(group => Array.from({ length: group.count }, () => diceFaceLabel(group))) : undefined, rolls: result.rolls, total: result.total }]
+          : [];
+      return { id: result.executionId, groups };
+    })
+    .filter(notice => notice.groups.length)
+    .sort((a, b) => Number(a.id.split(":").at(-1)) - Number(b.id.split(":").at(-1)));
+}
+
+function StoryTestDiceSimulator({ snapshot, locale }: { snapshot: StoryTestSnapshot; locale: Locale }) {
+  const es = locale === "es";
+  const seen = useRef(new Set<string>());
+  const initialized = useRef(false);
+  const [notice, setNotice] = useState<StoryTestDiceNotice>();
+  const signature = JSON.stringify(storyTestDiceNotices(snapshot, locale));
+
+  useEffect(() => {
+    const notices = JSON.parse(signature) as Omit<StoryTestDiceNotice, "rolling">[];
+    if (!initialized.current) {
+      initialized.current = true;
+      notices.forEach(item => seen.current.add(item.id));
+      const latest = notices.at(-1);
+      if (latest) setNotice({ ...latest, rolling: false });
+      return;
+    }
+    if (!notices.length) {
+      seen.current.clear();
+      setNotice(undefined);
+      return;
+    }
+    const fresh = notices.filter(item => !seen.current.has(item.id));
+    if (!fresh.length) return;
+    fresh.forEach(item => seen.current.add(item.id));
+    const latest = fresh.at(-1)!;
+    setNotice({ ...latest, rolling: true });
+  }, [signature]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => {
+      if (notice.rolling) setNotice(current => current?.id === notice.id ? { ...current, rolling: false } : current);
+      else setNotice(current => current?.id === notice.id ? undefined : current);
+    }, notice.rolling ? reducedMotion ? 120 : 900 : 3600);
+    return () => window.clearTimeout(timer);
+  }, [notice?.id, notice?.rolling]);
+
+  if (!notice) return null;
+  return <div className={`story-test-dice-simulator${notice.rolling ? " is-rolling" : ""}`} role="status" aria-live="polite" aria-label={es ? "Resultado de la tirada de dados" : "Dice roll result"}>
+    <strong className="story-test-dice-title">{es ? "Tirada" : "Roll"}</strong>
+    {notice.groups.map(group => <div className="story-test-dice-group" key={group.id}>
+      {notice.groups.length > 1 ? <strong className="story-test-dice-label">{group.label}</strong> : null}
+      <div className="story-test-dice-faces" aria-label={group.rolls.map(value => es ? `resultado ${value}` : `result ${value}`).join(", ")}>
+        {group.rolls.slice(0, 6).map((value, index) => <span className="story-test-die" key={`${group.id}-${index}`}><small>{group.rollLabels?.[index] ?? (group.rollSides?.[index] || group.sides ? `D${group.rollSides?.[index] ?? group.sides}` : "D")}</small><b>{notice.rolling ? "?" : value}</b></span>)}
+        {group.rolls.length > 6 ? <span className="story-test-dice-more">+{group.rolls.length - 6}</span> : null}
+      </div>
+      <span className="story-test-dice-total">{notice.rolling ? "…" : `= ${group.total ?? group.rolls.reduce((sum, value) => sum + value, 0)}`}</span>
+    </div>)}
+  </div>;
+}
 
 export function storyTestPlayTitle(snapshot: StoryTestSnapshot, locale: Locale = snapshot.locale): string {
   return `Play Mode [${snapshot.storyName.trim() || (locale === "es" ? "Historia sin título" : "Untitled story")}]`;
@@ -147,10 +264,9 @@ export function StoryTestInspectorView({ snapshot, dispatch, locale = snapshot.l
   return <section className="story-test-inspector-play" aria-label={storyTestPlayTitle(snapshot, locale)}>
     <header className="story-test-inspector-play-toolbar">
       <strong>{storyTestPlayTitle(snapshot, locale)}</strong>
-      <StoryTestControls compact snapshot={snapshot} dispatch={dispatch} locale={locale} onOpenPlay={onOpenPlay} />
       {detachable && onDetach ? <button type="button" className="story-test-icon" aria-label={es ? "Abrir en otra ventana" : "Open in another window"} title={es ? "Abrir en otra ventana" : "Open in another window"} onClick={onDetach}><ExternalLink size={15} aria-hidden="true" /></button> : null}
     </header>
-    <div className="story-test-inspector-play-content"><StoryTestPlayback snapshot={snapshot} dispatch={dispatch} locale={locale} /></div>
+    <div className="story-test-inspector-play-content"><StoryTestGeneralView tabbed snapshot={snapshot} dispatch={dispatch} locale={locale} onOpenPlay={onOpenPlay} /></div>
   </section>;
 }
 
@@ -172,7 +288,6 @@ function SpeakerPortrait({ url, name, locale }: { url?: string; name: string; lo
   useEffect(() => setFailed(false), [url]);
   return <div className="story-test-character">
     {url && !failed ? <img className="story-test-portrait" src={url} alt={locale === "es" ? `Retrato de ${name}` : `Portrait of ${name}`} onError={() => setFailed(true)} /> : <div className="story-test-portrait-fallback" role="img" aria-label={locale === "es" ? `${name}: sin retrato disponible` : `${name}: no portrait available`}><UserRound size={42} aria-hidden="true" /><span>{locale === "es" ? "Sin retrato" : "No portrait"}</span></div>}
-    <span className="story-test-character-name">{name}</span>
   </div>;
 }
 
@@ -182,30 +297,48 @@ export function StoryTestPreview({ snapshot, dispatch, locale = snapshot.locale,
   const canAdvance = snapshot.active && !snapshot.paused && !snapshot.changed && snapshot.status === "ready";
   const choices = snapshot.view?.choices.filter(choice => !choice.hidden) ?? [];
   const speakerName = snapshot.view?.speakerName ?? snapshot.view?.speakerRef ?? (es ? "Narración" : "Narration");
-  return <section className="story-test-view story-test-play-screen" aria-label={storyTestPlayTitle(snapshot, locale)}>
+  const handlePlaybackClick = (event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest("button, a, input, select, textarea, summary, details, [role='button'], [contenteditable='true'], .story-test-play-overlays, .story-test-play-topline")) return;
+    if (!canAdvance || snapshot.view?.waiting || snapshot.view?.kind === "decision" || Boolean(snapshot.view?.choices.length)) return;
+    dispatch({ type: "continue" });
+  };
+  const handlePlaybackContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    if (snapshot.historyCount > 0) dispatch({ type: "back" });
+  };
+  return <section className="story-test-view story-test-play-screen" aria-label={storyTestPlayTitle(snapshot, locale)} onClick={handlePlaybackClick} onContextMenu={handlePlaybackContextMenu}>
     {showTopline ? <div className="story-test-play-topline"><StateStatus snapshot={snapshot} locale={locale} /><div className="story-test-row">
       {snapshot.nodeId ? <button type="button" className="story-test-icon" aria-label={es ? "Localizar posición en el canvas" : "Locate position on canvas"} title={es ? "Localizar posición" : "Locate position"} onClick={() => dispatch({ type: "locate", nodeId: snapshot.nodeId })}><Crosshair size={15} aria-hidden="true" /></button> : null}
       <button type="button" className="story-test-icon" aria-label={es ? "Abrir debug" : "Open debug"} title={es ? "Abrir debug" : "Open debug"} aria-pressed={snapshot.debugOpen} onClick={() => dispatch({ type: "debug", open: true })}><Bug size={15} aria-hidden="true" /></button>
     </div></div> : null}
-    <RevisionNotice snapshot={snapshot} dispatch={dispatch} locale={locale} />
-    {snapshot.error ? <p className="story-test-message story-test-warning" role="alert">{snapshot.error}</p> : null}
-    {snapshot.view ? <>
-      {snapshot.view.title ? <h2 className="story-test-scene-title">{snapshot.view.title}</h2> : null}
-      {snapshot.view.speakerRef || snapshot.view.speakerPortraitUrl ? <div className="story-test-stage"><SpeakerPortrait url={snapshot.view.speakerPortraitUrl} name={speakerName} locale={locale} /></div> : null}
-      <div className="story-test-dialogue-box" aria-live="polite" aria-atomic="true"><p className="story-test-speaker">{speakerName}</p><div className="story-test-content">{snapshot.view.text || (snapshot.status === "ended" ? es ? "Fin de la historia." : "The story has ended." : es ? "Elige cómo continuar." : "Choose how to continue.")}</div></div>
-    </> : null}
-    <InteractionRun snapshot={snapshot} dispatch={dispatch} locale={locale} />
-    {snapshot.message ? <p className="story-test-message" role="alert">{conditionDiagnosticMessage(snapshot.message, locale)}</p> : null}
-    {!snapshot.active ? <div className="story-test-empty-screen"><Play size={30} aria-hidden="true" /><p>{es ? "Pulsa Play para iniciar la historia." : "Press Play to start the story."}</p><small>{es ? "Las elecciones solo cambian el estado temporal." : "Choices only change temporary state."}</small></div> : null}
-    {choices.length ? <div className="story-test-responses" aria-label={es ? "Opciones" : "Options"}>{choices.map((choice, index) => <div key={choice.id}>
-      <button type="button" className="story-test-response" disabled={!canAdvance || choice.status !== "satisfied"} onClick={() => dispatch({ type: "choose", outcomeId: choice.id })}>
-        <span className="story-test-response-number" aria-hidden="true">{choice.status === "satisfied" ? index + 1 : <LockKeyhole size={14} />}</span><span className="story-test-response-text">{choice.text}{choice.status !== "satisfied" ? <small>{conditionDiagnosticMessage(choice.reason ?? (es ? "No cumple sus requisitos" : "Requirements not met"), locale)}</small> : null}</span>
-      </button>
-      {choice.status !== "satisfied" && !choice.masked ? <details><summary>{es ? "Ver requisitos" : "View requirements"}</summary>{choice.summary ? <p>{choice.summary}</p> : null}<EvaluationExplanation result={choice.evaluation} locale={locale} /></details> : null}
-    </div>)}</div> : null}
-    {!snapshot.view?.choices.length && snapshot.status === "ready" ? <div className="story-test-play-footer"><button type="button" className="story-test-primary" disabled={!canAdvance || snapshot.view?.waiting} onClick={() => dispatch({ type: "continue" })}>{es ? "Continuar" : "Continue"} <Play size={13} aria-hidden="true" /></button></div> : null}
-    {snapshot.status === "ended" && !snapshot.changed ? <div className="story-test-play-footer"><span>{es ? "Fin de la historia" : "End of story"}</span><button type="button" onClick={() => dispatch({ type: "restart" })}><RotateCcw size={14} aria-hidden="true" /> {es ? "Volver a jugar" : "Play again"}</button></div> : null}
-    {showActions && snapshot.view?.actions.length ? <details><summary>{es ? "Acciones disponibles" : "Available actions"}</summary><StoryTestAvailableActions snapshot={snapshot} dispatch={dispatch} locale={locale} canAdvance={canAdvance} /></details> : null}
+    <div className="story-test-play-frame">
+      {(snapshot.view?.eventName || snapshot.view?.title) ? <h2 className="story-test-scene-title">{snapshot.view.eventName || snapshot.view.title}</h2> : null}
+      <div className="story-test-play-scene">
+        <StoryTestConsequenceNotice snapshot={snapshot} locale={locale} />
+        <StoryTestDiceSimulator snapshot={snapshot} locale={locale} />
+        {snapshot.view?.locationName ? <div className="story-test-location-name">{snapshot.view.locationName}</div> : null}
+        {!snapshot.active ? <div className="story-test-empty-screen"><Play size={30} aria-hidden="true" /><p>{es ? "Pulsa Play para iniciar la historia." : "Press Play to start the story."}</p><small>{es ? "Las elecciones solo cambian el estado temporal." : "Choices only change temporary state."}</small></div> : null}
+        {(snapshot.error || snapshot.changed || snapshot.view?.interactions?.length || snapshot.message || choices.length || snapshot.status === "ended" || showActions && snapshot.view?.actions.length) ? <div className="story-test-play-overlays">
+          <RevisionNotice snapshot={snapshot} dispatch={dispatch} locale={locale} />
+          {snapshot.error ? <p className="story-test-message story-test-warning" role="alert">{snapshot.error}</p> : null}
+          <InteractionRun snapshot={snapshot} dispatch={dispatch} locale={locale} />
+          {snapshot.message ? <p className="story-test-message" role="alert">{conditionDiagnosticMessage(snapshot.message, locale)}</p> : null}
+          {choices.length ? <div className="story-test-responses" aria-label={es ? "Opciones" : "Options"}>{choices.map((choice, index) => <div key={choice.id}>
+            <button type="button" className="story-test-response" disabled={!canAdvance || choice.status !== "satisfied"} onClick={() => dispatch({ type: "choose", outcomeId: choice.id })}>
+              <span className="story-test-response-number" aria-hidden="true">{choice.status === "satisfied" ? index + 1 : <LockKeyhole size={14} />}</span><span className="story-test-response-text">{choice.text}{choice.status !== "satisfied" ? <small>{conditionDiagnosticMessage(choice.reason ?? (es ? "No cumple sus requisitos" : "Requirements not met"), locale)}</small> : null}</span>
+            </button>
+            {choice.status !== "satisfied" && !choice.masked ? <details><summary>{es ? "Ver requisitos" : "View requirements"}</summary>{choice.summary ? <p>{choice.summary}</p> : null}<EvaluationExplanation result={choice.evaluation} locale={locale} /></details> : null}
+          </div>)}</div> : null}
+          {snapshot.status === "ended" && !snapshot.changed ? <div className="story-test-play-footer"><span>{es ? "Fin de la historia" : "End of story"}</span><button type="button" onClick={() => dispatch({ type: "restart" })}><RotateCcw size={14} aria-hidden="true" /> {es ? "Volver a jugar" : "Play again"}</button></div> : null}
+          {showActions && snapshot.view?.actions.length ? <details><summary>{es ? "Acciones disponibles" : "Available actions"}</summary><StoryTestAvailableActions snapshot={snapshot} dispatch={dispatch} locale={locale} canAdvance={canAdvance} /></details> : null}
+        </div> : null}
+      </div>
+      {snapshot.view ? <div className="story-test-dialogue-box" aria-live="polite" aria-atomic="true">
+        {snapshot.view.speakerRef || snapshot.view.speakerPortraitUrl ? <div className="story-test-dialogue-portrait"><SpeakerPortrait url={snapshot.view.speakerPortraitUrl} name={speakerName} locale={locale} /></div> : null}
+        <div className="story-test-dialogue-copy"><p className="story-test-speaker">{speakerName}</p><div className="story-test-content">{snapshot.view.text || (snapshot.status === "ended" ? es ? "Fin de la historia." : "The story has ended." : es ? "Elige cómo continuar." : "Choose how to continue.")}</div></div>
+      </div> : null}
+    </div>
   </section>;
 }
 
@@ -221,19 +354,17 @@ export function StoryTestAvailableActions({ snapshot, dispatch, locale = snapsho
   </div>;
 }
 
-/** Fullscreen and detached Play share one player, control row, settings column and debug column. */
-export function StoryTestGeneralView({ snapshot, dispatch, locale = snapshot.locale, fullscreen = false, detachable = false, onDetach, onOpenPlay }: StoryTestViewProps & { fullscreen?: boolean; detachable?: boolean; onDetach?: () => void; onOpenPlay?: () => void }) {
+/** Fullscreen, detached and inspector-tab Play share the complete playback tools. */
+export function StoryTestGeneralView({ snapshot, dispatch, locale = snapshot.locale, fullscreen = false, tabbed = false, detachable = false, onDetach, onOpenPlay }: StoryTestViewProps & { fullscreen?: boolean; tabbed?: boolean; detachable?: boolean; onDetach?: () => void; onOpenPlay?: () => void }) {
   const es = locale === "es";
-  return <section className={`story-test-general${fullscreen ? " fullscreen" : ""}`} aria-label={storyTestPlayTitle(snapshot, locale)}>
+  return <section className={`story-test-general${fullscreen ? " fullscreen" : ""}${tabbed ? " tabbed" : ""}`} aria-label={storyTestPlayTitle(snapshot, locale)}>
     <section className="story-test-general-stage" aria-label={es ? "Reproducción" : "Playback"}>
       <StoryTestPreview snapshot={snapshot} dispatch={dispatch} locale={locale} showTopline={false} showActions={false} />
     </section>
     <div className="story-test-general-toolbar" role="toolbar" aria-label={es ? "Controles y acciones de reproducción" : "Playback controls and actions"}>
-      <StateStatus snapshot={snapshot} locale={locale} hideReady />
-      <StoryTestControls snapshot={snapshot} dispatch={dispatch} locale={locale} onOpenPlay={onOpenPlay} />
+      <StoryTestControls snapshot={snapshot} dispatch={dispatch} locale={locale} onOpenPlay={onOpenPlay} showOptions={false} />
       <button type="button" disabled={!snapshot.historyCount} onClick={() => dispatch({ type: "back" })}>{es ? "Anterior" : "Back"}</button>
       <button type="button" disabled={!snapshot.active} onClick={() => dispatch({ type: "restart" })}><RotateCcw size={14} aria-hidden="true" /> {es ? "Reiniciar" : "Restart"}</button>
-      {snapshot.nodeId ? <button type="button" className="story-test-icon" aria-label={es ? "Localizar posición en el canvas" : "Locate position on canvas"} title={es ? "Localizar posición" : "Locate position"} onClick={() => dispatch({ type: "locate", nodeId: snapshot.nodeId })}><Crosshair size={15} aria-hidden="true" /></button> : null}
       {snapshot.view?.actions.length ? <StoryTestAvailableActions snapshot={snapshot} dispatch={dispatch} locale={locale} /> : null}
       {detachable && onDetach ? <button type="button" className="story-test-icon" aria-label={es ? "Abrir Play Mode y Debug en otra ventana" : "Open Play Mode and Debug in another window"} title={es ? "Abrir Play Mode y Debug en otra ventana" : "Open Play Mode and Debug in another window"} onClick={onDetach}><ExternalLink size={15} aria-hidden="true" /></button> : null}
     </div>
@@ -245,7 +376,7 @@ export function StoryTestGeneralView({ snapshot, dispatch, locale = snapshot.loc
 }
 
 /** Toolbar buttons intentionally have no layer/tab semantics. */
-export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale, compact = false, onOpenPlay }: StoryTestViewProps & { compact?: boolean; onOpenPlay?: () => void }) {
+export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale, compact = false, onOpenPlay, showOptions = true }: StoryTestViewProps & { compact?: boolean; onOpenPlay?: () => void; showOptions?: boolean }) {
   const es = locale === "es";
   const [revealed, setRevealed] = useState(false);
   const expanded = !compact || revealed || snapshot.active || snapshot.debugOpen;
@@ -267,9 +398,9 @@ export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale
     <button type="button" className="story-test-icon story-test-play-trigger" aria-label={playbackLabel} title={playbackLabel} aria-expanded={compact ? expanded : undefined} disabled={snapshot.changed || snapshot.status === "ended"} onClick={() => { setRevealed(true); if (!snapshot.active || snapshot.paused) onOpenPlay?.(); dispatch({ type: snapshot.active && !snapshot.paused ? "pause" : "play" }); }}>{snapshot.active && !snapshot.paused ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}</button>
     <span className="story-test-extra-controls" inert={!expanded} aria-hidden={!expanded}>
     <button type="button" className="story-test-icon" aria-label={es ? "Detener y cerrar recorrido" : "Stop and close run"} title={es ? "Detener y cerrar recorrido" : "Stop and close run"} disabled={!snapshot.active && !snapshot.debugOpen} onClick={() => { setRevealed(false); setMenuOpen(false); dispatch({ type: "stop" }); }}><Square size={14} aria-hidden="true" /></button>
-    <button ref={menuButton} type="button" className="story-test-icon" aria-label={es ? "Opciones de Play Mode" : "Play Mode options"} title={es ? "Opciones de Play Mode" : "Play Mode options"} aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen(open => !open)}><ChevronDown size={13} aria-hidden="true" /></button>
+    {showOptions ? <button ref={menuButton} type="button" className="story-test-icon" aria-label={es ? "Opciones de Play Mode" : "Play Mode options"} title={es ? "Opciones de Play Mode" : "Play Mode options"} aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen(open => !open)}><ChevronDown size={13} aria-hidden="true" /></button> : null}
     </span>
-    {menuOpen ? <div id={menuId} className="story-test-settings" role="dialog" aria-label={es ? "Opciones de Play Mode" : "Play Mode options"}>
+    {showOptions && menuOpen ? <div id={menuId} className="story-test-settings" role="dialog" aria-label={es ? "Opciones de Play Mode" : "Play Mode options"}>
       <label className="field-label">{es ? "Escenario inicial" : "Initial scenario"}<select value={snapshot.scenarioId} onChange={event => dispatch({ type: "scenario", id: event.target.value })}><option value="">{es ? "Valores del proyecto" : "Project values"}</option>{snapshot.scenarios.map(scenario => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></label>
       <div className="story-test-row"><button type="button" onClick={() => { onOpenPlay?.(); dispatch({ type: "start" }); closeMenu(); }}>{es ? "Desde la entrada" : "From story entry"}</button><button type="button" disabled={!snapshot.selectedNodeId} onClick={() => { onOpenPlay?.(); dispatch({ type: "start", fromSelection: true }); closeMenu(); }}>{es ? "Desde selección" : "From selection"}</button></div>
       {snapshot.active ? <p><button type="button" onClick={() => { onOpenPlay?.(); dispatch({ type: "restart" }); closeMenu(); }}><RotateCcw size={13} aria-hidden="true" /> {snapshot.changed ? es ? "Reiniciar con la nueva revisión" : "Restart with the new revision" : es ? "Reiniciar recorrido" : "Restart run"}</button></p> : null}
@@ -431,9 +562,39 @@ export function FloatingStoryTestPanel({ kind, title, locale = "en", children, t
 }
 
 function InteractionRun({ snapshot, dispatch, locale }: StoryTestViewProps) {
-  const es = locale === 'es';
+  const es = (locale ?? snapshot.locale) === 'es';
   const interactions = snapshot.view?.interactions ?? [];
   const disabled = !snapshot.active || snapshot.paused || snapshot.changed || snapshot.status !== 'ready';
+  const participantName = (trace: import('../domain.js').InteractionParticipantTrace) => {
+    const subject = trace.subject;
+    const exact = snapshot.scenarioSubjects.find(option => option.value === storyTestSubjectValue(subject))?.label;
+    const name = exact ?? (subject.kind === 'entity' ? snapshot.entities.find(entity => entity.id === subject.entityId)?.name
+      : subject.kind === 'instance' ? snapshot.copies.find(copy => copy.id === subject.instanceId)?.name : undefined);
+    return `${name ?? (trace.participantId === 'actor' ? es ? 'Actor' : 'Actor' : es ? 'Rival' : 'Opponent')}${!exact && trace.variantId && trace.variantId !== 'base' ? ` · ${trace.variantId}` : ''}`;
+  };
+  const tracesView = (traces: import('../domain.js').InteractionParticipantTrace[], completed = false) => {
+    const actor = traces[0];
+    const diceBreakdown = (dice: import('../domain.js').InteractionDice | undefined, rolls?: number[]) => {
+      if (!dice) return es ? 'Sin dado' : 'No dice';
+      let offset = 0;
+      return diceGroups(dice).map(group => { const values = rolls?.slice(offset, offset + group.count); offset += group.count; return `${diceGroupFormula(group)}${values?.length ? ` (${values.join(' + ')})` : ''}`; }).join(' + ');
+    };
+    return <div className="interaction-participant-traces" aria-label={es ? 'Tiradas de los personajes' : 'Character rolls'}>{traces.map((trace, index) => {
+      const comparison = completed && index > 0 && actor.total !== undefined && trace.total !== undefined
+        ? actor.total > trace.total ? es ? 'Victoria' : 'Victory' : actor.total < trace.total ? es ? 'Derrota' : 'Defeat' : es ? 'Empate' : 'Tie' : undefined;
+      const conditionalTotal = (trace.modifierBreakdown ?? []).reduce((sum, item) => sum + item.modifier, 0);
+      const fixedModifier = trace.modifier - conditionalTotal;
+      return <div key={trace.participantId} className="interaction-participant-trace"><strong>{participantName(trace)}</strong>
+        <span>{diceBreakdown(trace.dice, trace.rolls)}{trace.skillSource ? ` + ${trace.skillLabel ?? (trace.skillSource.kind === 'property' ? trace.skillSource.propertyId : trace.skillSource.variableId)} (${trace.skillValue})` : ''}{fixedModifier ? ` ${fixedModifier > 0 ? '+' : '−'} ${Math.abs(fixedModifier)}` : ''}{trace.modifierBreakdown?.map(item => ` ${item.modifier > 0 ? '+' : '−'} ${Math.abs(item.modifier)} · ${item.name}`).join('')}{trace.total !== undefined ? ` = ${trace.total}` : ''}</span>
+        {comparison ? <span>{comparison} · {actor.total} {actor.total! > trace.total! ? '>' : actor.total! < trace.total! ? '<' : '='} {trace.total}</span> : null}</div>;
+    })}</div>;
+  };
+  const latestContest = Object.values(snapshot.state.interactionResults ?? []).filter(result => result.participantTraces?.length)
+    .sort((left, right) => Number(left.executionId.split(':').at(-1)) - Number(right.executionId.split(':').at(-1))).at(-1);
+  const latestRoll = Object.values(snapshot.state.interactionResults ?? []).filter(result => !result.participantTraces?.length && result.rolls?.length)
+    .sort((left, right) => Number(left.executionId.split(':').at(-1)) - Number(right.executionId.split(':').at(-1))).at(-1);
+  const latestRuleTotal = latestRoll?.modifierBreakdown?.reduce((sum, item) => sum + item.modifier, 0) ?? 0;
+  const latestFixedModifier = latestRoll?.modifier === undefined ? 0 : latestRoll.modifier - latestRuleTotal;
   useEffect(() => {
     if (disabled) return;
     const onKey = (event: KeyboardEvent) => {
@@ -447,5 +608,7 @@ function InteractionRun({ snapshot, dispatch, locale }: StoryTestViewProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [disabled, interactions, dispatch]);
-  return <div className="interaction-run" aria-label={es ? 'Interacciones activas' : 'Active interactions'}>{interactions.map(x => <section key={x.id} className="interaction-card"><strong>{x.name}</strong>{x.prompt ? <p>{x.prompt.translations?.[locale ?? snapshot.locale] ?? x.prompt.content}</p> : null}{x.mechanic.kind === 'qte' ? <p>{es ? 'Pulsa' : 'Press'} {x.mechanic.key} · {Math.max(0, (x.mechanic.durationMs - x.elapsedMs) / 1000).toFixed(1)} s</p> : x.mechanic.kind !== 'custom' ? <button type="button" disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id })}>{es ? 'Resolver' : 'Resolve'}</button> : <div><p>{es ? 'Selecciona un resultado manual' : 'Select a manual result'}</p>{x.results.map(r => <button type="button" key={r.id} disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id, resultId: r.id, manual: true })}>{r.name}</button>)}</div>}<details><summary>{es ? 'Forzar resultado' : 'Force result'}</summary>{x.results.map(r => <button type="button" key={r.id} disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id, resultId: r.id })}>{r.name}</button>)}</details></section>)}</div>;
+  return <div className="interaction-run" aria-label={es ? 'Interacciones activas' : 'Active interactions'}>{interactions.map(x => <section key={x.id} className="interaction-card"><strong>{x.name}</strong>{x.prompt ? <p>{x.prompt.translations?.[locale ?? snapshot.locale] ?? x.prompt.content}</p> : null}{x.participantTraces ? tracesView(x.participantTraces) : null}{x.mechanic.kind === 'qte' ? <p>{es ? 'Pulsa' : 'Press'} {x.mechanic.key} · {Math.max(0, (x.mechanic.durationMs - x.elapsedMs) / 1000).toFixed(1)} s</p> : x.mechanic.kind !== 'custom' ? <button type="button" disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id })}>{x.mechanic.kind === 'opposedcheck' ? es ? 'Tirar por los personajes' : 'Roll for characters' : es ? 'Resolver' : 'Resolve'}</button> : <div><p>{es ? 'Selecciona un resultado manual' : 'Select a manual result'}</p>{x.results.map(r => <button type="button" key={r.id} disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id, resultId: r.id, manual: true })}>{r.name}</button>)}</div>}<details><summary>{es ? 'Forzar resultado' : 'Force result'}</summary>{x.results.map(r => <button type="button" key={r.id} disabled={disabled} onClick={() => dispatch({ type: 'resolveInteraction', executionId: x.id, resultId: r.id })}>{r.name}</button>)}</details></section>)}
+    {latestRoll ? <section className="interaction-card interaction-roll-breakdown"><strong>{es ? 'Última tirada' : 'Latest roll'}</strong><p className="interaction-general-result">{latestRoll.resultName ?? (es ? 'Resultado' : 'Result')} · {latestRoll.total}</p><span>{latestRoll.dice ? diceFormula(latestRoll.dice) : es ? 'Sin dado' : 'No dice'}{latestRoll.rolls?.length ? ` (${latestRoll.rolls.join(' + ')})` : ''}{latestRoll.skillSource ? ` + ${latestRoll.skillLabel ?? (latestRoll.skillSource.kind === 'property' ? latestRoll.skillSource.propertyId : latestRoll.skillSource.variableId)} (${latestRoll.skillValue ?? 0})` : ''}</span>{latestFixedModifier ? <small>{es ? 'Modificador fijo' : 'Fixed modifier'}: {latestFixedModifier > 0 ? '+' : '−'}{Math.abs(latestFixedModifier)}</small> : null}{latestRoll.modifierBreakdown?.map(item => <small key={item.ruleId}>{item.modifier > 0 ? '+' : '−'}{Math.abs(item.modifier)} · {item.name}</small>)}{latestRoll.modifier !== undefined && latestRoll.modifierBreakdown?.length ? <small>{es ? 'Modificador total' : 'Total modifier'}: {latestRoll.modifier}</small> : null}</section> : null}
+    {latestContest?.participantTraces ? <section className="interaction-card"><strong>{es ? 'Último enfrentamiento' : 'Latest contest'}</strong><p className="interaction-general-result"><strong>{es ? 'Resultado general' : 'Overall result'}:</strong> {latestContest.resultName ?? (latestContest.resultKey === 'success' ? es ? 'Victoria' : 'Victory' : latestContest.resultKey === 'failure' ? es ? 'Derrota' : 'Defeat' : es ? 'Empate' : 'Tie')}</p>{tracesView(latestContest.participantTraces, true)}</section> : null}</div>;
 }

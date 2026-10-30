@@ -30,7 +30,23 @@ export function useInspectorLayoutMotion(ref: RefObject<HTMLElement | null>, cen
         ], { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }));
       }
     }
-    const cancel = () => animations.forEach(animation => animation.cancel());
+    const motionSurface = dock.querySelector<HTMLElement>(centered ? '.inspector-centered-tabs' : '.event-inspector-cards');
+    if (animations.length && motionSurface) {
+      motionSurface.dataset.layoutAnimating = 'true';
+      const clearMotionSurface = () => {
+        if (animations.every(animation => animation.playState === 'finished' || animation.playState === 'idle')) {
+          delete motionSurface.dataset.layoutAnimating;
+        }
+      };
+      animations.forEach(animation => {
+        animation.addEventListener('finish', clearMotionSurface, { once: true });
+        animation.addEventListener('cancel', clearMotionSurface, { once: true });
+      });
+    }
+    const cancel = () => {
+      animations.forEach(animation => animation.cancel());
+      if (motionSurface?.dataset.layoutAnimating === 'true') delete motionSurface.dataset.layoutAnimating;
+    };
     const update = () => { previous.current = { centered, rects: measure() }; };
     const observer = new ResizeObserver(update);
     observer.observe(dock);

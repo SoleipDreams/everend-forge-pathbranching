@@ -111,6 +111,28 @@ export function canonExplorerTypes(
   });
 }
 
+/** Resolve author-facing type names without changing the stored reference. */
+export function explorerTypeLabel(
+  project: BranchingProject,
+  source: "canon" | "local",
+  typeId: string,
+  config?: UnknownRecord,
+): string {
+  // Older migrations could add the namespace to an already-prefixed ID.
+  const normalize = (id: string) => id.replace(/^(?:type:)+/, "");
+  const normalized = normalize(typeId);
+  if (source === "local") {
+    const property = project.localExplorerProperties?.find((item) =>
+      item.valueType === "entity-type" && normalize(item.id) === normalized,
+    );
+    const legacyType = project.localExplorerTypes?.find((item) => normalize(item.id) === normalized);
+    const label = property?.label || legacyType?.label;
+    if (label) return label;
+  }
+  return canonExplorerTypes(config)
+    .find((item) => normalize(item.id) === normalized)?.label || normalized;
+}
+
 export function canonExplorerProperties(
   config: UnknownRecord | undefined,
 ): CanonExplorerProperty[] {
@@ -149,6 +171,134 @@ export function canonExplorerProperties(
 
 export function flattenCanonExplorerProperties(properties: CanonExplorerProperty[]): CanonExplorerProperty[] {
   return properties.flatMap((property) => [property, ...flattenCanonExplorerProperties(property.children)]);
+}
+
+export function flattenLocalExplorerPropertyTree(
+  properties: LocalExplorerProperty[] | undefined,
+): LocalExplorerProperty[] {
+  return (properties ?? []).flatMap((property) => [
+    property,
+    ...flattenLocalExplorerPropertyTree(property.children),
+  ]);
+}
+
+export function findLocalExplorerPropertyInTree(
+  properties: LocalExplorerProperty[] | undefined,
+  propertyId: string,
+): LocalExplorerProperty | undefined {
+  for (const property of properties ?? []) {
+    if (property.id === propertyId) return property;
+    const child = findLocalExplorerPropertyInTree(property.children, propertyId);
+    if (child) return child;
+  }
+  return undefined;
+}
+
+export function findLocalExplorerPropertyByReference(
+  properties: LocalExplorerProperty[] | undefined,
+  propertyId: string,
+): LocalExplorerProperty | undefined {
+  const normalized = propertyId.startsWith("property:")
+    ? propertyId.slice("property:".length)
+    : propertyId;
+  return findLocalExplorerPropertyInTree(properties, propertyId)
+    ?? findLocalExplorerPropertyInTree(properties, normalized)
+    ?? findLocalExplorerPropertyInTree(properties, `property:${normalized}`);
+}
+
+export function isLocalExplorerSubproperty(
+  properties: LocalExplorerProperty[] | undefined,
+  propertyId: string,
+): boolean {
+  const hasDescendant = (items: LocalExplorerProperty[] | undefined): boolean =>
+    (items ?? []).some((property) =>
+      (property.children ?? []).some((child) =>
+        child.id === propertyId || hasDescendant([child]),
+      ),
+    );
+  return hasDescendant(properties);
+}
+
+export function updateLocalExplorerPropertyInTree(
+  properties: LocalExplorerProperty[] | undefined,
+  propertyId: string,
+  changes: Partial<LocalExplorerProperty>,
+  updatedAt: string,
+): LocalExplorerProperty[] {
+  const source = properties ?? [];
+  let changed = false;
+  const next = source.map((property) => {
+    if (property.id === propertyId) {
+      changed = true;
+      return { ...property, ...changes, updatedAt };
+    }
+    if (!property.children?.length) return property;
+    const children = updateLocalExplorerPropertyInTree(property.children, propertyId, changes, updatedAt);
+    if (children === property.children) return property;
+    changed = true;
+    return { ...property, children, updatedAt };
+  });
+  return changed ? next : source;
+}
+
+export function appendLocalExplorerPropertyToTree(
+  properties: LocalExplorerProperty[] | undefined,
+  property: LocalExplorerProperty,
+  parentId?: string,
+  updatedAt = new Date().toISOString(),
+): LocalExplorerProperty[] | undefined {
+  const source = properties ?? [];
+  if (!parentId) return [...source, property];
+  let appended = false;
+  const visit = (items: LocalExplorerProperty[]): LocalExplorerProperty[] => {
+    let changed = false;
+    const next = items.map((parent) => {
+      if (parent.id === parentId) {
+        appended = true;
+        changed = true;
+        return { ...parent, children: [...(parent.children ?? []), property], updatedAt };
+      }
+      if (!parent.children?.length) return parent;
+      const children = visit(parent.children);
+      if (children === parent.children) return parent;
+      changed = true;
+      return { ...parent, children, updatedAt };
+    });
+    return changed ? next : items;
+  };
+  const next = visit(source);
+  return appended ? next : undefined;
+}
+
+export function removeLocalExplorerPropertyFromTree(
+  properties: LocalExplorerProperty[] | undefined,
+  propertyId: string,
+  updatedAt = new Date().toISOString(),
+): { properties: LocalExplorerProperty[]; removed: LocalExplorerProperty } | undefined {
+  let removed: LocalExplorerProperty | undefined;
+  const visit = (items: LocalExplorerProperty[]): LocalExplorerProperty[] => {
+    let changed = false;
+    const next: LocalExplorerProperty[] = [];
+    for (const property of items) {
+      if (property.id === propertyId) {
+        removed = property;
+        changed = true;
+        continue;
+      }
+      if (property.children?.length) {
+        const children = visit(property.children);
+        if (children !== property.children) {
+          next.push({ ...property, children, updatedAt });
+          changed = true;
+          continue;
+        }
+      }
+      next.push(property);
+    }
+    return changed ? next : items;
+  };
+  const next = visit(properties ?? []);
+  return removed ? { properties: next, removed } : undefined;
 }
 
 function propertyValueAtPath(
@@ -262,7 +412,7 @@ export function canonExplorerPropertyTypes(
   const nested = text(config?.version) === "3.0";
 
   if (!types.length) {
-    return [{ id: "all", label: "All canon types", properties }];
+    return [{ id: "all", label: "All canon properties", properties }];
   }
 
   return types.map((type) => {
@@ -320,6 +470,9 @@ export function typeCapability(
     ...(legacy?.grantable === undefined && configured?.grantable !== undefined
       ? { grantable: configured.grantable }
       : {}),
+    ...(legacy?.inventoryItem === undefined && configured?.inventoryItem !== undefined
+      ? { inventoryItem: configured.inventoryItem }
+      : {}),
     ...(legacy?.location === undefined && configured?.location !== undefined
       ? { location: configured.location }
       : {}),
@@ -327,12 +480,17 @@ export function typeCapability(
       ? { runtimeRoles: configured.runtimeRoles }
       : {}),
   };
+  const runtimeRoles = legacy?.runtimeRoles ?? configured?.runtimeRoles ??
+    (configured?.grantable || legacy?.grantable ? ["owned" as const] : undefined);
+  const grantable = merged.grantable === true || runtimeRoles?.includes("owned") === true;
   return {
     ...merged,
     typeId: normalizedTypeId,
     source,
-    runtimeRoles: legacy?.runtimeRoles ?? configured?.runtimeRoles ??
-      (configured?.grantable || legacy?.grantable ? ["owned" as const] : undefined),
+    runtimeRoles,
+    // Preserve the established `item` type as inventoryable when older stories
+    // only recorded its ownable role. Other ownable types opt in explicitly.
+    inventoryItem: merged.inventoryItem ?? (normalizedTypeId === "item" && grantable),
   };
 }
 
@@ -466,6 +624,10 @@ export function createLocalExplorerType(
   };
 }
 
+function entityTypePropertyId(typeId: string): string {
+  return typeId.startsWith("type:") ? typeId : `type:${typeId}`;
+}
+
 export function createLocalExplorerProperty(
   label = "New local property",
   valueType: LocalExplorerProperty["valueType"] = "text",
@@ -490,6 +652,7 @@ export function createLocalExplorerProperty(
     ...(options?.description ? { description: options.description } : {}),
     ...(options?.required ? { required: options.required } : {}),
     ...(options?.options ? { options: options.options } : {}),
+    ...(valueType === "group" ? { children: [] } : {}),
     appliesToTypes: options?.appliesToTypes ?? [],
     ...(options?.targetTypes ? { targetTypes: options.targetTypes } : {}),
     ...(options?.icon ? { icon: options.icon } : {}),
@@ -523,7 +686,7 @@ export function migrateLocalTypesToProperties(
 ): LocalExplorerProperty[] {
   if (!types || types.length === 0) return [];
   return types.map((type) => ({
-    id: `type:${type.id}`,
+    id: entityTypePropertyId(type.id),
     label: type.label,
     valueType: "entity-type" as const,
     description: type.description,
@@ -546,9 +709,10 @@ export function migrateLogicTypeOverridesToPropertyOverrides(
 ): LogicPropertyOverride[] {
   if (!typeOverrides || typeOverrides.length === 0) return [];
   return typeOverrides.map((override) => ({
-    propertyId: `type:${override.typeId}`,
+    propertyId: entityTypePropertyId(override.typeId),
     source: override.source,
     ...(override.grantable !== undefined ? { grantable: override.grantable } : {}),
+    ...(override.inventoryItem !== undefined ? { inventoryItem: override.inventoryItem } : {}),
     ...(override.location !== undefined ? { location: override.location } : {}),
     ...(override.container !== undefined ? { container: override.container } : {}),
     ...(override.runtimeRoles !== undefined ? { runtimeRoles: override.runtimeRoles } : {}),

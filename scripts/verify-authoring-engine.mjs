@@ -17,7 +17,7 @@ function fixture() {
     localExplorerEntities:[{id:'key',name:'Key',type:'item',properties:{wear:0,usable:true},status:'draft',createdAt:'',updatedAt:''},{id:'chest',name:'Chest',type:'container',properties:{},status:'draft',createdAt:'',updatedAt:''},{id:'actor',name:'Actor',type:'person',properties:{strength:0},status:'draft',createdAt:'',updatedAt:''},{id:'npc',name:'Recipient',type:'person',properties:{strength:0},status:'draft',createdAt:'',updatedAt:''}],
     localExplorerProperties:[{id:'wear',label:'Wear',valueType:'number',createdAt:'',updatedAt:''},{id:'usable',label:'Usable',valueType:'boolean',createdAt:'',updatedAt:''},{id:'strength',label:'Strength',valueType:'number',createdAt:'',updatedAt:''}],
     logicPropertyOverrides:[{source:'local',propertyId:'wear',conditionReadable:true,actionWritable:true},{source:'local',propertyId:'usable',conditionReadable:true,actionWritable:true},{source:'local',propertyId:'strength',conditionReadable:true,actionWritable:true}],
-    logicTypeOverrides:[{source:'local',typeId:'item',grantable:true,runtimeRoles:['owned']},{source:'local',typeId:'container',container:true},{source:'local',typeId:'person',container:true,runtimeRoles:['present']}],
+    logicTypeOverrides:[{source:'local',typeId:'item',grantable:true,inventoryItem:true,runtimeRoles:['owned']},{source:'local',typeId:'container',container:true},{source:'local',typeId:'person',container:true,runtimeRoles:['present']}],
     logicVariables:[{id:'strength',name:'Strength',type:'number',value:0,groupId:'ungrouped'},{id:'visits',name:'Visits',type:'number',value:0,groupId:'ungrouped'},{id:'flag',name:'Flag',type:'boolean',value:false,groupId:'ungrouped'}],
     playerProfiles:[{id:'default',name:'Player',playableCharacterRef:'actor',simulation:{}}],
     entityInstances:[{id:'key-a',entityId:'key',name:'Worn key',properties:{wear:8,usable:false},owner:{kind:'entity',entityId:'chest'}},{id:'key-b',entityId:'key',name:'Good key',properties:{wear:1,usable:true},owner:{kind:'entity',entityId:'chest'}}],
@@ -84,6 +84,24 @@ test('entity overrides can explicitly disable inherited capabilities without inv
   assert.equal(resolveLogicField(p,{kind:'entity',entityId:'actor'},'effect','property','strength').status,'disabled');
   assert.equal(resolveLogicField(p,{kind:'entity',entityId:'npc'},'effect','property','strength').status,'enabled');
   assert.equal(resolveLogicField(p,{kind:'entity',entityId:'actor'},'condition','state','present').status,'disabled');
+});
+test('inventory item capability is inherited from an ownable type and can be overridden per entity',()=>{
+  const p=fixture();
+  assert.equal(entityCapabilities(p,'key').inventoryItem,true);
+  assert.equal(entityCapabilities(p,'chest').inventoryItem,false);
+  assert.equal(entityCapabilities({...p,entityOverrides:[{entityId:'key',inventoryItem:false}]},'key').inventoryItem,false);
+  assert.equal(entityCapabilities({...p,entityOverrides:[{entityId:'chest',grantable:true,inventoryItem:true}]},'chest').inventoryItem,true);
+  const legacy={...p,logicTypeOverrides:p.logicTypeOverrides.map(({inventoryItem,...override})=>override)};
+  assert.equal(entityCapabilities(legacy,'key').inventoryItem,true,'Legacy owned `item` types keep their established inventory behavior.');
+  assert.equal(entityCapabilities(normalizeProject(JSON.parse(serializeProject(p))),'key').inventoryItem,true,'The type capability survives story round-trips.');
+});
+test('inventory copy queries count only inventoryable copies, including the any-item query',()=>{
+  const p=fixture(), query={type:'instanceQuery',owner:{kind:'profile',profileId:'default'},quantifier:'count',operator:'==',value:1};
+  const state={entityInstances:[{id:'key-copy',entityId:'key',owner:{kind:'profile',profileId:'default'}},{id:'chest-copy',entityId:'chest',owner:{kind:'profile',profileId:'default'}}]};
+  const any=evaluateConditionDetailed(query,p,state);
+  assert.equal(any.status,'satisfied');assert.equal(any.actual,1);
+  const explicit=evaluateConditionDetailed({...query,entityId:'chest'},p,state);
+  assert.equal(explicit.status,'satisfied');assert.equal(explicit.actual,1,'Saved explicit copy queries retain their behavior.');
 });
 test('strict consequences reject coercion and actually update data objects',()=>{
   const p=fixture(),state=initialAuthoringState(p);

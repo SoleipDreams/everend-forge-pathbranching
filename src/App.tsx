@@ -2,7 +2,8 @@ import { NarrativeNameEditor } from './components/NarrativeNameEditor.js';
 import { AuthoringTextField } from "./components/AuthoringTextField.js";
 import { InspectorPanel } from "./components/InspectorPanel.js";
 import { InteractionsEditor } from './components/InteractionsEditor.js';
-import { setInteractionResultRoute } from './interactionMutations.js';
+import { InteractionConsequencesEditor } from './components/InteractionConsequencesEditor.js';
+import { addInteraction, deleteInteractionBarrier, deleteInteractionUse, setInteractionResultRoute } from './interactionMutations.js';
 import { useInspectorMenuPlacement } from "./components/useInspectorMenuPlacement.js";
 import { InspectorSelect } from "./components/InspectorSelect.js";
 import { InspectorWorldLinks } from "./components/InspectorWorldLinks.js";
@@ -19,7 +20,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -46,7 +46,18 @@ import { DataDrawer } from "./components/DataDrawer.js";
 import { ReferencePicker } from "./components/ReferencePicker.js";
 import { AssetsPanel } from "./components/AssetsPanel.js";
 import { LogicPanel } from "./components/LogicPanel.js";
+import { PropertyCapabilitiesEditor } from "./components/PropertyCapabilitiesEditor.js";
+import { InteractionAuthoringContext } from './components/InteractionAuthoringContext.js';
+import { ConditionReferenceCreationContext } from "./components/ConditionReferenceCreationContext.js";
+import { ItemCatalogContext } from './components/ItemCatalogContext.js';
+import { emptyItemCatalog, itemCatalogFromFiles, itemCatalogPath, serializeItemCatalog, type ItemCatalogLibrary } from './itemCatalog.js';
+import { createConditionReference, mergeConditionReferenceCreation } from "./conditionReferenceCreation.js";
+import { interactionLibraryFromFiles, defaultInteractionMechanicsLibrary, interactionMechanicsPath, serializeInteractionMechanicsLibrary } from './interactionLibrary.js';
+import { saveUniverseBatch, universeBatchFiles } from './projectPersistence.js';
+import { updatePropertyCapability, canonicalPropertyDescriptors } from './characterStats.js';
+import type { InteractionMechanicsLibrary } from './domain.js';
 import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
+import type { ConditionAuthoringContext } from "./conditionAuthoring.js";
 import { StoryTestControls, StoryTestDebug, StoryTestInspectorView, StoryTestPlayback } from "./components/StoryTestViews.js";
 import { storyTestSpeaker } from "./storyTestMedia.js";
 import { useStoryTestController } from "./useStoryTestController.js";
@@ -59,7 +70,7 @@ import { createCanvasPresentationCache } from "./canvas/presentationCache.js";
 import { createCanvasValidationCache, requiresSubcanvasLayout } from "./canvas/interactionPerformance.js";
 import { createNarrativeValidationCache, narrativeContentUnchanged } from "./narrativeValidation.js";
 import { RouteInspector } from "./components/RouteInspector.js";
-import { canvasInspectorTarget, inspectorTargetKind, inspectorTargetTitle, inspectorStackCardHeight, inspectorStackKey, orderedInspectorStack, type InspectorSize } from "./inspectorNavigation.js";
+import { canvasInspectorTarget, closeInspectorStackTabs, inspectorTargetKind, inspectorTargetTitle, inspectorStackCardHeight, inspectorStackKey, orderedInspectorStack, type InspectorSize, type InspectorStackTarget } from "./inspectorNavigation.js";
 import { useInspectorLayoutMotion } from "./components/useInspectorLayoutMotion.js";
 import { InspectorIndexHost } from "./components/InspectorIndexHost.js";
 import "./unifiedInspector.css";
@@ -78,10 +89,11 @@ import { ConnectPanel } from "./components/ConnectPanel.js";
 import { EverendBridgePanel } from "./components/EverendBridgePanel.js";
 import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
-import { nodeTypes, type DialoguePreset } from "./components/StoryNode.js";
+import { nodeTypes, StoryCanvasNodeIcon, type DialoguePreset } from "./components/StoryNode.js";
+import { CanvasMiniMap } from "./components/CanvasMiniMap.js";
 import { HomeForgeMenu, Topbar } from "./components/Topbar.js";
-import { authoringDiagnosticTarget, diagnosticSelection, findingPresentation } from "./diagnosticPresentation.js";
-import { entityUsages } from "./authoringEntities.js";
+import { authoringDiagnosticTarget, diagnosticSelection, findingPresentation, transitionOrderDetails } from "./diagnosticPresentation.js";
+import { entityUsages, removeLocalExplorerEntityReferences, removeLocalExplorerPropertyValues } from "./authoringEntities.js";
 import { useOverlayFocus } from "./components/useOverlayFocus.js";
 import { ApplicationActivity, useApplicationEffect } from "./components/useApplicationActivity.js";
 import { ExplorerGroup, ExplorerPane, useExplorerEmbedded } from "./components/ExplorerPresentation.js";
@@ -107,12 +119,18 @@ import {
   canonPresentationImageForRef,
   flattenCanonExplorerProperties,
   canonExplorerTypes,
+  explorerTypeLabel,
   canonExplorerTypeProperty,
   createLocalExplorerProperty,
   createLocalExplorerType,
+  appendLocalExplorerPropertyToTree,
+  findLocalExplorerPropertyInTree,
+  flattenLocalExplorerPropertyTree,
+  isLocalExplorerSubproperty,
+  removeLocalExplorerPropertyFromTree,
+  updateLocalExplorerPropertyInTree,
   propertyCapability,
   propertyIsEntityPresentable,
-  propertySupportsDialogueTrigger,
   entitySupportsDialogueTrigger,
   DIALOGUE_TRIGGER_ACTIONS,
   typeCapability,
@@ -135,12 +153,12 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Circle,
   Crosshair,
   Castle,
   CircleDot,
   ChevronLeft,
   Database,
+  Dices,
   Download,
   Eye,
   EyeOff,
@@ -166,12 +184,12 @@ import {
   Moon,
   MessageSquareText,
   OctagonAlert,
-  Package,
   Play,
+  PauseCircle,
+  Plus,
   RefreshCw,
   Search,
   Settings,
-  ShieldCheck,
   Split,
   Sun,
   Sparkles,
@@ -180,7 +198,6 @@ import {
   Power,
   Trash2,
   Tag,
-  UserRound,
   X,
 } from "lucide-react";
 import pathbranchingIcon from "./assets/pathbranching-icon.png";
@@ -219,7 +236,6 @@ import type {
   EventCategoryDefinition,
   EventNode,
   EventType,
-  EntityRuntimeStateRole,
   ExplorerPropertyOption,
   LocalExplorerEntity,
   LocalExplorerProperty,
@@ -258,9 +274,6 @@ import {
   DEFAULT_EVENT_INSPECTOR_STATE,
   closeAllEventInspectorTabs,
   closeEventInspectorTab,
-  closeEventInspectorTabsAbove,
-  closeEventInspectorTabsBelow,
-  closeOtherEventInspectorTabs,
   collapseEventInspectorTab,
   deleteEventInspectorTabGroup,
   loadEventInspectorTabGroup,
@@ -307,6 +320,7 @@ import {
   importUniverseAssets,
   importSceneImages,
   indexCanonAssets,
+  registerSharedBrowserUniverse,
   saveWorkingCopy,
   saveUniverseTextFile,
   type ProjectFileState,
@@ -341,9 +355,9 @@ import { BrandLoadingScreen } from "./components/BrandLoadingScreen.js";
 import { StoryCreationEmptyState } from "./components/StoryCreationEmptyState.js";
 import { OnboardingGuide } from "./components/OnboardingGuide.js";
 import { InteractionTutorial } from "./components/InteractionTutorial.js";
+import { SequenceCharacterPicker } from "./components/SequenceCharacterPicker.js";
 import {
   buildPathTree,
-  buildSequenceConnectionPreview,
   assignEventToBranch,
   branchesForSequence,
   eventsForBranch,
@@ -779,9 +793,14 @@ function updateProjectCanvas(
         ...(scopeKey
           ? project.canvas?.scopes?.[scopeKey]?.nodes?.[node.id]
           : project.canvas?.nodes?.[node.id]),
-        position: node.position,
-        ...(node.data.kind === "routeGate" && node.id === manuallyPositionedNodeId
-          ? { manual: true }
+        position: node.data.kind === "routeGate" && node.data.canvasLayerMode === "logic"
+          ? routeGateVisualAnchorFromLogicPosition(node.position, node.width, node.height)
+          : node.position,
+        ...(node.data.kind === "routeGate"
+          ? {
+              positionPinned: true,
+              ...(node.id === manuallyPositionedNodeId ? { manual: true } : {}),
+            }
           : {}),
       },
     ]),
@@ -828,6 +847,53 @@ function updateProjectCanvas(
             },
           }
         : project.canvas?.scopes,
+    },
+  };
+}
+
+function projectEdgeWaypoints(
+  project: BranchingProject,
+  edgeId: string,
+  scope = activeCanvasScope(project),
+) {
+  const scopeKey = scope ? canvasScopeKey(scope) : undefined;
+  const scoped = scopeKey ? project.canvas?.scopes?.[scopeKey]?.edgeWaypoints : undefined;
+  return scoped && Object.prototype.hasOwnProperty.call(scoped, edgeId)
+    ? scoped[edgeId] ?? []
+    : project.canvas?.edgeWaypoints?.[edgeId] ?? [];
+}
+
+function updateProjectEdgeWaypoints(
+  project: BranchingProject,
+  edgeId: string,
+  waypoints: CanvasPoint[],
+  scope = activeCanvasScope(project),
+): BranchingProject {
+  const scopeKey = scope ? canvasScopeKey(scope) : undefined;
+  if (scopeKey) {
+    const scopeState = project.canvas?.scopes?.[scopeKey];
+    return {
+      ...project,
+      canvas: {
+        ...project.canvas,
+        scopes: {
+          ...(project.canvas?.scopes ?? {}),
+          [scopeKey]: {
+            ...scopeState,
+            edgeWaypoints: {
+              ...(scopeState?.edgeWaypoints ?? {}),
+              [edgeId]: waypoints,
+            },
+          },
+        },
+      },
+    };
+  }
+  return {
+    ...project,
+    canvas: {
+      ...project.canvas,
+      edgeWaypoints: { ...(project.canvas?.edgeWaypoints ?? {}), [edgeId]: waypoints },
     },
   };
 }
@@ -931,7 +997,8 @@ type ConnectedNarrativeNodeKind =
   | "dialogue"
   | "speechBeat"
   | "directionBeat"
-  | "dialogueStart";
+  | "dialogueStart"
+  | "interaction";
 
 type DialoguePresetSpeakerOption = {
   id: string;
@@ -1680,6 +1747,95 @@ function visibleCanvasFlowBounds(reactFlowInstance: ReactFlowInstance<any, any>)
   };
 }
 
+function availableCanvasCenterOffset(
+  shell: HTMLElement | null,
+  zoom: number,
+) {
+  const flowElement = shell?.querySelector<HTMLElement>(".pb-canvas-stage .react-flow");
+  if (!flowElement || !zoom) return { x: 0, y: 0 };
+  const canvas = flowElement.getBoundingClientRect();
+  if (!canvas.width || !canvas.height) return { x: 0, y: 0 };
+
+  // In canvas focus mode the inspector intentionally covers almost the entire
+  // canvas, so there is no useful uncovered region to center into.
+  const inspector = shell?.classList.contains("context-focus")
+    ? null
+    : shell?.querySelector<HTMLElement>(".pb-context-surface:not([hidden])");
+  if (!inspector || getComputedStyle(inspector).display === "none") {
+    return { x: 0, y: 0 };
+  }
+
+  const dock = inspector.getBoundingClientRect();
+  const blocked = {
+    left: Math.max(canvas.left, dock.left),
+    top: Math.max(canvas.top, dock.top),
+    right: Math.min(canvas.right, dock.right),
+    bottom: Math.min(canvas.bottom, dock.bottom),
+  };
+  if (blocked.right <= blocked.left || blocked.bottom <= blocked.top) {
+    return { x: 0, y: 0 };
+  }
+
+  const candidates = [
+    { left: canvas.left, top: canvas.top, right: canvas.right, bottom: blocked.top },
+    { left: canvas.left, top: blocked.bottom, right: canvas.right, bottom: canvas.bottom },
+    { left: canvas.left, top: blocked.top, right: blocked.left, bottom: blocked.bottom },
+    { left: blocked.right, top: blocked.top, right: canvas.right, bottom: blocked.bottom },
+  ].filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
+  if (candidates.length === 0) return { x: 0, y: 0 };
+
+  const available = candidates.reduce((largest, rect) =>
+    (rect.right - rect.left) * (rect.bottom - rect.top) >
+      (largest.right - largest.left) * (largest.bottom - largest.top)
+      ? rect
+      : largest,
+  );
+  const canvasCenter = { x: (canvas.left + canvas.right) / 2, y: (canvas.top + canvas.bottom) / 2 };
+  const availableCenter = { x: (available.left + available.right) / 2, y: (available.top + available.bottom) / 2 };
+  return {
+    x: (canvasCenter.x - availableCenter.x) / zoom,
+    y: (canvasCenter.y - availableCenter.y) / zoom,
+  };
+}
+
+function centerCanvasOnNode(
+  instance: ReactFlowInstance<any, any>,
+  shell: HTMLElement | null,
+  node: StoryCanvasNode,
+  options: { duration?: number; zoom?: number } = {},
+) {
+  const zoom = options.zoom ?? instance.getViewport().zoom;
+  const offset = availableCanvasCenterOffset(shell, zoom);
+  const size = canvasNodeSize(node);
+  instance.setCenter(
+    node.position.x + size.width / 2 + offset.x,
+    node.position.y + size.height / 2 + offset.y,
+    { duration: options.duration ?? 220, zoom },
+  );
+}
+
+function locateCanvasNode(
+  instance: ReactFlowInstance<any, any>,
+  shell: HTMLElement | null,
+  node: StoryCanvasNode,
+  enteredScope = false,
+) {
+  const viewport = instance.getViewport();
+  const canvas = shell?.querySelector<HTMLElement>(".pb-canvas-stage .react-flow")?.getBoundingClientRect();
+  const size = canvasNodeSize(node);
+  const offset = availableCanvasCenterOffset(shell, viewport.zoom);
+  const centered = canvas && Math.hypot(
+    (node.position.x + size.width / 2 + offset.x) * viewport.zoom + viewport.x - canvas.width / 2,
+    (node.position.y + size.height / 2 + offset.y) * viewport.zoom + viewport.y - canvas.height / 2,
+  ) <= 40;
+  const closeZoom = 1.15;
+  const wideZoom = 0.8;
+  const zoom = !enteredScope && centered && viewport.zoom >= (closeZoom + wideZoom) / 2
+    ? wideZoom
+    : closeZoom;
+  centerCanvasOnNode(instance, shell, node, { zoom });
+}
+
 function ensureCanvasNodeVisible(
   reactFlowInstance: ReactFlowInstance<any, any>,
   node: StoryCanvasNode,
@@ -1900,10 +2056,21 @@ function CanvasBreadcrumbScroller({ children, ariaLabel, es }: { children: React
     const viewport = viewportRef.current;
     if (!viewport) return;
     syncOverflow();
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(syncOverflow);
+    let frame: number | undefined;
+    const scheduleSyncOverflow = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        syncOverflow();
+      });
+    };
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(scheduleSyncOverflow);
     observer?.observe(viewport);
     if (viewport.firstElementChild) observer?.observe(viewport.firstElementChild);
-    return () => observer?.disconnect();
+    return () => {
+      observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, [children, syncOverflow]);
 
   useEffect(() => stopEdgeScroll, [stopEdgeScroll]);
@@ -2497,6 +2664,7 @@ function BasicConditionEditor({
   onChange,
   compact = false,
   contextEntityIds,
+  context,
 }: {
   project: BranchingProject;
   label?: string;
@@ -2507,8 +2675,9 @@ function BasicConditionEditor({
   onChange: (value: ConditionInput | undefined) => void;
   compact?: boolean;
   contextEntityIds?: string[];
+  context?: ConditionAuthoringContext;
 }) {
-  return <LogicConditionEditor project={project} label={label} value={value} onChange={onChange} compact={compact} contextEntityIds={contextEntityIds} />;
+  return <LogicConditionEditor project={project} draftId={context?.nodeId} context={context} label={label} value={value} onChange={onChange} compact={compact} contextEntityIds={contextEntityIds} />;
 }
 
 function TransitionConditionEditor({
@@ -2518,6 +2687,7 @@ function TransitionConditionEditor({
   dataObjects,
   grantableOptions,
   onChange,
+  context,
 }: {
   project: BranchingProject;
   value?: ConditionInput;
@@ -2525,10 +2695,12 @@ function TransitionConditionEditor({
   dataObjects: ProjectDataObject[];
   grantableOptions: GrantableEntityOption[];
   onChange: (value: ConditionInput | undefined) => void;
+  context?: ConditionAuthoringContext;
 }) {
   return (
     <BasicConditionEditor
       project={project}
+      context={context}
       label="If"
       value={value}
       canonRefs={canonRefs}
@@ -3637,6 +3809,7 @@ function SequenceOutlinePanel({
   selectedId,
   onSelect,
   onUpdateSequence,
+  onCreateSequenceCharacter,
 }: {
   project: BranchingProject;
   propertiesConfig?: Record<string, unknown>;
@@ -3644,17 +3817,18 @@ function SequenceOutlinePanel({
   selectedId?: string;
   onSelect: (id: string) => void;
   onUpdateSequence: (id: string, updates: Partial<Sequence>) => void;
+  onCreateSequenceCharacter: (sequenceId: string, name: string) => void;
 }) {
   const es = useInterfaceLocale() === "es";
-  const connections = buildSequenceConnectionPreview(project).filter(
-    (connection) =>
-      connection.fromSequenceId === sequence?.id ||
-      connection.toSequenceId === sequence?.id,
-  );
 
-  const characterOptions = project.canonRefs
-    .filter((ref) => canonRefIsEntityPresentable(project, propertiesConfig, ref))
-    .map((ref) => ({ id: ref.id, label: ref.label ?? ref.id }));
+  const characterOptions = [
+    ...project.canonRefs
+      .filter((ref) => canonRefIsEntityPresentable(project, propertiesConfig, ref))
+      .map((ref) => ({ id: ref.id, label: ref.label ?? ref.id })),
+    ...(project.localExplorerEntities ?? [])
+      .filter((entity) => localEntityIsSpeaker(project, entity))
+      .map((entity) => ({ id: entity.id, label: entity.name })),
+  ].filter((option, index, options) => options.findIndex((candidate) => candidate.id === option.id) === index);
 
   if (!sequence) {
     return (
@@ -3675,7 +3849,6 @@ function SequenceOutlinePanel({
 
         <OutlineBadges
           badges={[
-            sequence.id === project.entrySequenceId ? (es ? "secuencia inicial" : "entry sequence") : "",
             `${sequence.eventIds.length} ${es ? "eventos" : "events"}`,
             `${sequence.branchIds?.length ?? 0} ${es ? "ramas" : "branches"}`,
             conditionCount(sequence.availability)
@@ -3687,7 +3860,7 @@ function SequenceOutlinePanel({
           ]}
         />
       </button>
-      <ExplorerGroup id="sequence-settings" title={es ? "Configuración de secuencia" : "Sequence settings"}><section className="outline-editor">
+      <InspectorPanel title={es ? "Configuración de secuencia" : "Sequence settings"}><section className="outline-editor sequence-settings-editor">
         <label className="field-label">
           {es ? "Nombre" : "Name"}
           <input
@@ -3714,56 +3887,31 @@ function SequenceOutlinePanel({
             ))}
           </select>
         </label>
-        <label className="field-label">
-          {es ? "Protagonista" : "Protagonist"}
-          <select
-            value={sequence.characterRef ?? ""}
-            onChange={(event) =>
-              onUpdateSequence(sequence.id, {
-                characterRef: event.target.value || undefined,
-              })
-            }
-          >
-            <option value="">{es ? "Sin protagonista" : "No protagonist"}</option>
-            {characterOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section></ExplorerGroup>
-      <ExplorerGroup id="sequence-connections" title={es ? "Conexiones de secuencia" : "Sequence connections"} defaultOpen>
-      <section className="outline-section">
-        {connections.length ? (
-          connections.map((connection) => (
-            <button
-              type="button"
-              className="outline-card relation"
-              key={connection.id}
-              onClick={() => onSelect(`file:event:${connection.fromEventId}`)}
-            >
-              <strong>
-                {connection.fromSequenceName} {"->"} {connection.toSequenceName}
-              </strong>
-              <span>
-                {connection.fromEventName} {"->"} {connection.toEventName}
-              </span>
-              <OutlineBadges
-                badges={[
-                  connection.label,
-                  connection.conditionCount
-                    ? `${connection.conditionCount} conditions`
-                    : "",
-                ]}
-              />
-            </button>
-          ))
-        ) : (
-          <span className="empty-line">{es ? "Todavía no hay rutas entre secuencias." : "No cross-sequence transitions yet."}</span>
-        )}
-      </section></ExplorerGroup>
-      <ExplorerGroup id="sequence-identity" title={es ? "Detalles técnicos" : "Technical details"}><code>{sequence.id}</code></ExplorerGroup>
+      </section></InspectorPanel>
+      <InspectorPanel title={es ? "Actores" : "Actors"}>
+        <section className="outline-editor sequence-actors-editor">
+          <div className="field-label sequence-character-field">
+            <span>{es ? "Personajes principales" : "Main characters"}</span>
+            <SequenceCharacterPicker
+              options={characterOptions}
+              value={sequence.characterRefs ?? (sequence.characterRef ? [sequence.characterRef] : [])}
+              locale={es ? "es" : "en"}
+              onChange={(characterRefs) =>
+                onUpdateSequence(sequence.id, { characterRefs, characterRef: undefined })
+              }
+              onCreateLocalCharacter={(name) => onCreateSequenceCharacter(sequence.id, name)}
+            />
+          </div>
+        </section>
+      </InspectorPanel>
+      <InspectorPanel title={es ? "Conexiones de secuencia" : "Sequence connections"}>
+        <div className="sequence-coming-soon">
+          <details>
+            <summary>{es ? "Próximamente" : "Coming soon"}</summary>
+            <p>{es ? "La navegación entre secuencias se podrá configurar aquí." : "Navigation between sequences will be configured here."}</p>
+          </details>
+        </div>
+      </InspectorPanel>
     </div>
   );
 }
@@ -4133,6 +4281,7 @@ function FilesPanel({
   onRenameSequence,
   onDeleteSequence,
   onUpdateSequence,
+  onCreateSequenceCharacter,
   onCreateBranch,
   onUpdateBranch,
   onDeleteBranch,
@@ -4168,6 +4317,7 @@ function FilesPanel({
   onRenameSequence: () => void;
   onDeleteSequence: () => void;
   onUpdateSequence: (id: string, updates: Partial<Sequence>) => void;
+  onCreateSequenceCharacter: (sequenceId: string, name: string) => void;
   onCreateBranch: () => void;
   onUpdateBranch: (id: string, updates: Partial<Branch>) => void;
   onDeleteBranch: (id: string) => void;
@@ -4203,7 +4353,6 @@ function FilesPanel({
     >
       <StoriesPanel stories={stories} activeStoryId={activeStoryId}
         sequences={project.sequences} activeSequenceId={currentSequenceId}
-        eventCount={activeSequence?.eventIds.length ?? 0} fileCount={totalItems}
         onStoryChange={onStoryChange} onSequenceChange={onSequenceChange}
         onCreateStory={onCreateStory} onRenameStory={onRenameStory} onDeleteStory={onDeleteStory}
         onCreateSequence={onCreateSequence} onRenameSequence={onRenameSequence} onDeleteSequence={onDeleteSequence} />
@@ -4219,6 +4368,7 @@ function FilesPanel({
             selectedId={selectedId}
             onSelect={onSelect}
             onUpdateSequence={onUpdateSequence}
+            onCreateSequenceCharacter={onCreateSequenceCharacter}
           />
         </ExplorerPane>
         <ExplorerPane active={activeOutlineTab === "branches"}>
@@ -4386,9 +4536,7 @@ function mergeManualInspectorDraft(
 
   const localProperty =
     selection.source === "local"
-      ? draftProject.localExplorerProperties?.find(
-          (item) => item.id === selection.id,
-        )
+      ? findLocalExplorerPropertyInTree(draftProject.localExplorerProperties, selection.id)
       : undefined;
   // Capabilities save immediately. A metadata draft must not overwrite them.
   const mappingIds = draft.integrationMappingIds ?? (selection.source === "canon" ? ["pathbranching:additional-characters"] : []);
@@ -4400,8 +4548,11 @@ function mergeManualInspectorDraft(
     ...project,
     ...(localProperty
       ? {
-          localExplorerProperties: (project.localExplorerProperties ?? []).map(
-            (item) => (item.id === selection.id ? localProperty : item),
+          localExplorerProperties: updateLocalExplorerPropertyInTree(
+            project.localExplorerProperties,
+            selection.id,
+            localProperty,
+            new Date().toISOString(),
           ),
         }
       : {}),
@@ -4411,6 +4562,8 @@ function mergeManualInspectorDraft(
 
 function inspectorTabIcon(tab: InspectorTab) {
   if (tab.mode === "play") return Play;
+  if (tab.selection.type === "node" && tab.selection.id.startsWith("interaction:")) return Dices;
+  if (tab.selection.type === "node" && tab.selection.id.startsWith("barrier:")) return PauseCircle;
   if (tab.id.startsWith("dialogue:")) return MessageSquare;
   if (tab.id.startsWith("routeGate:")) return GitBranch;
   if (tab.id.startsWith("decision:") || tab.id.startsWith("outcome:"))
@@ -4524,6 +4677,7 @@ function EventAuthoringDock({
   onCloseOtherInspectorTabs,
   onDisableInspectorDebug,
   onToggleInspectorMaximized,
+  toolbarHost,
   inspectorSize, onInspectorResize, onFold, inspectorStackOrder, onInspectorStackOrderChange,
   fullscreen, onFullscreenChange, onNameMutation,
   children,
@@ -4558,6 +4712,7 @@ function EventAuthoringDock({
   onCloseOtherInspectorTabs: (id: string) => void;
   onDisableInspectorDebug: () => void;
   onToggleInspectorMaximized: () => void;
+  toolbarHost: HTMLElement | null;
   inspectorSize: InspectorSize;
   inspectorStackOrder: string[];
   onInspectorStackOrderChange: (order: string[]) => void;
@@ -4615,9 +4770,22 @@ function EventAuthoringDock({
   useEffect(() => {
     const dock = dockRef.current;
     if (!dock) return;
-    const observer = new ResizeObserver(entries => setDockHeight(entries[0]?.contentRect.height ?? 0));
+    let frame: number | undefined;
+    const measureHeight = () => {
+      frame = undefined;
+      const measuredHeight = Math.round(dock.getBoundingClientRect().height);
+      if (measuredHeight > 0) setDockHeight(current => current === measuredHeight ? current : measuredHeight);
+    };
+    const scheduleMeasure = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(measureHeight);
+    };
+    const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(dock);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, [eventInspector.open, inspectorTabs.length, eventInspector.openEventIds.length]);
   const [tabContextMenu, setTabContextMenu] = useState<
     | { kind: "event"; eventId: string; x: number; y: number }
@@ -4641,6 +4809,7 @@ function EventAuthoringDock({
     (group) => group.id === selectedTabGroupId,
   );
   const hasInspectorTabs = openEvents.length + inspectorTabs.length > 0;
+  const hasExpandedInspector = Boolean(eventInspector.expandedEventId || inspectorTabs.some(tab => tab.id === expandedInspectorTabId));
   const inspectorSearchItems = useMemo(() => {
     const events = project.events.flatMap(event => {
       const parentName = event.parentEventId ? project.events.find(parent => parent.id === event.parentEventId)?.name : undefined;
@@ -4892,6 +5061,24 @@ function EventAuthoringDock({
     [],
   );
 
+  const renderInspectorWindowTools = () => (
+    <div className="inspector-stack-tools inspector-window-tools" role="toolbar" aria-label={locale === "es" ? "Vista del inspector" : "Inspector view"}>
+      {!fullscreen ? renderGroupMenu("stack") : null}
+      {!fullscreen ? <button
+        type="button"
+        className="inspector-maximize-button"
+        title={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
+        aria-label={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
+        aria-pressed={inspectorMaximized}
+        disabled={fullscreen}
+        onClick={onToggleInspectorMaximized}
+      >
+        {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+      </button> : null}
+      <button type="button" className="inspector-maximize-button" aria-label={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} title={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} aria-pressed={fullscreen} onClick={() => onFullscreenChange(!fullscreen)}>{fullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}</button>
+    </div>
+  );
+
   useApplicationEffect(() => {
     if (!tabContextMenu) return;
     function handlePointerDown(event: PointerEvent) {
@@ -4946,7 +5133,10 @@ function EventAuthoringDock({
                   style={{ "--stack-index": index + 1, "--inspector-card-height": `${inspectorCardHeight(tab.id)}px` } as CSSProperties}
                 >
                   {expanded ? <div className="event-inspector-card-resize-border" onPointerDown={(event) => resizeInspectorCard(event, tab.id)} title="Drag top border to resize" /> : null}
-                  <div className="event-editor-header">
+                  <div className="event-editor-header" onClick={(event) => {
+                    if (event.target instanceof Element && event.target.closest("button, input, select, textarea, a, [contenteditable='true'], .event-editor-actions")) return;
+                    toggleInspectorTab(tab.id);
+                  }}>
                     <button
                       type="button"
                       className={`event-minimized-title${tab.id.startsWith("routeGate:") ? " route-gate-titleless" : ""}`}
@@ -5083,23 +5273,9 @@ function EventAuthoringDock({
             </div>
           ) : null}
           <div className="unified-inspector-width-resize" onPointerDown={event=>{event.preventDefault();const x=event.clientX,width=dockRef.current?.getBoundingClientRect().width??inspectorSize.width;const move=(next:PointerEvent)=>onInspectorResize({...inspectorSize,width:Math.min(1100,Math.max(360,width+x-next.clientX))});const end=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",end);};window.addEventListener("pointermove",move);window.addEventListener("pointerup",end,{once:true});}} />
-          {hasInspectorTabs ? (
-            <div className="inspector-stack-tools inspector-window-tools" role="toolbar" aria-label={locale === "es" ? "Vista del inspector" : "Inspector view"}>
-              {!fullscreen ? renderGroupMenu("stack") : null}
-              {!fullscreen ? <button
-                type="button"
-                className="inspector-maximize-button"
-                title={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
-                aria-label={inspectorMaximized ? locale === "es" ? "Restaurar tamaño" : "Restore size" : locale === "es" ? "Ampliar inspector" : "Expand inspector"}
-                aria-pressed={inspectorMaximized}
-                disabled={fullscreen}
-                onClick={onToggleInspectorMaximized}
-              >
-                {inspectorMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button> : null}
-              <button type="button" className="inspector-maximize-button" aria-label={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} title={fullscreen ? locale === "es" ? "Salir de pantalla completa" : "Exit fullscreen" : locale === "es" ? "Pantalla completa del canvas" : "Canvas fullscreen"} aria-pressed={fullscreen} onClick={() => onFullscreenChange(!fullscreen)}>{fullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}</button>
-            </div>
-          ) : null}
+          {hasInspectorTabs && !fullscreen && !hasExpandedInspector ? renderInspectorWindowTools() : null}
+          {hasInspectorTabs && !fullscreen && hasExpandedInspector && toolbarHost ? createPortal(renderInspectorWindowTools(), toolbarHost) : null}
+          {hasInspectorTabs && fullscreen ? renderInspectorWindowTools() : null}
           <div className="event-inspector-cards" role="list">
           {stack.map((target, index) => {
             if (target.kind === "inspector") {
@@ -5118,7 +5294,10 @@ function EventAuthoringDock({
                 style={{ order: stack.findIndex(target => target.kind === "inspector" && target.id === tab.id), "--stack-index": index + openEvents.length + 1, "--inspector-card-height": `${inspectorCardHeight(tab.id)}px` } as CSSProperties}
               >
                 {expanded ? <div className="event-inspector-card-resize-border" onPointerDown={(event) => resizeInspectorCard(event, tab.id)} title="Drag top border to resize" /> : null}
-                <div className="event-editor-header">
+                <div className="event-editor-header" onClick={(event) => {
+                  if (event.target instanceof Element && event.target.closest("button, input, select, textarea, a, [contenteditable='true'], .event-editor-actions")) return;
+                  if (!fullscreen) toggleInspectorTab(tab.id);
+                }}>
                   <div className="event-header-title event-inspector-node-title">
                     <button type="button" className={`event-minimized-title${tab.id.startsWith("routeGate:") ? " route-gate-titleless" : ""}`} title={tab.id.startsWith("routeGate:") ? undefined : tab.title} onClick={() => { if (!fullscreen) toggleInspectorTab(tab.id); }}>
                       <MinimizedInspectorTabTitle title={inspectorTargetTitle(project,tab.selection,locale)} kind={inspectorTargetKind(project,tab.selection,locale)} Icon={TabIcon} />
@@ -5160,7 +5339,10 @@ function EventAuthoringDock({
                 style={{ order: stack.findIndex(target => target.kind === "event" && target.id === event.id), "--stack-index": index + inspectorTabs.length + 1, "--inspector-card-height": `${inspectorCardHeight(`event:${event.id}`)}px` } as CSSProperties}
               >
                 {isExpanded ? <div className="event-inspector-card-resize-border" onPointerDown={(pointerEvent) => resizeInspectorCard(pointerEvent, `event:${event.id}`)} title="Drag top border to resize" /> : null}
-                <div className="event-editor-header">
+                <div className="event-editor-header" onClick={(clickEvent) => {
+                  if (clickEvent.target instanceof Element && clickEvent.target.closest("button, input, select, textarea, a, [contenteditable='true'], .event-editor-actions")) return;
+                  if (!fullscreen) toggleInspector(event.id);
+                }}>
                   {isExpanded ? (
                     <div className="event-header-title">
                       <strong title={cardEvent.name || "Untitled event"}>
@@ -5178,7 +5360,7 @@ function EventAuthoringDock({
                         </span>
                       </strong>
                       <NarrativeNameEditor project={project} nodeId={cardEvent.id} onMutation={onNameMutation}/>
-                    </div>
+                      </div>
                   ) : (
                     <button
                       type="button"
@@ -5328,52 +5510,6 @@ function EventAuthoringDock({
       ) : null}
     </aside>
   );
-}
-
-const RUNTIME_ROLE_CAPABILITIES: Array<{
-  id: EntityRuntimeStateRole;
-  label: string;
-  description: string;
-  icon: typeof Package;
-}> = [
-  { id: "owned", label: "Owned", description: "Check ownership and grant or remove the entity.", icon: Package },
-  { id: "unlocked", label: "Unlocked", description: "Check and change whether the entity is unlocked.", icon: ShieldCheck },
-  { id: "discovered", label: "Discovered", description: "Check discovery and discover or hide the entity.", icon: Eye },
-  { id: "present", label: "Present", description: "Check presence and make the entity enter or leave.", icon: UserRound },
-];
-
-function RuntimeRoleCapabilityCards({
-  value,
-  onChange,
-}: {
-  value?: LogicTypeOverride;
-  onChange: (changes: Partial<LogicTypeOverride>) => void;
-}) {
-  const enabledRoles = new Set<EntityRuntimeStateRole>([
-    ...(value?.runtimeRoles ?? []),
-    ...(value?.grantable ? ["owned" as const] : []),
-  ]);
-  return <>
-    {RUNTIME_ROLE_CAPABILITIES.map(({ id, label, description, icon: Icon }) => {
-      const enabled = enabledRoles.has(id);
-      return <button
-        key={id}
-        type="button"
-        className={`logic-capability-card${enabled ? " active" : ""}`}
-        onClick={() => {
-          const runtimeRoles = enabled
-            ? [...enabledRoles].filter((role) => role !== id)
-            : [...enabledRoles, id];
-          onChange({ runtimeRoles, ...(id === "owned" ? { grantable: !enabled } : {}) });
-        }}
-        aria-pressed={enabled}
-      >
-        <div className="logic-capability-icon"><Icon size={16} /></div>
-        <div className="logic-capability-content"><strong>{label}</strong><span>{description}</span></div>
-        <div className="logic-capability-toggle">{enabled ? <CheckCircle2 size={18} /> : <Circle size={18} />}</div>
-      </button>;
-    })}
-  </>;
 }
 
 function Inspector({
@@ -5573,10 +5709,11 @@ function Inspector({
   const [objectInspectorTab, setObjectInspectorTab] = useState("overview");
   const selectionKey = selection ? inspectorSelectionKey(selection) : "";
   const changeInspectorSection = (requestedSection: string) => {
-    let section = requestedSection === "consequences" ? "conditions" : requestedSection;
     const modules = selection?.type === "node" ? narrativeInspectorModules(project, selection.id) : undefined;
+    let section = requestedSection === "consequences" && !modules?.some(module => module.id === "consequences") ? "conditions" : requestedSection;
     if (modules && !modules.some(module => module.id === section)) {
       if (section === "choices") section = modules.find(module => module.id === "narrativeDecision")?.id ?? modules.find(module => module.id === "narrativeSequence")?.id ?? modules.find(module => module.id === "path")?.id ?? section;
+      else if ((section === "conditions" || section === "interactions") && modules.some(module => module.id === "narrativeDecision")) section = "narrativeDecision";
     }
     setObjectInspectorTab(section);
     if (modules) {
@@ -5639,7 +5776,8 @@ function Inspector({
     const selectionKey = inspectorSelectionKey(selection);
     if (selectionKey !== requestedLogicTab.selectionKey) return;
     const routeInspector = selection.type === "edge" || selectedNode?.data.kind === "routeGate";
-    setObjectInspectorTab(requestedLogicTab.part === "consequences" ? routeInspector ? "connections" : "conditions" : requestedLogicTab.part);
+    const hasConsequences = selection.type === "node" && narrativeInspectorModules(project, selection.id)?.some(module => module.id === "consequences");
+    setObjectInspectorTab(requestedLogicTab.part === "consequences" && !hasConsequences ? routeInspector ? "connections" : "conditions" : requestedLogicTab.part);
   }, [requestedLogicTab, selection]);
   const selectedCanon =
     selection?.type === "canon"
@@ -5682,14 +5820,15 @@ function Inspector({
   const selectedExplorerProperty =
     selection?.type === "explorerProperty"
       ? selection.source === "local"
-        ? project.localExplorerProperties?.find(
-            (property) => property.id === selection.id,
-          )
+        ? findLocalExplorerPropertyInTree(project.localExplorerProperties, selection.id)
         : [
             ...canonExplorerTypes(propertiesConfig).map(canonExplorerTypeProperty),
             ...flattenCanonExplorerProperties(canonExplorerProperties(propertiesConfig)),
           ].find((property) => property.id === selection.id)
       : undefined;
+  const selectedExplorerPropertyIsSubproperty = Boolean(selection?.type === "explorerProperty"
+    && selection.source === "local"
+    && isLocalExplorerSubproperty(project.localExplorerProperties, selection.id));
   const characterMappingId = "pathbranching:additional-characters";
   const additionalCharacterCategories = project.integrationConfigOverride?.mappings
     .find((mapping) => mapping.id === characterMappingId)?.worldnotionTypes ?? [];
@@ -5715,20 +5854,13 @@ function Inspector({
   const selectedDecisionContext =
     selectedNode?.data.kind === "decision" &&
     typeof selectedNode.data.details?.eventId === "string"
-      ? {
-          eventId: selectedNode.data.details.eventId,
-          decision: findEvent(
-            project,
-            selectedNode.data.details.eventId,
-          )?.decisions?.find(
-            (decision) =>
-              decision.id ===
-              (
-                selectedNode.data.details?.decision as
-                  { id?: string } | undefined
-              )?.id,
-          ),
-        }
+      ? (() => {
+          const eventId = selectedNode.data.details!.eventId as string;
+          const details = selectedNode.data.details ?? {};
+          const decisionId = String((details.decision as { id?: string } | undefined)?.id ?? details.decisionId ?? "")
+            .replace(`decision:${eventId}:`, "");
+          return { eventId, decision: findEvent(project, eventId)?.decisions?.find(item => item.id === decisionId) };
+        })()
       : undefined;
   const selectedDialogueContext =
     selectedNode?.data.kind === "dialogue" &&
@@ -5866,23 +5998,25 @@ function Inspector({
     const saved = modules ? readInspectorModulePreferences(project.projectId, selectionKey)?.active : undefined;
     const matchingRequest = requestedSection?.selectionKey === selectionKey ? requestedSection : undefined;
     const requested = matchingRequest?.requestId ? matchingRequest.section : saved ?? matchingRequest?.section;
-    let part = requested === "write" ? "path" : requested === "logic" ? "conditions" : requested === "consequences" ? "conditions" : requested;
+    let part = requested === "write" ? "path" : requested === "logic" ? "conditions" : requested === "consequences" && !modules?.some(module => module.id === "consequences") ? "conditions" : requested;
     if (isBeat && (!part || part === "overview" || part === "path")) part = "content";
     if (selectedNode?.data.kind === "dialogue" && (part === "path" || part === "content")) part = "narrativeSequence";
-    if (selectedNode?.data.kind === "decision" && (part === "path" || part === "content" || part === "choices")) part = "narrativeDecision";
+    if (selectedNode?.data.kind === "decision" && (part === "path" || part === "content" || part === "choices" || part === "overview")) part = "narrativeDecision";
+    if (selectedNode?.data.kind === "decision" && part === "conditions") part = "narrativeDecision";
+    if (selectedNode?.data.kind === "decision" && part === "interactions") part = "narrativeDecision";
     if (selectedNode?.data.kind === "event" && part === "choices") part = "path";
     if (selectedNode?.data.kind === "dialogue" && part === "choices") part = "narrativeSequence";
-    if (selectedNode?.data.kind === "outcome" && (part === "path" || part === "choices")) part = "content";
+    if (selectedNode?.data.kind === "outcome" && (!part || ["overview", "path", "choices", "narrativeDecision", "decisionSettings"].includes(part))) part = "content";
     if (selection?.type === "entityInstance" && (!part || part === "overview")) part = "copies";
     const kind = selectedNode?.data.kind ?? (event ? "event" : undefined);
     const allowed = modules ? modules.map(module => module.id) : selection?.type === "edge" || kind === "routeGate" ? ["connections","conditions","interactions"]
       : selection?.type === "narrativeAction" || selection?.type === "narrativeRule" ? ["overview","conditions","connections"]
       : selection?.type === "entityInstance" ? ["copies","connections"]
       : selection?.type === "canon" || selection?.type === "explorerEntity" ? ["overview","uses","copies","connections"]
-      : isBeat ? ["content","connections","conditions"]
-      : kind === "decision" ? ["narrativeDecision","connections","conditions"]
-      : kind === "outcome" ? ["overview","content","connections","conditions"]
-      : kind === "dialogue" ? ["overview","narrativeSequence","connections","conditions"]
+      : isBeat ? ["content","consequences","connections","conditions"]
+      : kind === "outcome" ? ["content","conditions","consequences","interactions","connections"]
+      : kind === "decision" ? ["decisionSettings","narrativeDecision","connections"]
+      : kind === "dialogue" ? ["overview","consequences","narrativeSequence","connections","conditions"]
       : kind === "event" ? ["overview","path","connections","conditions"] : ["overview"];
     if (part === "route") part = "connections";
     if (!part || !allowed.includes(part)) part=allowed[0];
@@ -5978,7 +6112,7 @@ function Inspector({
     if (selectedDecisionContext?.decision)
       return {
         label: selectedDecisionContext.decision.name ?? "Untitled decision",
-        kind: "Decision",
+        kind: "Decisions",
         Icon: Split,
       };
     if (selectedDialogueBeatContext)
@@ -6061,7 +6195,7 @@ function Inspector({
   const narrativeIdentityKind = selection?.type === "node" ? inspectorTargetKind(project, selection, interfaceLocale) : undefined;
   const interactionSelection = selection?.type === 'node' && /^(interaction|barrier):/.test(selection.id) ? inspectorDocumentIndex(project).node(selection.id) : undefined;
   const authoringEventId = interactionSelection?.eventId ?? (['interaction','barrier'].includes(selectedNode?.data.kind ?? '') && typeof selectedNode?.data.details?.eventId === 'string' ? selectedNode.data.details.eventId : undefined) ?? event?.id ?? selectedDecisionContext?.eventId ?? selectedDialogueBeatContext?.eventId ?? selectedDialogueContext?.eventId ?? selectedOutcomeContext?.eventId;
-  const authoringDialogueId = selectedDialogueContext?.dialogue?.id ?? selectedDialogueBeatContext?.dialogueId ?? selectedDecisionContext?.decision?.dialogueId;
+  const authoringDialogueId = selectedDialogueContext?.dialogue?.id ?? selectedDialogueBeatContext?.dialogueId ?? selectedDecisionContext?.decision?.dialogueId ?? (selectedOutcomeContext ? project.events.find(event => event.id === selectedOutcomeContext.eventId)?.decisions?.find(decision => decision.id === selectedOutcomeContext.decisionId)?.dialogueId : undefined);
 
 
   return (
@@ -6086,7 +6220,7 @@ function Inspector({
                   </span>
                 ) : null}
               </strong>
-              {!narrativeIdentityKind ? <span>{({ Event: "Evento", Decision: "Decisión", Conversation: "Conversación", Dialogue: "Diálogo", "Stage direction": "Acotación", Option: "Opción" } as Record<string, string>)[interfaceLocale === "es" ? inspectorIdentity.kind : ""] ?? inspectorIdentity.kind}</span> : null}
+              {!narrativeIdentityKind ? <span>{({ Event: "Evento", Decision: "Decisiones", Decisions: "Decisiones", Conversation: "Conversación", Dialogue: "Diálogo", "Stage direction": "Acotación", Option: "Opción" } as Record<string, string>)[interfaceLocale === "es" ? inspectorIdentity.kind : ""] ?? inspectorIdentity.kind}</span> : null}
             </div>
           </div>
           {onSaveManual ? (
@@ -6111,15 +6245,15 @@ function Inspector({
         <button type="button" className="inspector-save-button" title={interfaceLocale === "es" ? "Guardar cambios del inspector (Ctrl+S)" : "Save inspector changes (Ctrl+S)"} onClick={onSaveManual} disabled={!manualDirty}>{interfaceLocale === "es" ? "Guardar" : "Save"}</button>
       </div> : null}
       <div className="inspector-fixed-navigation">
-        {interactionSelection ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: 'overview', label: 'Overview' }, { id: 'connections', label: 'Connections' }]} /> : null}
+        {interactionSelection ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: 'overview', label: interfaceLocale === 'es' ? 'Interacción' : 'Interaction' }, ...(selection?.type === 'node' && selection.id.startsWith('interaction:') ? [{ id: 'consequences', label: interfaceLocale === 'es' ? 'Consecuencias' : 'Consequences' }] : []), { id: 'connections', label: interfaceLocale === 'es' ? 'Conexiones' : 'Connections' }]} /> : null}
         {selection?.type === "narrativeAction" || selection?.type === "narrativeRule" ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "conditions", label: "Conditions" }, { id: "connections", label: "Connections" }]} /> : null}
         {selection?.type === "entityInstance" ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab === "overview" ? "copies" : objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "copies", label: interfaceLocale === "es" ? "Copia" : "Copy" }, { id: "connections", label: "Connections" }]} /> : null}
         {selectedCanon || selectedExplorerEntity ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "uses", label: interfaceLocale === "es" ? "Usos en la historia" : "Uses in story" }, { id: "copies", label: interfaceLocale === "es" ? "Copias" : "Copies" }, { id: "connections", label: "Connections" }]} /> : null}
         {event ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Event" }, { id: "path", label: "Conversation" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
-        {selectedDecisionContext?.decision ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "narrativeDecision", label: "Narrative" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
+        {selectedDecisionContext?.decision ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "decisionSettings", label: "Decisions" }, { id: "narrativeDecision", label: "Options" }, { id: "connections", label: "Connections" }]} /> : null}
+        {selectedOutcomeContext?.outcome ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{id:'content',label:'Option'},{id:'conditions',label:'Conditions'},{id:'consequences',label:'Consequences'},{id:'interactions',label:'Interaction'},{id:'connections',label:'Connections'}]} /> : null}
         {selectedDialogueBeatContext ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "content", label: "Content" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
         {selectedDialogueContext?.dialogue ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "narrativeSequence", label: "Conversation" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
-        {selectedOutcomeContext?.outcome ? <InspectorContentTabs project={project} selection={selection} value={objectInspectorTab} onChange={changeInspectorSection} tabs={[{ id: "overview", label: "Overview" }, { id: "content", label: "Content" }, { id: "connections", label: "Connections" }, { id: "conditions", label: "Conditions" }]} /> : null}
       </div>
       <div className="inspector-scroll">
         {interactionSelection && selection?.type === 'node' && objectInspectorTab === 'connections' ? <RouteInspector project={project} eventId={interactionSelection.eventId} sourceId={selection.id} section={objectInspectorTab} onSectionChange={changeInspectorSection} onMutation={onAuthoringMutation} onOpen={(id, section) => onOpenAuthoringSection?.(id, section ?? 'overview')} /> : null}
@@ -6197,6 +6331,7 @@ function Inspector({
           <>
             <BasicConditionEditor
               project={project}
+              context={{ sequenceId: sequence.id, nodeId: sequence.id, contextEntityIds: sequence.characterRefs ?? (sequence.characterRef ? [sequence.characterRef] : []) }}
               value={sequence.availability}
               canonRefs={canonRefIds}
               dataObjects={dataObjects}
@@ -6274,6 +6409,7 @@ function Inspector({
             </section>
             <BasicConditionEditor
               project={project}
+              context={{ nodeId: branch.id, contextEntityIds: project.sequences.filter(item => item.branchIds?.includes(branch.id)).flatMap(item => item.characterRefs ?? (item.characterRef ? [item.characterRef] : [])) }}
               value={branch.availability}
               canonRefs={canonRefIds}
               dataObjects={dataObjects}
@@ -6350,94 +6486,11 @@ function Inspector({
 
             </div> : null}
 
-            {["path", "narrativeDecision", "choices", "conditions"].includes(objectInspectorTab) ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
+            {["path", "narrativeDecision", "choices", "conditions"].includes(objectInspectorTab) ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} navigationRequest={requestedSection?.selectionKey === selectionKey ? requestedSection : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
           </>
         ) : null}
 
-        {selectedDecisionContext?.decision ? (
-          <>
-
-            {objectInspectorTab === "overview" ? <section className="inspector-section">
-              {objectInspectorTab === "overview" ? <>
-              <label className="field-label">
-                Type
-                <input
-                  value={selectedDecisionContext.decision!.type}
-                  onChange={(inputEvent) =>
-                    onUpdateDecision(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                      {
-                        type: inputEvent.target.value,
-                      },
-                    )
-                  }
-                />
-              </label>
-              <label className="field-label">
-                Description
-                <textarea
-                  value={selectedDecisionContext.decision!.description ?? ""}
-                  rows={3}
-                  onChange={(inputEvent) =>
-                    onUpdateDecision(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                      {
-                        description: inputEvent.target.value || undefined,
-                      },
-                    )
-                  }
-                />
-              </label>
-              <label className="field-label">
-                When unavailable
-                <select
-                  value={selectedDecisionContext.decision!.unavailableBehavior ?? "locked"}
-                  onChange={(inputEvent) =>
-                    onUpdateDecision(
-                      selectedDecisionContext.eventId,
-                      selectedDecisionContext.decision!.id,
-                      { unavailableBehavior: inputEvent.target.value as "locked" | "hidden" },
-                    )
-                  }
-                >
-                  <option value="locked">Show locked</option>
-                  <option value="hidden">Hide choice</option>
-                </select>
-              </label>
-              {selectedDecisionContext.decision!.unavailableBehavior !== "hidden" ? (
-                <label className="field-label">
-                  Public lock text
-                  <input
-                    value={selectedDecisionContext.decision!.lockText?.content ?? ""}
-                    placeholder="Optional — avoids revealing the real requirement"
-                    onChange={(inputEvent) =>
-                      onUpdateDecision(
-                        selectedDecisionContext.eventId,
-                        selectedDecisionContext.decision!.id,
-                        {
-                          lockText: inputEvent.target.value
-                            ? { format: "plain", content: inputEvent.target.value }
-                            : undefined,
-                        },
-                      )
-                    }
-                  />
-                </label>
-              ) : null}
-              <p className="inspector-connection-hint">
-                Preview: {selectedDecisionContext.decision!.availability
-                  ? selectedDecisionContext.decision!.unavailableBehavior === "hidden"
-                    ? "conditionally hidden"
-                    : "conditionally locked"
-                  : "available"}
-              </p>
-              </> : null}
-            </section> : null}
-            {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
-          </>
-        ) : null}
+        {selectedDecisionContext?.decision || selectedOutcomeContext?.outcome ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab === "overview" ? selectedNode?.data.kind === "outcome" ? "content" : "narrativeDecision" : objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} navigationRequest={requestedSection?.selectionKey === selectionKey ? requestedSection : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
 
         {selectedDialogueBeatContext ? (
           <>
@@ -6630,82 +6683,15 @@ function Inspector({
           </section>
         ) : null}
 
-        {selectedOutcomeContext?.outcome ? (
-          <>
-
-            {objectInspectorTab === "overview" ? (
-            <section className="inspector-section">
-              <h2>Outcome</h2>
-              <label className="field-label">
-                Description
-                <textarea
-                  value={selectedOutcomeContext.outcome!.description ?? ""}
-                  rows={3}
-                  onChange={(inputEvent) =>
-                    onUpdateOutcome(
-                      selectedOutcomeContext.eventId,
-                      selectedOutcomeContext.decisionId,
-                      selectedOutcomeContext.outcome!.id,
-                      {
-                        description: inputEvent.target.value || undefined,
-                      },
-                    )
-                  }
-                />
-              </label>
-              <label className="field-label">
-                Icon
-                <input
-                  value={selectedOutcomeContext.outcome!.icon ?? ""}
-                  placeholder="◇"
-                  onChange={(inputEvent) =>
-                    onUpdateOutcome(
-                      selectedOutcomeContext.eventId,
-                      selectedOutcomeContext.decisionId,
-                      selectedOutcomeContext.outcome!.id,
-                      { icon: inputEvent.target.value || undefined },
-                    )
-                  }
-                />
-              </label>
-              <CanonRefsPicker
-                title="Required Canon Refs"
-                value={selectedOutcomeContext.outcome!.requiredCanonRefs}
-                canonRefs={project.canonRefs}
-                onChange={(requiredCanonRefs) =>
-                  onUpdateOutcome(
-                    selectedOutcomeContext.eventId,
-                    selectedOutcomeContext.decisionId,
-                    selectedOutcomeContext.outcome!.id,
-                    {
-                      requiredCanonRefs,
-                    },
-                  )
-                }
-              />
-              <button
-                type="button"
-                className="danger"
-                onClick={() =>
-                  onDeleteOutcome(
-                    selectedOutcomeContext.eventId,
-                    selectedOutcomeContext.decisionId,
-                    selectedOutcomeContext.outcome!.id,
-                  )
-                }
-              >
-                Delete
-              </button>
-            </section>
-            ) : null}
-
-            {objectInspectorTab !== "overview" ? <UnifiedAuthoringInspector project={project} selection={selection} section={objectInspectorTab} eventId={authoringEventId} dialogueId={authoringDialogueId} selectedNodeId={selection?.type === "node" ? selection.id : undefined} focusId={requestedSection?.selectionKey === selectionKey ? requestedSection.focusId : undefined} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} onHighlight={onHighlightAuthoringNode} highlightedNodeId={highlightedAuthoringNodeId} propertiesConfig={propertiesConfig} onSectionChange={changeInspectorSection} onOpenSection={onOpenAuthoringSection} onOpenReference={onOpenReference} onApplyEvpath={onApplyEvpath} /> : null}
-          </>
-        ) : null}
-
         {authoringEventId && selection?.type === "node" && (objectInspectorTab === "interactions" || interactionSelection && objectInspectorTab === "overview") ? <div className="unified-authoring-inspector inspector-uniform-content inspector-interactions" data-inspector-section="interactions">
           <InspectorPanel title={interfaceLocale === "es" ? "Interacción" : "Interaction"}>
-            <InteractionsEditor key={JSON.stringify([project.projectId, authoringEventId, selection.id])} project={project} eventId={authoringEventId} ownerNodeId={selection.id} dialogueId={interactionSelection?.dialogueId ?? authoringDialogueId} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} />
+            <InteractionsEditor key={JSON.stringify([project.projectId, authoringEventId, selection.id])} project={project} eventId={authoringEventId} ownerNodeId={selection.id} dialogueId={interactionSelection?.dialogueId ?? authoringDialogueId} optionContext={selectedNode?.data.kind === "outcome"} onMutation={onAuthoringMutation} onSelect={onSelectAuthoringNode} />
+          </InspectorPanel>
+        </div> : null}
+
+        {authoringEventId && interactionSelection && selection?.type === 'node' && selection.id.startsWith('interaction:') && objectInspectorTab === 'consequences' ? <div className="unified-authoring-inspector inspector-uniform-content inspector-interaction-consequences" data-inspector-section="consequences">
+          <InspectorPanel title={interfaceLocale === 'es' ? 'Consecuencias' : 'Consequences'}>
+            <InteractionConsequencesEditor key={`${project.projectId}:${selection.id}`} project={project} eventId={interactionSelection.eventId} nodeId={selection.id} onMutation={onAuthoringMutation} />
           </InspectorPanel>
         </div> : null}
 
@@ -6906,14 +6892,23 @@ function Inspector({
             </label>
             <label className="field-label">
               Type
-              <input
+              <select
                 value={selectedExplorerEntity.type}
                 onChange={(event) =>
                   onUpdateLocalExplorerEntity(selectedExplorerEntity.id, {
                     type: event.target.value,
                   })
                 }
-              />
+              >
+                {Array.from(new Set([
+                  selectedExplorerEntity.type,
+                  ...canonExplorerTypes(propertiesConfig).map((type) => type.id),
+                  ...project.canonRefs.flatMap((entity) => entity.kind ? [entity.kind] : []),
+                  ...(project.localExplorerEntities ?? []).map((entity) => entity.type),
+                  ...(project.localExplorerTypes ?? []).map((type) => type.id),
+                  ...(project.localExplorerProperties ?? []).filter((property) => property.valueType === "entity-type").map((property) => property.id),
+                ])).map((id) => <option key={id} value={id}>{explorerTypeLabel(project, "local", id, propertiesConfig)}</option>)}
+              </select>
             </label>
             <label className="field-label">
               Status
@@ -7206,211 +7201,109 @@ function Inspector({
                 <div><dt>Description</dt><dd>{selectedExplorerType.description ?? "not specified"}</dd></div>
               </dl>
             )}
-            <div className="logic-property-editor-subheading"><strong>PathBranching capabilities</strong><span>Configure behavior for entities of this type</span></div>
             {(() => {
-              const typeSource = selectedExplorerSchemaSource ?? "local";
-              const typeCapabilityValue = typeCapability(project, typeSource, selectedExplorerType.id);
-              return (
-                <div className="logic-property-capabilities">
-                  <RuntimeRoleCapabilityCards
-                    value={typeCapabilityValue}
-                    onChange={(changes) => onUpdateLogicTypeOverride(selectedExplorerType.id, typeSource, changes)}
-                  />
-                  <button
-                    type="button"
-                    className={`logic-capability-card${typeCapabilityValue?.location ? " active" : ""}`}
-                    onClick={() => onUpdateLogicTypeOverride(selectedExplorerType.id, typeSource, { location: !typeCapabilityValue?.location })}
-                    aria-pressed={typeCapabilityValue?.location ?? false}
-                  >
-                    <div className="logic-capability-icon"><MapPin size={16} /></div>
-                    <div className="logic-capability-content">
-                      <strong>Location</strong>
-                      <span>Entities of this type can be selected as an event or speech beat location</span>
-                    </div>
-                    <div className="logic-capability-toggle">
-                      {typeCapabilityValue?.location ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </div>
-                  </button>
-                </div>
-              );
+              const source = selectedExplorerSchemaSource ?? "local";
+              const propertyId = selectedExplorerType.id.startsWith("type:") ? selectedExplorerType.id : `type:${selectedExplorerType.id}`;
+              return <PropertyCapabilitiesEditor locale={interfaceLocale} isEntityType project={project} source={source} propertyId={propertyId} propertiesConfig={propertiesConfig}
+                property={propertyCapability(project, source, propertyId)}
+                entityType={typeCapability(project, source, selectedExplorerType.id)}
+                onPropertyChange={changes => onUpdateLogicPropertyOverride(propertyId, source, changes)}
+                onTypeChange={changes => onUpdateLogicTypeOverride(selectedExplorerType.id, source, changes)} />;
             })()}
           </section>
         ) : null}
 
         {selectedExplorerProperty ? (
           <section className="inspector-section">
-            <h2>{selectedExplorerSchemaSource === "canon" ? "Canon property" : "Local property"}</h2>
-            <p className="inspector-connection-hint">
-              {selectedExplorerSchemaSource === "canon"
-                ? "Configure PathBranching capabilities for this canon property."
-                : "Configure how this local property participates in PathBranching."}
-            </p>
+            <h2>{selectedExplorerSchemaSource === "local"
+              ? panelUiText(interfaceLocale, selectedExplorerPropertyIsSubproperty ? "Subproperty" : "Property")
+              : selectedExplorerProperty.id.startsWith("type:") || selectedExplorerProperty.valueType === "entity-type"
+                ? interfaceLocale === "es" ? "Tipo de entidad" : "Entity type"
+                : panelUiText(interfaceLocale, "Property")}</h2>
+            <p className="inspector-connection-hint">{selectedExplorerSchemaSource === "canon"
+              ? interfaceLocale === "es" ? "Definición importada del canon. Configura sus capacidades para esta historia." : "Definition imported from canon. Configure its capabilities for this story."
+              : interfaceLocale === "es" ? "Definición local de esta historia." : "Definition local to this story."}</p>
 
-            {/* Capabilities as Cards */}
-            <div className="logic-property-capabilities">
-              <div className="logic-property-editor-subheading"><strong>Capabilities</strong><span>Configure behavior</span></div>
-              {(() => {
-                const source = selectedExplorerSchemaSource ?? "local";
-                const override = propertyCapability(project, source, selectedExplorerProperty.id);
-                const entityPresentable = propertyIsEntityPresentable(project, source, selectedExplorerProperty.id);
-                const dialogueTrigger = propertySupportsDialogueTrigger(project, source, selectedExplorerProperty.id);
-                const rawTypeId = selectedExplorerProperty.id.startsWith("type:") ? selectedExplorerProperty.id : undefined;
-                const typeOverride = rawTypeId ? typeCapability(project, source, rawTypeId) : undefined;
-                return <>
-                  {rawTypeId ? (
-                    <>
-                      <RuntimeRoleCapabilityCards
-                        value={typeOverride}
-                        onChange={(changes) => onUpdateLogicTypeOverride(rawTypeId, source, changes)}
-                      />
-                      <button
-                        type="button"
-                        className={`logic-capability-card${typeOverride?.location ? " active" : ""}`}
-                        onClick={() => onUpdateLogicTypeOverride(rawTypeId, source, { location: !typeOverride?.location })}
-                        aria-pressed={typeOverride?.location ?? false}
-                      >
-                        <div className="logic-capability-icon"><MapPin size={16} /></div>
-                        <div className="logic-capability-content">
-                          <strong>Location</strong>
-                          <span>Entities of this type can be selected as an event or speech beat location</span>
-                        </div>
-                        <div className="logic-capability-toggle">
-                          {typeOverride?.location ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                        </div>
-                      </button>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    className={`logic-capability-card${override?.conditionReadable === true ? " active" : ""}`}
-                    onClick={() => onUpdateLogicPropertyOverride(selectedExplorerProperty.id, source, { conditionReadable: override?.conditionReadable !== true })}
-                    aria-pressed={override?.conditionReadable === true}
-                  >
-                    <div className="logic-capability-icon"><ShieldCheck size={16} /></div>
-                    <div className="logic-capability-content">
-                      <strong>Available in conditions</strong>
-                      <span>Can be used in conditions and logic checks</span>
-                    </div>
-                    <div className="logic-capability-toggle">
-                      {override?.conditionReadable === true ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`logic-capability-card${override?.actionWritable === true ? " active" : ""}`}
-                    onClick={() => onUpdateLogicPropertyOverride(selectedExplorerProperty.id, source, { actionWritable: override?.actionWritable !== true })}
-                    aria-pressed={override?.actionWritable === true}
-                  >
-                    <div className="logic-capability-icon"><Pencil size={16} /></div>
-                    <div className="logic-capability-content">
-                      <strong>Writable in actions</strong>
-                      <span>Can be modified by story actions</span>
-                    </div>
-                    <div className="logic-capability-toggle">
-                      {override?.actionWritable === true ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`logic-capability-card${entityPresentable ? " active" : ""}`}
-                    onClick={() => onUpdateLogicPropertyOverride(selectedExplorerProperty.id, source, { entityPresentable: !entityPresentable, dialogueTrigger: !entityPresentable ? dialogueTrigger : false })}
-                    aria-pressed={entityPresentable}
-                  >
-                    <div className="logic-capability-icon"><UserRound size={16} /></div>
-                    <div className="logic-capability-content">
-                      <strong>Can be used as character</strong>
-                      <span>Values appear as characters/items in events</span>
-                    </div>
-                    <div className="logic-capability-toggle">
-                      {entityPresentable ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </div>
-                  </button>
-
-                  {entityPresentable ? (
-                    <button
-                      type="button"
-                      className={`logic-capability-card${dialogueTrigger ? " active" : ""} nested`}
-                      onClick={() => onUpdateLogicPropertyOverride(selectedExplorerProperty.id, source, { dialogueTrigger: !dialogueTrigger })}
-                      aria-pressed={dialogueTrigger}
-                    >
-                      <div className="logic-capability-icon"><MessageSquare size={16} /></div>
-                      <div className="logic-capability-content">
-                        <strong>Dialogue trigger source</strong>
-                        <span>Can start dialogue based on property value</span>
-                      </div>
-                      <div className="logic-capability-toggle">
-                        {dialogueTrigger ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                      </div>
-                    </button>
-                  ) : null}
-                </>;
-              })()}
-            </div>
+            {(() => {
+              const source = selectedExplorerSchemaSource ?? "local";
+              const isEntityType = selectedExplorerProperty.id.startsWith("type:") || selectedExplorerProperty.valueType === "entity-type";
+              return <PropertyCapabilitiesEditor locale={interfaceLocale} isEntityType={isEntityType} project={project} source={source} propertyId={selectedExplorerProperty.id} propertiesConfig={propertiesConfig}
+                descriptor={source === "canon" ? selectedExplorerProperty as import('./explorerSchema.js').CanonExplorerProperty : undefined}
+                valueType={selectedExplorerProperty.valueType}
+                property={propertyCapability(project, source, selectedExplorerProperty.id)}
+                entityType={isEntityType ? typeCapability(project, source, selectedExplorerProperty.id) : undefined}
+                onPropertyChange={changes => onUpdateLogicPropertyOverride(selectedExplorerProperty.id, source, changes)}
+                onTypeChange={changes => onUpdateLogicTypeOverride(selectedExplorerProperty.id, source, changes)} />;
+            })()}
 
             {/* Schema Fields (Collapsible) */}
             <details className="logic-property-technical-info">
-              <summary><Info size={12} /> Schema fields</summary>
+              <summary><Info size={12} /> {interfaceLocale === "es" ? "Definición" : "Definition"}</summary>
               <div className="logic-property-technical-content">
                 {selectedExplorerSchemaSource === "local" ? (
-                  <>
+                  (() => {
+                    const localProperty = selectedExplorerProperty as LocalExplorerProperty;
+                    const update = (changes: Partial<LocalExplorerProperty>) =>
+                      onUpdateLocalExplorerProperty(localProperty.id, changes);
+                    const options = localProperty.options ?? [];
+                    const ui = (text: string) => panelUiText(interfaceLocale, text);
+                    return <>
                     <label className="field-label">
-                      Name
+                      {ui("Name")}
                       <input
-                        value={selectedExplorerProperty.label}
-                        onChange={(event) =>
-                          onUpdateLocalExplorerProperty(selectedExplorerProperty.id, {
-                            label: event.target.value,
-                          })
-                        }
+                        value={localProperty.label}
+                        onChange={(event) => update({ label: event.target.value })}
                       />
                     </label>
                     <label className="field-label">
-                      Value type
+                      {ui("Value type")}
                       <select
-                        value={selectedExplorerProperty.valueType}
-                        onChange={(event) =>
-                          onUpdateLocalExplorerProperty(selectedExplorerProperty.id, {
-                            valueType: event.target.value as LocalExplorerProperty["valueType"],
-                          })
-                        }
+                        value={localProperty.valueType}
+                        disabled={Boolean(localProperty.children?.length)}
+                        onChange={(event) => update({ valueType: event.target.value as LocalExplorerProperty["valueType"] })}
                       >
-                        <option value="text">Text</option>
-                        <option value="number">Number</option>
-                        <option value="boolean">Boolean</option>
-                        <option value="select">Select</option>
-                        <option value="multiselect">Multi-select</option>
-                        <option value="entity-ref">Entity reference</option>
+                        {(["entity-type", "text", "number", "boolean", "date", "select", "multiselect", "entity-ref", "entity-ref-list", "group"] as const).map(value => <option key={value} value={value}>{ui(value === "entity-type" ? "Entity type" : value === "entity-ref" ? "Entity reference" : value === "entity-ref-list" ? "Entity reference list" : value === "group" ? "Group (nested properties)" : value)}</option>)}
                       </select>
                     </label>
                     <label className="field-label">
-                      Applies to types
+                      {ui("Applies to types")}
                       <input
-                        value={(selectedExplorerProperty.appliesToTypes ?? []).join(", ")}
-                        onChange={(event) =>
-                          onUpdateLocalExplorerProperty(selectedExplorerProperty.id, {
-                            appliesToTypes: event.target.value
-                              .split(",")
-                              .map((value) => value.trim())
-                              .filter(Boolean),
-                          })
-                        }
+                        value={(localProperty.appliesToTypes ?? []).join(", ")}
+                        placeholder={ui(selectedExplorerPropertyIsSubproperty ? "Inherited from parent property" : "All types")}
+                        onChange={(event) => update({ appliesToTypes: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })}
                       />
                     </label>
                     <label className="field-label">
-                      Description
+                      {ui("Description")}
                       <textarea
                         rows={4}
-                        value={selectedExplorerProperty.description ?? ""}
-                        onChange={(event) =>
-                          onUpdateLocalExplorerProperty(selectedExplorerProperty.id, {
-                            description: event.target.value,
-                          })
-                        }
+                        value={localProperty.description ?? ""}
+                        onChange={(event) => update({ description: event.target.value })}
                       />
                     </label>
-                  </>
+                    {(localProperty.valueType === "entity-ref" || localProperty.valueType === "entity-ref-list") ? <label className="field-label">
+                      {ui("Target entity types")}
+                      <input value={(localProperty.targetTypes ?? []).join(", ")} onChange={event => update({ targetTypes: event.target.value.split(",").map(value => value.trim()).filter(Boolean) })} />
+                    </label> : null}
+                    <label className="logic-property-checkbox">
+                      <input type="checkbox" checked={localProperty.required ?? false} onChange={event => update({ required: event.target.checked })} /> {ui("Required")}
+                    </label>
+                    {(localProperty.valueType === "select" || localProperty.valueType === "multiselect") ? <div className="logic-property-options">
+                      <div className="logic-property-editor-subheading"><strong>{ui("Options")}</strong><span>{options.length}</span></div>
+                      {options.map((option, index) => <div className="logic-property-option" key={`${option.value}-${index}`}>
+                        <input aria-label={`${ui("Value")} ${index + 1}`} value={option.value} onChange={event => update({ options: options.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })} />
+                        <input aria-label={`${ui("Label")} ${index + 1}`} value={option.label} onChange={event => update({ options: options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} />
+                        <button type="button" className="icon-only" aria-label={`${ui("Remove option")} ${index + 1}`} onClick={() => update({ options: options.filter((_, itemIndex) => itemIndex !== index) })}><X size={13} /></button>
+                      </div>)}
+                      <button type="button" className="logic-property-add-option" onClick={() => update({ options: [...options, { value: `option-${options.length + 1}`, label: `Option ${options.length + 1}` }] })}><Plus size={13} /> {ui("Add option")}</button>
+                    </div> : null}
+                    {localProperty.valueType === "entity-type" ? <>
+                      <label className="field-label">{ui("Icon")}<input value={localProperty.icon ?? ""} onChange={event => update({ icon: event.target.value || undefined })} /></label>
+                      <label className="field-label">{ui("Color (optional)")}<input value={localProperty.color ?? ""} onChange={event => update({ color: event.target.value || undefined })} /></label>
+                      <label className="field-label">{ui("Suggested folder (optional)")}<input value={localProperty.suggestedFolder ?? ""} onChange={event => update({ suggestedFolder: event.target.value || undefined })} /></label>
+                    </> : null}
+                    </>;
+                  })()
                 ) : (
                   <dl>
                     <div><dt>ID</dt><dd>{selectedExplorerProperty.id}</dd></div>
@@ -7692,6 +7585,7 @@ function Inspector({
             </section>
             <BasicConditionEditor
               project={project}
+              context={{ sequenceId: selectedDataObject.scope?.sequenceId, eventId: selectedDataObject.scope?.eventId, nodeId: selectedDataObject.id, contextEntityIds: selectedDataObject.canonRefs }}
               value={selectedDataObject.availability}
               canonRefs={canonRefIds}
               dataObjects={dataObjects}
@@ -7727,6 +7621,7 @@ type CanvasContextMenu = {
 };
 
 const DIRECTED_NODE_OPEN_DELAY_MS = 750;
+const DIRECTED_NODE_MOVE_THRESHOLD_PX = 5;
 const NESTED_EDGE_INSPECTOR_OPEN_DELAY_MS = 640;
 const SUBCANVAS_DOUBLE_CLICK_DELAY_MS = 500;
 
@@ -7779,32 +7674,55 @@ function canCreateDialogueFromSelection(
 
 function EventTypeMenuButton({
   label,
+  icon,
   options,
   onSelect,
 }: {
   label: string;
+  icon: ReactNode;
   options: EventCategoryDefinition[];
   onSelect: (categoryId: string) => void;
 }) {
   return (
     <div className="canvas-menu-submenu">
-      <button type="button" className="canvas-menu-submenu-trigger">
-        <span>{label}</span>
-        <ChevronRight size={13} />
+      <button type="button" className="canvas-menu-submenu-trigger canvas-create-menu-item" aria-haspopup="true">
+        <span className="canvas-create-menu-icon" aria-hidden="true">{icon}</span>
+        <span className="canvas-create-menu-item-label">{label}</span>
+        <ChevronRight size={15} className="canvas-create-menu-chevron" aria-hidden="true" />
       </button>
       <div className="canvas-menu-submenu-flyout">
         {options.map((category) => (
           <button
             key={category.id}
             type="button"
+            className="canvas-create-menu-item"
             onClick={() => onSelect(category.id)}
           >
-            {category.label}
-            {category.terminal ? " (final)" : ""}
+            <span className="canvas-create-menu-icon canvas-create-menu-icon--category" aria-hidden="true"><StoryCanvasNodeIcon kind="event" size={15} /></span>
+            <span className="canvas-create-menu-item-label">
+              {category.label}{category.terminal ? " · final" : ""}
+            </span>
           </button>
         ))}
       </div>
     </div>
+  );
+}
+
+function CanvasCreateMenuItem({
+  icon,
+  children,
+  onClick,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className="canvas-create-menu-item" onClick={onClick}>
+      <span className="canvas-create-menu-icon" aria-hidden="true">{icon}</span>
+      <span className="canvas-create-menu-item-label">{children}</span>
+    </button>
   );
 }
 
@@ -7845,13 +7763,16 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
       <div className="canvas-findings-popup-header"><strong>{label}</strong></div>
       {findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
         const presentation = findingPresentation(finding, project, locale);
-        const locatable = Boolean(authoringDiagnosticTarget(project, finding.id) ?? authoringDiagnosticTarget(project, finding.ref) ?? diagnosticSelection(project, finding.id) ?? diagnosticSelection(project, finding.ref)) || finding.code === "orphan_script_block";
+        const transitionOrderTarget = finding.code === "invalid_transition_order" && finding.id
+          ? transitionOrderDetails(project, finding.id, locale)
+          : undefined;
+        const locatable = Boolean(authoringDiagnosticTarget(project, finding.id) ?? authoringDiagnosticTarget(project, finding.ref) ?? diagnosticSelection(project, finding.id) ?? diagnosticSelection(project, finding.ref) ?? transitionOrderTarget?.event) || finding.code === "orphan_script_block";
         return <div className={`finding ${finding.severity}`} key={`${finding.code}:${finding.id}:${finding.ref}:${index}`}>
           <strong>{finding.severity === "error" ? "⚠" : "ⓘ"} {presentation.title}</strong>
-          {locale === "en" ? <span>{presentation.message}</span> : <span>{locale === "es" ? "Localiza el elemento y revisa su configuración. Los detalles incluyen la causa concreta." : ""}</span>}
-          <details><summary>{locale === "es" ? "Detalles" : "Details"}</summary><span>{presentation.technical}</span></details>
+          <span>{presentation.description ?? (locale === "es" ? "Localiza el elemento y revisa su configuración. Los detalles incluyen la causa concreta." : presentation.message)}</span>
+          <details><summary>{locale === "es" ? "Detalles" : "Details"}</summary><span className="finding-technical">{presentation.technical}</span></details>
           <div className="finding-actions">
-            {locatable ? <button type="button" onClick={() => onLocateFinding(finding)}>{locale === "es" ? "Localizar" : "Locate"}</button> : null}
+            {locatable ? <button type="button" onClick={() => { setOpen(false); onLocateFinding(finding); }}>{locale === "es" ? "Localizar" : "Locate"}</button> : null}
             {FIXABLE_FINDING_CODES.has(finding.code) && (finding.id || finding.ref) ? <button type="button" className={finding.code === "invalid_transition_order" ? "" : "danger"} onClick={() => onFixFinding(finding)}>{finding.code === "invalid_transition_order" ? (locale === "es" ? "Corregir orden" : "Fix order") : finding.code === "orphan_script_block" ? (locale === "es" ? "Eliminar bloque huérfano" : "Delete orphan") : (locale === "es" ? "Quitar referencia" : "Remove reference")}</button> : null}
           </div>
         </div>;
@@ -7903,89 +7824,6 @@ function useBreadcrumbLongPress(onInspect: () => void) {
     },
     consumeContextMenu: () => triggeredRef.current,
   };
-}
-
-function BreadcrumbStorySelector({
-  stories,
-  value,
-  onChange,
-  onInspect,
-  es,
-}: {
-  stories: Array<{ id: string; name: string }>;
-  value: string;
-  onChange: (id: string) => void;
-  onInspect: () => void;
-  es: boolean;
-}) {
-  const selectRef = useRef<HTMLSelectElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
-  const longPress = useBreadcrumbLongPress(onInspect);
-  const openMenu = (point?: { x: number; y: number }) => {
-    const rect = selectRef.current?.getBoundingClientRect();
-    if (rect) {
-      const x = point?.x ?? rect.left;
-      const y = point?.y ?? rect.bottom + 6;
-      setMenuPosition({
-        left: Math.max(8, Math.min(x, window.innerWidth - 198)),
-        top: Math.max(8, Math.min(y, window.innerHeight - 72)),
-      });
-    }
-    setMenuOpen(true);
-  };
-  useEffect(() => {
-    if (!menuOpen) return;
-    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
-    const close = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [menuOpen]);
-  return <span className="breadcrumb-crumb breadcrumb-story-crumb">
-    <select
-      ref={selectRef}
-      className="canvas-story-selector"
-      aria-label={es ? "Historia activa" : "Active story"}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-      value={value}
-      onChange={event => onChange(event.target.value)}
-      onPointerDown={longPress.onPointerDown}
-      onPointerMove={longPress.onPointerMove}
-      onPointerUp={longPress.onPointerUp}
-      onPointerCancel={longPress.onPointerCancel}
-      onPointerLeave={longPress.onPointerLeave}
-      onClick={event => longPress.consumeClick(event, () => {})}
-      onContextMenu={event => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!longPress.consumeContextMenu()) openMenu({ x: event.clientX, y: event.clientY });
-      }}
-      onKeyDown={event => {
-        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-          event.preventDefault();
-          openMenu();
-        }
-      }}
-    >
-      {stories.map(story => <option key={story.id} value={story.id}>{story.name}</option>)}
-    </select>
-    {menuOpen ? createPortal(<div
-      ref={menuRef}
-      className="breadcrumb-inspector-menu"
-      style={menuPosition}
-      role="menu"
-      aria-label={es ? "Opciones de la historia" : "Story options"}
-      onContextMenu={event => event.preventDefault()}
-      onKeyDown={event => {
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenuOpen(false); selectRef.current?.focus({ preventScroll: true }); }
-        if (event.key === "Tab") setMenuOpen(false);
-      }}
-    ><button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onInspect(); }}>{es ? "Abrir inspector" : "Open inspector"}</button></div>, document.querySelector<HTMLElement>(".pathbranching-app") ?? document.body) : null}
-  </span>;
 }
 
 function BreadcrumbCrumb({
@@ -8083,7 +7921,6 @@ function BreadcrumbCrumb({
 
 function StoryCanvas({
   contextTab, contextFocus, onContextTabChange, onContextFocusChange,
-  stories, activeStoryId, onStoryChange,
   storyTestActive, inspectorRequest, inspectorSections, inspectorSize, onInspectorResize, inspectorStackOrder, onInspectorStackOrderChange, onInspectorSectionChange, onAuthoringMutation, onOpenInspectorSection, onPinInspectorTarget, onUnpinInspectorTarget, onCollapseInspector, inspectorDebugContent,
   project,
   authoringWorkspace,
@@ -8091,6 +7928,9 @@ function StoryCanvas({
   storyTestWorkspace,
   storyTestPlayTab,
   onOpenStoryPlay,
+  onAddTransitionWaypoint,
+  onMoveTransitionWaypoint,
+  onRemoveTransitionWaypoint,
   testingActive = false,
   propertiesConfig,
   files,
@@ -8209,6 +8049,7 @@ function StoryCanvas({
   onDetachDialogueMembers,
   onDissolveDialogue,
   onCreateDialogueStart,
+  onCreateInteraction,
   onActivateMarkdownTab,
   onCloseMarkdownTab,
   onChangeMarkdownContent,
@@ -8221,6 +8062,7 @@ function StoryCanvas({
   onCloseEventInspectorEventsAbove,
   onCloseEventInspectorEventsBelow,
   onCloseOtherEventInspectorEvents,
+  onCloseInspectorStackRange,
   onPruneEventInspectorEvents,
   collapseInspectorTabOnCanvasClick,
   onSaveEventInspectorTabGroup,
@@ -8235,9 +8077,6 @@ function StoryCanvas({
   onOpenRule,
 }: {
   project: BranchingProject;
-  stories: Array<{ id: string; name: string }>;
-  activeStoryId?: string;
-  onStoryChange: (id: string) => void;
   storyTestActive:boolean;
   inspectorRequest?: InspectorRequest;
   inspectorSections: Record<string,string>;
@@ -8257,6 +8096,9 @@ function StoryCanvas({
   storyTestWorkspace?: ReactNode;
   storyTestPlayTab?: ReactNode;
   onOpenStoryPlay: () => void;
+  onAddTransitionWaypoint: (edgeId: string, point: CanvasPoint) => void;
+  onMoveTransitionWaypoint: (edgeId: string, index: number, point: CanvasPoint, commit: boolean) => void;
+  onRemoveTransitionWaypoint: (edgeId: string, index: number) => void;
   contextTab: "edit" | "test";
   contextFocus: boolean;
   onContextTabChange: (value: "edit" | "test") => void;
@@ -8303,7 +8145,7 @@ function StoryCanvas({
   onSelect: (selection?: Selection) => void;
   onCanvasSelect: (selection?: Selection) => void;
   onOpenCanvasInspector: (selection: Selection) => void;
-  onNavigateScope: (scope: CanvasScope, selection?: Selection) => void;
+  onNavigateScope: (scope: CanvasScope, selection?: Selection, options?: { preserveSelection?: boolean }) => void;
   onOpenEventScript: (eventId: string, textKey?: string) => void;
   onExportPreviewModeChange: (mode: ExportPreviewMode) => void;
   onToggleData: () => void;
@@ -8404,6 +8246,7 @@ function StoryCanvas({
     horizontalGapCells: number;
     verticalGapCells: number;
     selectedNodeIds?: string[];
+    automatic?: boolean;
   }) => void;
   onDeleteTransition: (transitionId: string) => void;
   onCreateScriptTransition?: (eventId: string, from: string, to: string) => void;
@@ -8456,6 +8299,7 @@ function StoryCanvas({
   onDetachDialogueMembers: (nodeIds: string[]) => void;
   onDissolveDialogue: (eventId: string, dialogueId: string) => void;
   onCreateDialogueStart: (eventId: string, position?: CanvasPoint) => void;
+  onCreateInteraction: (eventId: string, dialogueId?: string, position?: CanvasPoint) => void;
   onActivateMarkdownTab: (id: string) => void;
   onCloseMarkdownTab: (id: string) => void;
   onChangeMarkdownContent: (id: string, content: string) => void;
@@ -8468,6 +8312,7 @@ function StoryCanvas({
   onCloseEventInspectorEventsAbove: (eventId: string) => void;
   onCloseEventInspectorEventsBelow: (eventId: string) => void;
   onCloseOtherEventInspectorEvents: (eventId: string) => void;
+  onCloseInspectorStackRange: (target: InspectorStackTarget, direction: "above" | "below" | "others") => void;
   onPruneEventInspectorEvents: (eventIds: readonly string[]) => void;
   collapseInspectorTabOnCanvasClick: boolean;
   onSaveEventInspectorTabGroup: () => void;
@@ -8490,6 +8335,21 @@ function StoryCanvas({
   const [activePinKey, setActivePinKey] = useState<string>();
   // Conversation focus highlights a canvas row without navigating away from its owner inspector.
   const [conversationHighlightedNodeId, setConversationHighlightedNodeId] = useState<string>();
+  const [validationHighlight, setValidationHighlight] = useState<{ nodeIds: string[]; transitionIds: string[] }>();
+  const validationHighlightTimerRef = useRef<number | undefined>(undefined);
+  const validationHighlightRevisionRef = useRef(0);
+  const highlightValidationTarget = useCallback((nodeIds: string[], transitionIds: string[]) => {
+    const revision = ++validationHighlightRevisionRef.current;
+    if (validationHighlightTimerRef.current !== undefined) window.clearTimeout(validationHighlightTimerRef.current);
+    setValidationHighlight({ nodeIds, transitionIds });
+    validationHighlightTimerRef.current = window.setTimeout(() => {
+      if (validationHighlightRevisionRef.current === revision) setValidationHighlight(undefined);
+      validationHighlightTimerRef.current = undefined;
+    }, 5200);
+  }, []);
+  useEffect(() => () => {
+    if (validationHighlightTimerRef.current !== undefined) window.clearTimeout(validationHighlightTimerRef.current);
+  }, []);
   useEffect(() => { setConversationHighlightedNodeId(undefined); }, [selection?.type, selection?.id, project.projectId, project.storyId, activeScope?.kind, activeScope?.id]);
   useEffect(() => {
     if (selection && inspectorSelectionKey(selection) === activePinKey) return;
@@ -8502,9 +8362,25 @@ function StoryCanvas({
   useEffect(() => {
     const element = canvasToolRowRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => setCanvasToolRowHeight(entry.borderBoxSize[0]?.blockSize ?? element.getBoundingClientRect().height));
+    const measureNow = () => {
+      const measuredHeight = Math.round(element.getBoundingClientRect().height);
+      if (measuredHeight > 0) setCanvasToolRowHeight(current => current === measuredHeight ? current : measuredHeight);
+    };
+    let frame: number | undefined;
+    const scheduleMeasure = () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        measureNow();
+      });
+    };
+    measureNow();
+    const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, []);
   useEffect(()=>{if(storyTestActive)onContextTabChange("test");},[storyTestActive]);
   useEffect(()=>{if(!storyTestActive && contextTab === "test")onContextTabChange("edit");},[storyTestActive,contextTab]);
@@ -8530,8 +8406,11 @@ function StoryCanvas({
   const directedNodeHoldRef = useRef<{
     nodeId: string;
     timer: number;
+    pointerId: number;
+    clientX: number;
+    clientY: number;
   } | undefined>(undefined);
-  const pendingLocateNodeRef = useRef<string | undefined>(undefined);
+  const pendingLocateNodeRef = useRef<{ id: string; openInspector?: boolean } | undefined>(undefined);
   const pendingLocateFitSkipRef = useRef<string | undefined>(undefined);
   const draggedNodeRef = useRef(false);
   const [reactFlowInstance, setReactFlowInstance] =
@@ -8541,7 +8420,7 @@ function StoryCanvas({
   const contextMenuWasOpenRef = useRef(false);
   const [editingEdgeId, setEditingEdgeId] = useState<string>();
   const [draggingEvent, setDraggingEvent] = useState(false);
-  const [directedNodeOpening, setDirectedNodeOpening] = useState(false);
+  const [directedNodeOpening, setDirectedNodeOpening] = useState(true);
   const [canvasToolsOpen, setCanvasToolsOpen] = useState(false);
   const canvasToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [canvasToolsPosition, setCanvasToolsPosition] = useState({ left: 0, top: 0 });
@@ -8550,8 +8429,35 @@ function StoryCanvas({
   const [gridLayoutHorizontalGap, setGridLayoutHorizontalGap] = useState(3);
   const [gridLayoutVerticalGap, setGridLayoutVerticalGap] = useState(3);
   const [nestedLayoutMode, setNestedLayoutMode] = useState<NestedLayoutMode>("grid");
+  const arrangedNarrativeNodeIdsRef = useRef<{ scopeKey: string; ids: Set<string> } | undefined>(undefined);
   const [canvasLocale, setCanvasLocale] = useState(primaryLocale);
   const [canvasLocaleMenuOpen, setCanvasLocaleMenuOpen] = useState(false);
+  const [inspectorToolbarHost, setInspectorToolbarHost] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!activeScope || activeScope.kind !== "dialogue") {
+      arrangedNarrativeNodeIdsRef.current = undefined;
+      return;
+    }
+
+    const scopeKey = canvasScopeKey(activeScope);
+    const movableNodeIds = new Set(nodes.filter(isNestedLayoutMovableNode).map((node) => node.id));
+    const previous = arrangedNarrativeNodeIdsRef.current;
+    arrangedNarrativeNodeIdsRef.current = { scopeKey, ids: movableNodeIds };
+
+    if (!previous || previous.scopeKey !== scopeKey) return;
+    const addedNarrativeNode = [...movableNodeIds].some((id) => !previous.ids.has(id));
+    if (!addedNarrativeNode) return;
+
+    onArrangeScopeNodes({
+      mode: nestedLayoutMode,
+      columns: gridLayoutColumns,
+      horizontalGapCells: gridLayoutHorizontalGap,
+      verticalGapCells: gridLayoutVerticalGap,
+      selectedNodeIds: [],
+      automatic: true,
+    });
+  }, [activeScope, gridLayoutColumns, gridLayoutHorizontalGap, gridLayoutVerticalGap, nestedLayoutMode, nodes, onArrangeScopeNodes]);
 
   useEffect(() => {
     if (!canvasToolsOpen) return;
@@ -8605,6 +8511,10 @@ function StoryCanvas({
   }, []);
 
   useEffect(() => {
+    clearDirectedNodeHold();
+  }, [activeScope?.kind, activeScope?.id, canvasLayerMode, directedNodeOpening, clearDirectedNodeHold]);
+
+  useEffect(() => {
     return () => {
       clearPendingEdgeClick();
       clearDirectedNodeHold();
@@ -8621,6 +8531,13 @@ function StoryCanvas({
     });
     return states;
   }, [eventInspector.expandedEventId, eventInspector.openEventIds, expandedInspectorTabId, inspectorTabs]);
+  const inspectorSelectedNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    const activeTab = inspectorTabs.find((tab) => tab.id === expandedInspectorTabId);
+    if (activeTab?.selection.type === "node") ids.add(activeTab.selection.id);
+    if (eventInspector.expandedEventId) ids.add(eventInspector.expandedEventId);
+    return ids;
+  }, [eventInspector.expandedEventId, expandedInspectorTabId, inspectorTabs]);
   const inspectorEdgeStates = useMemo(() => {
     const states = new Map<string, "open" | "expanded">();
     inspectorTabs.forEach((tab) => {
@@ -8652,9 +8569,13 @@ function StoryCanvas({
     () => ({
       nodes: nodes.map((node) => ({
         ...node,
-        selected: conversationHighlightedNodeId ? node.id === conversationHighlightedNodeId : node.selected,
+        selected:
+          node.id === conversationHighlightedNodeId ||
+          inspectorSelectedNodeIds.has(node.id) ||
+          (!inspectorNodeStates.has(node.id) && node.selected),
         data: {
           ...node.data,
+          validationHighlight: validationHighlight?.nodeIds.includes(node.id) === true,
           onOpenInspectorSection:(section:string,target?:Selection,focusId?:string)=>onOpenInspectorSection(target ?? {type:"node",id:node.id},section,focusId),
           onOpenLogicPart:(part:"conditions"|"consequences")=>onOpenInspectorSection({type:"node",id:node.id},part),
           inspectorState: inspectorNodeStates.get(node.id),
@@ -8956,13 +8877,15 @@ function StoryCanvas({
               ? (() => {
                   const eventId = node.data.details!.eventId as string;
                   const decision = node.data.details!.decision as Decision;
-                  const optionStyle = decision.optionStyle === "iconOnly" ? "iconOnly" : "visibleText";
+                  const optionStyle = project.logicFormats?.decisionOptionStyle ?? (decision.optionStyle === "iconOnly" ? "iconOnly" : "visibleText");
                   return {
                     optionStyle,
-                    onOptionStyleUpdate: (style: "visibleText" | "iconOnly") =>
-                      onUpdateDecision(eventId, decision.id, { optionStyle: style }),
                     onOutcomeUpdate: (outcomeId: string, updates: Partial<Pick<Outcome, "visibleText">>) =>
                       onUpdateOutcome(eventId, decision.id, outcomeId, updates),
+                    onOutcomeReorder: (outcomeId: string, targetOutcomeId: string, position: "before" | "after") => {
+                      const outcomes = mutations.reorderOutcomeList(decision.outcomes, outcomeId, targetOutcomeId, position);
+                      if (outcomes !== decision.outcomes) onUpdateDecision(eventId, decision.id, { outcomes });
+                    },
                     onCreateOutcome: () => onCreateOutcome(eventId, decision.id),
                     onDeleteOutcome: (outcomeId: string) =>
                       onDeleteOutcome(eventId, decision.id, outcomeId),
@@ -9065,8 +8988,8 @@ function StoryCanvas({
                     presentEntityIds: presentEntityRefs,
                     speakerOptions,
                     onTextUpdate: (locale: string, value: string) => onUpdateLocalizedText(textKey, locale, value),
-                    onCharacterUpdate: (characterRef?: string) => {
-                      onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, { characterRef, characterVariantId: undefined });
+                    onCharacterUpdate: (characterRef?: string, characterVariantId?: string) => {
+                      onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, { characterRef, characterVariantId: characterRef && characterVariantId !== "base" ? characterVariantId : undefined });
                       if (characterRef && characterRef !== UNKNOWN_SPEAKER_REF && beatEvent && !presentEntityRefs.includes(characterRef)) {
                         onUpdateEvent(beatEvent.id, { presentEntityRefs: [...presentEntityRefs, characterRef] });
                       }
@@ -9074,10 +8997,6 @@ function StoryCanvas({
                     onCreateSpeaker: beatEventId
                       ? (name: string) => onCreateLocalSpeaker(beatEventId, blockRef.scriptId, blockRef.blockId, name)
                       : undefined,
-                    onCharacterVariantUpdate: (characterVariantId: string) =>
-                      onUpdateScriptBlock(blockRef.scriptId, blockRef.blockId, {
-                        characterVariantId: characterVariantId === "base" ? undefined : characterVariantId,
-                      }),
                     narrativeConnector:
                       (node.data.kind === "speechBeat" || node.data.kind === "directionBeat") &&
                       activeScope &&
@@ -9125,6 +9044,7 @@ function StoryCanvas({
           type: editable ? "editable" : edgeItem.type,
           data: {
             ...edgeData,
+            validationHighlight: edgeItem.id.startsWith("edge:transition:") && Boolean(validationHighlight?.transitionIds.includes(edgeItem.id.slice("edge:transition:".length))),
             returnRoute: returnConnectors.has(edgeItem.id) || edgeData.returnRoute === true,
             returnConnector: returnConnectors.get(edgeItem.id),
             onMeasureReturnConnector: (width: number) => {
@@ -9132,6 +9052,8 @@ function StoryCanvas({
               if (connector) measureReturnConnector(connector.edgeId, width);
             },
             connectionPadding: canvasBackground.connectionPadding,
+            onMoveWaypoint: edgeData.kind === "transition" ? onMoveTransitionWaypoint : undefined,
+            onRemoveWaypoint: edgeData.kind === "transition" ? onRemoveTransitionWaypoint : undefined,
             customLabel:
               edgeData.kind === "entry" ? customLabel ?? "" : customLabel,
             inspectorState: inspectorEdgeStates.get(edgeItem.id),
@@ -9140,21 +9062,13 @@ function StoryCanvas({
               ? (label: string) => commitEdgeLabel(edgeItem.id, label)
               : undefined,
             onCancelLabel: editable ? () => setEditingEdgeId(undefined) : undefined,
-            onOpenInspectorSection: (section: string, target?: Selection, focusId?: string) => {
-              const routeGateId = typeof edgeData.routeGateId === "string" ? edgeData.routeGateId : undefined;
-              const routeId = routeGateId && edgeItem.id.startsWith("edge:transition:") ? edgeItem.id.slice("edge:transition:".length) : undefined;
-              onOpenInspectorSection(target ?? (routeGateId ? { type: "node", id: routeGateId } : { type: "edge", id: edgeItem.id }), section, focusId ?? routeId);
-            },
-            onOpenLogicPart: (part: "conditions" | "consequences") => {
-              const routeGateId = typeof edgeData.routeGateId === "string" ? edgeData.routeGateId : undefined;
-              const routeId = routeGateId && edgeItem.id.startsWith("edge:transition:") ? edgeItem.id.slice("edge:transition:".length) : undefined;
-              onOpenInspectorSection(routeGateId ? { type: "node", id: routeGateId } : { type: "edge", id: edgeItem.id }, part, routeId);
-            },
+            onOpenInspectorSection: undefined,
+            onOpenLogicPart: undefined,
           },
         };
       }),
     }),
-    [measureReturnConnector, returnConnectors, conversationHighlightedNodeId, onOpenInspectorSection, activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onBoundarySelectionChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateLocalSpeaker, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onDiscardPendingBoundaryPort, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig],
+    [measureReturnConnector, returnConnectors, conversationHighlightedNodeId, inspectorSelectedNodeIds, validationHighlight, onOpenInspectorSection, activeScope, canvasLayerMode, canvasBackground.connectionPadding, canvasBackground.gridSize, canvasBackground.snapToGrid, canvasLocale, commitEdgeLabel, editingEdgeId, edges, inspectorEdgeStates, inspectorNodeStates, localeNames, locales, nodes, onAuxiliaryPanelChange, onBoundarySelectionChange, onCanvasSelect, onCreateBoundaryEnd, onCreateBoundaryRoute, onCreateBoundaryRouteEvent, onCreateConnectedNarrativeNode, onCreateLocalSpeaker, onCreateOutcome, onDeleteBoundaryEnd, onDeleteOutcome, onDiscardPendingBoundaryPort, onImportEventCoverImage, onImportSceneImage, onOpenCanvasInspector, onUpdateDecision, onUpdateDialogueBeat, onUpdateEvent, onUpdateEventDialogueBeat, onUpdateLocalizedText, onUpdateOutcome, onUpdateScriptBlock, onUpdateTransition, onWorkspaceBoundsChange, primaryLocale, project, propertiesConfig, onMoveTransitionWaypoint, onRemoveTransitionWaypoint],
   );
   const graph = { nodes: cachePresentedNodes(projectedGraph.nodes), edges: cachePresentedEdges(projectedGraph.edges) };
   const documentIndex = useMemo(() => inspectorDocumentIndex(project), [project]);
@@ -9167,21 +9081,18 @@ function StoryCanvas({
   const activeDialogueScope = activeScope?.kind === "dialogue" ? activeScope : undefined;
 
   useEffect(() => {
-    const pendingNodeId = pendingLocateNodeRef.current;
+    const pendingLocate = pendingLocateNodeRef.current;
+    const pendingNodeId = pendingLocate?.id;
     if (!pendingNodeId || !reactFlowInstance) return;
     const target = graph.nodes.find((node) => node.id === pendingNodeId);
     if (!target) return;
     pendingLocateNodeRef.current = undefined;
-    onSelect({ type: "node", id: target.id });
+    if (pendingLocate?.openInspector) onSelect({ type: "node", id: target.id });
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         if (pendingLocateFitSkipRef.current !== pendingNodeId) return;
-        const size = canvasNodeSize(target);
-        reactFlowInstance.setCenter(
-          target.position.x + size.width / 2,
-          target.position.y + size.height / 2,
-          { duration: 220, zoom: 1 },
-        );
+        if (pendingLocate?.openInspector) centerCanvasOnNode(reactFlowInstance, shellRef.current, target, { duration: 220, zoom: 1 });
+        else locateCanvasNode(reactFlowInstance, shellRef.current, target, true);
         pendingLocateFitSkipRef.current = undefined;
       });
     });
@@ -9229,14 +9140,29 @@ function StoryCanvas({
         return;
       }
       if (findingItem.code === "invalid_transition_order" && findingItem.id) {
-        const ownerEvent = project.events.find((event) =>
+        const routeDetails = transitionOrderDetails(project, findingItem.id, canvasUiLocale);
+        const ownerEvent = routeDetails?.event ?? project.events.find((event) =>
           event.transitions?.some((transition) => transition.from === findingItem.id),
         );
-        if (ownerEvent) {
+        if (!ownerEvent) return;
+        const transitionIds = routeDetails?.routeIds ?? ownerEvent.transitions
+          ?.filter((transition) => transition.from === findingItem.id)
+          .map((transition) => transition.id) ?? [];
+        highlightValidationTarget([findingItem.id], transitionIds);
+        const target = graph.nodes.find((node) => node.id === findingItem.id);
+        if (!target) {
+          pendingLocateNodeRef.current = { id: findingItem.id, openInspector: true };
+          pendingLocateFitSkipRef.current = findingItem.id;
           onNavigateScope(
             { kind: "event", id: ownerEvent.id },
             { type: "node", id: findingItem.id },
           );
+        } else {
+          onSelect({ type: "node", id: findingItem.id });
+          window.requestAnimationFrame(() => {
+            const size = canvasNodeSize(target);
+            reactFlowInstance?.setCenter(target.position.x + size.width / 2, target.position.y + size.height / 2, { duration: 220, zoom: 1 });
+          });
         }
         return;
       }
@@ -9248,12 +9174,15 @@ function StoryCanvas({
           (candidate) => `${owner.id}:${candidate.id}` === findingItem.ref,
         );
         if (owner && block) onFocusScriptBlock({ scriptId: owner.id, blockId: block.id });
-      }      const target = diagnosticSelection(project, findingItem.id) ?? diagnosticSelection(project, findingItem.ref);
+      }
+      const target = diagnosticSelection(project, findingItem.id) ?? diagnosticSelection(project, findingItem.ref);
       if (target) {
         if (target.type === "edge") {
+          highlightValidationTarget([], [target.id]);
           const owner = project.events.find((event) => event.transitions?.some((item) => item.id === target.id));
           if (owner) onNavigateScope({ kind: "event", id: owner.id }, target);
         } else if (target.type === "node") {
+          highlightValidationTarget([target.id], []);
           const event = project.events.find((item) => item.id === target.id);
           const sequence = project.sequences.find((item) => item.id === target.id || item.eventIds.includes(target.id));
           if (event) onNavigateScope({ kind: "event", id: event.id }, target);
@@ -9263,7 +9192,7 @@ function StoryCanvas({
       }
 
     },
-    [onFocusScriptBlock, onNavigateScope, onOpenCanvasInspector, project],
+    [canvasUiLocale, graph.nodes, highlightValidationTarget, onFocusScriptBlock, onNavigateScope, onOpenCanvasInspector, onSelect, project, reactFlowInstance],
   );
   const fixFinding = useCallback(
     (findingItem: ValidationFinding) => {
@@ -9524,71 +9453,61 @@ function StoryCanvas({
       if (nextSelection.type === "edge") {
         const routeId = nextSelection.id.replace(/^edge:transition:/, "");
         const owner = project.events.find(event => event.transitions?.some(route => route.id === routeId));
-        if (owner && !graph.edges.some(edge => edge.id === nextSelection.id)) onNavigateScope({ kind: "event", id: owner.id }, nextSelection);
-        else onSelect(nextSelection);
+        if (owner && !graph.edges.some(edge => edge.id === nextSelection.id)) onNavigateScope({ kind: "event", id: owner.id }, undefined, { preserveSelection: true });
         const edge = graph.edges.find(item => item.id === nextSelection.id);
         const source = graph.nodes.find(node => node.id === edge?.source);
-        if (source) reactFlowInstance?.setCenter(source.position.x + canvasNodeSize(source).width / 2, source.position.y + canvasNodeSize(source).height / 2, { duration: 220 });
+        if (source && reactFlowInstance) {
+          window.requestAnimationFrame(() => locateCanvasNode(reactFlowInstance, shellRef.current, source));
+        }
         return;
       }
-      if (nextSelection.type !== "node") { onSelect(nextSelection); return; }
+      if (nextSelection.type !== "node") return;
+      // Options are embedded in their decision on the canvas. Locating an
+      // inspector only moves the viewport; reopening it resets its editor state.
+      const option = documentIndex.node(nextSelection.id);
+      const ownerDecision = option?.kind === "outcome"
+        ? documentIndex.events.get(option.eventId)?.decisions?.find(decision =>
+            decision.outcomes.some(outcome => nextSelection.id === `outcome:${option.eventId}:${decision.id}:${outcome.id}`))
+        : undefined;
+      const targetId = option && ownerDecision ? `decision:${option.eventId}:${ownerDecision.id}` : nextSelection.id;
       const ownerEventId = eventIdFromSelection(project, graph.nodes, nextSelection)
+        ?? option?.eventId
         ?? ownerEventIdFromCanvasSelection(project, nextSelection);
-      const target = graph.nodes.find((node) => node.id === nextSelection.id);
+      const target = graph.nodes.find((node) => node.id === targetId);
       if (!target) {
         if (ownerEventId) {
-          const scope = canvasScopeForSelection(project, nextSelection, ownerEventId);
+          const scope = option && option.kind !== "event"
+            ? option.dialogueId ? { kind: "dialogue" as const, id: option.dialogueId, eventId: ownerEventId } : { kind: "event" as const, id: ownerEventId }
+            : canvasScopeForSelection(project, nextSelection, ownerEventId);
           if (scope) {
-            pendingLocateNodeRef.current = nextSelection.id;
-            pendingLocateFitSkipRef.current = nextSelection.id;
-            onNavigateScope(scope, nextSelection);
+            pendingLocateNodeRef.current = { id: targetId };
+            pendingLocateFitSkipRef.current = targetId;
+            onNavigateScope(scope, undefined, { preserveSelection: true });
           }
           return;
         }
-        onSelect(nextSelection);
         return;
       }
-      onSelect(nextSelection);
       window.requestAnimationFrame(() => {
-        const size = canvasNodeSize(target);
-        reactFlowInstance?.setCenter(
-          target.position.x + size.width / 2,
-          target.position.y + size.height / 2,
-          { duration: 220 },
-        );
+        if (reactFlowInstance) locateCanvasNode(reactFlowInstance, shellRef.current, target);
       });
     },
-    [graph.nodes, graph.edges, onNavigateScope, onSelect, project, reactFlowInstance],
+    [documentIndex, graph.nodes, graph.edges, onNavigateScope, project, reactFlowInstance],
   );
 
   const closeExplorerInspectorTabsAbove = useCallback(
-    (tabId: string) => {
-      const allTabs = [...inspectorTabs];
-      const index = allTabs.findIndex((tab) => tab.id === tabId);
-      if (index <= 0) return;
-      const tabsToClose = allTabs.slice(0, index).map((tab) => tab.id);
-      tabsToClose.forEach((id) => onCloseInspectorTab(id));
-    },
-    [inspectorTabs, onCloseInspectorTab],
+    (tabId: string) => onCloseInspectorStackRange({ kind: "inspector", id: tabId }, "above"),
+    [onCloseInspectorStackRange],
   );
 
   const closeExplorerInspectorTabsBelow = useCallback(
-    (tabId: string) => {
-      const allTabs = [...inspectorTabs];
-      const index = allTabs.findIndex((tab) => tab.id === tabId);
-      if (index < 0 || index >= allTabs.length - 1) return;
-      const tabsToClose = allTabs.slice(index + 1).map((tab) => tab.id);
-      tabsToClose.forEach((id) => onCloseInspectorTab(id));
-    },
-    [inspectorTabs, onCloseInspectorTab],
+    (tabId: string) => onCloseInspectorStackRange({ kind: "inspector", id: tabId }, "below"),
+    [onCloseInspectorStackRange],
   );
 
   const closeOtherExplorerInspectorTabs = useCallback(
-    (tabId: string) => {
-      const tabsToClose = inspectorTabs.filter((tab) => tab.id !== tabId && tab.mode !== "debug").map((tab) => tab.id);
-      tabsToClose.forEach((id) => onCloseInspectorTab(id));
-    },
-    [inspectorTabs, onCloseInspectorTab],
+    (tabId: string) => onCloseInspectorStackRange({ kind: "inspector", id: tabId }, "others"),
+    [onCloseInspectorStackRange],
   );
 
   const openContextMenu = useCallback(
@@ -9658,9 +9577,11 @@ function StoryCanvas({
     (event: ReactMouseEvent, edgeItem: StoryCanvasEdge) => {
       event.preventDefault();
       event.stopPropagation();
-      // Transition lines are deliberately inert: configure split routes from
-      // their Logic Gate, rather than from an edge menu or inspector.
-      if (edgeItem.data?.kind === "transition") return;
+      if (edgeItem.data?.kind === "transition") {
+        const point = reactFlowInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        if (point) onAddTransitionWaypoint(edgeItem.id, point);
+        return;
+      }
       if (typeof edgeItem.data?.routeSourceId !== "string") return;
       contextMenuFocusRef.current = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
         ? document.activeElement
@@ -9676,7 +9597,7 @@ function StoryCanvas({
         flowY: 0,
       });
     },
-    [],
+    [onAddTransitionWaypoint, reactFlowInstance],
   );
 
   const openSelectionContextMenu = useCallback(
@@ -9804,25 +9725,6 @@ function StoryCanvas({
     );
     onWorkspaceBoundsChange(activeScope, bounds, true);
   }, [activeScope, autoFitPaddingGridPoints, canvasBackground.gridSize, nodes, onWorkspaceBoundsChange]);
-  const minimapNodeColor = useCallback((node: StoryCanvasNode) => {
-    if (node.data.kind === "workspace") return "var(--wn-editor-bg)";
-    if (typeof node.data.minimapColor === "string")
-      return node.data.minimapColor;
-    if (typeof node.data.accentColor === "string") return node.data.accentColor;
-    if (node.data.kind === "start") return "var(--pb-start)";
-    if (node.data.kind === "boundary") return "var(--pb-sequence)";
-    if (node.data.kind === "decision") return "var(--pb-decision)";
-    if (node.data.kind === "dialogue") return "var(--pb-ink)";
-    if (node.data.kind === "outcome") return "var(--pb-outcome)";
-    return "var(--wn-muted)";
-  }, []);
-  const minimapNodeStrokeColor = useCallback((node: StoryCanvasNode) => {
-    if (typeof node.data.details?.minimapStrokeColor === "string") return node.data.details.minimapStrokeColor;
-    if (node.data.kind === "workspace") return "var(--wn-accent)";
-    if (typeof node.data.accentColor === "string") return node.data.accentColor;
-    if (node.data.kind === "event") return "var(--pb-event)";
-    return "var(--wn-border)";
-  }, []);
   const openNodeCanvas = useCallback(
     (node: StoryCanvasNode) => {
       if (node.data.kind === "event") {
@@ -9859,7 +9761,7 @@ function StoryCanvas({
     [onNavigateScope, onOpenEventScript],
   );
   const startDirectedNodeHold = useCallback(
-    (event: { button: number; shiftKey: boolean; target: EventTarget | null }, node: StoryCanvasNode) => {
+    (event: PointerEvent, node: StoryCanvasNode) => {
       if (
         !directedNodeOpening ||
         event.button !== 0 ||
@@ -9871,15 +9773,22 @@ function StoryCanvas({
         return;
       }
       clearDirectedNodeHold();
+      clearPendingSubcanvasInspector();
       const nodeSelection = { type: "node" as const, id: node.id };
       const timer = window.setTimeout(() => {
         if (directedNodeHoldRef.current?.nodeId !== node.id) return;
         directedNodeHoldRef.current = undefined;
         onOpenCanvasInspector(nodeSelection);
       }, DIRECTED_NODE_OPEN_DELAY_MS);
-      directedNodeHoldRef.current = { nodeId: node.id, timer };
+      directedNodeHoldRef.current = {
+        nodeId: node.id,
+        timer,
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
     },
-    [clearDirectedNodeHold, directedNodeOpening, onOpenCanvasInspector],
+    [clearDirectedNodeHold, clearPendingSubcanvasInspector, directedNodeOpening, onOpenCanvasInspector],
   );
   const nodeForPointerTarget = useCallback(
     (target: EventTarget | null) => {
@@ -9899,14 +9808,33 @@ function StoryCanvas({
       const node = nodeForPointerTarget(event.target);
       if (node) startDirectedNodeHold(event, node);
     };
-    const handlePointerUp = () => clearDirectedNodeHold();
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId === directedNodeHoldRef.current?.pointerId) clearDirectedNodeHold();
+    };
+    const handlePointerMove = (event: PointerEvent) => {
+      const pending = directedNodeHoldRef.current;
+      if (!pending || event.pointerId !== pending.pointerId) return;
+      if (!(event.buttons & 1) || Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY) > DIRECTED_NODE_MOVE_THRESHOLD_PX) {
+        clearDirectedNodeHold();
+      }
+    };
+    const handleBlur = () => clearDirectedNodeHold();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key === "Shift") clearDirectedNodeHold();
+    };
     shell.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("pointermove", handlePointerMove, true);
     window.addEventListener("pointerup", handlePointerUp, true);
     window.addEventListener("pointercancel", handlePointerUp, true);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("keydown", handleKeyDown, true);
     return () => {
       shell.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("pointermove", handlePointerMove, true);
       window.removeEventListener("pointerup", handlePointerUp, true);
       window.removeEventListener("pointercancel", handlePointerUp, true);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [clearDirectedNodeHold, directedNodeOpening, nodeForPointerTarget, startDirectedNodeHold]);
 
@@ -9926,13 +9854,6 @@ function StoryCanvas({
 
       <div className="canvas-modebar">
         <CanvasBreadcrumbScroller ariaLabel={canvasUiLocale === "es" ? "Ruta del canvas" : "Canvas path"} es={canvasUiLocale === "es"}>
-          <BreadcrumbStorySelector
-            stories={stories}
-            value={activeStoryId ?? project.storyId ?? stories[0]?.id ?? project.projectId}
-            onChange={onStoryChange}
-            onInspect={() => onOpenInspectorSection({ type: "story", id: activeStoryId ?? project.storyId ?? stories[0]?.id ?? project.projectId })}
-            es={canvasUiLocale === "es"}
-          />
           {breadcrumbs.map((crumb, index) => {
             const last = index === breadcrumbs.length - 1;
             const crumbEvent =
@@ -10001,6 +9922,7 @@ function StoryCanvas({
       </div>
       </div>
       <div className="pb-canvas-locale-tools">
+      <div className="inspector-toolbar-host" ref={setInspectorToolbarHost} />
       <CanvasFindingsButton findings={findings} project={project} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
       <div className="canvas-locale-control">
         <button
@@ -10038,7 +9960,9 @@ function StoryCanvas({
           edges={graph.edges}
           nodeTypes={nodeTypes}
           edgeTypes={editableCanvasEdgeTypes}
+          deleteKeyCode={null}
           onNodesChange={onNodesChange}
+          nodeDragThreshold={DIRECTED_NODE_MOVE_THRESHOLD_PX}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onConnectStart={beginConnectionGesture}
@@ -10118,6 +10042,13 @@ function StoryCanvas({
             setContextMenu(undefined);
             setEditingEdgeId(undefined);
             clearPendingEdgeClick();
+            if (edgeItem.data?.kind === "transition" && event.ctrlKey) {
+              event.preventDefault();
+              event.stopPropagation();
+              const point = reactFlowInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+              if (point) onAddTransitionWaypoint(edgeItem.id, point);
+              return;
+            }
             const removable =
               edgeItem.id.startsWith("edge:transition:") ||
               edgeItem.id.startsWith("edge:boundary:") ||
@@ -10126,16 +10057,8 @@ function StoryCanvas({
             if (!removable) return;
             event.stopPropagation();
             setActivePinKey(undefined);
-            const routeGateId = typeof edgeItem.data?.routeGateId === "string" ? edgeItem.data.routeGateId : undefined;
-            if (routeGateId && edgeItem.id.startsWith("edge:transition:")) {
-              const routeId = edgeItem.id.slice("edge:transition:".length);
-              const target = { type: "node" as const, id: routeGateId };
-              lastCanvasSelection.current = target;
-              onOpenInspectorSection(target, "connections", routeId);
-              return;
-            }
             lastCanvasSelection.current = { type: "edge", id: edgeItem.id };
-            onOpenCanvasInspector(lastCanvasSelection.current);
+            onCanvasSelect(lastCanvasSelection.current);
           }}
           onEdgeContextMenu={openEdgeContextMenu}
           onPaneClick={() => {
@@ -10153,17 +10076,7 @@ function StoryCanvas({
           snapGrid={snapGrid}
         >
           {minimapOpen && !testingActive ? (
-            <MiniMap
-              className={isNestedCanvas ? "nested-scope-minimap" : undefined}
-              pannable
-              zoomable
-              nodeColor={minimapNodeColor}
-              nodeStrokeColor={minimapNodeStrokeColor}
-              nodeStrokeWidth={3}
-              maskColor={isNestedCanvas ? "rgba(30, 41, 59, 0.22)" : undefined}
-              maskStrokeColor={isNestedCanvas ? "rgba(30, 41, 59, 0.48)" : undefined}
-              position="bottom-left"
-            />
+            <CanvasMiniMap locale={canvasUiLocale === "es" ? "es" : "en"} />
           ) : null}
           {isNestedCanvas ? (
             <Panel position="top-left" className="canvas-advanced-tools">
@@ -10220,8 +10133,12 @@ function StoryCanvas({
                     className={`react-flow__controls-button canvas-interaction-toggle${directedNodeOpening ? " active" : ""}`}
                     aria-pressed={directedNodeOpening}
                     onClick={() => setDirectedNodeOpening((enabled) => !enabled)}
-                    title={directedNodeOpening ? "Directed opening enabled: hold a node for 0.75 seconds" : "Enable directed opening"}
-                    aria-label={directedNodeOpening ? "Disable directed opening" : "Enable directed opening"}
+                    title={canvasUiLocale === "es"
+                      ? directedNodeOpening ? "Clic dirigido: un clic selecciona; mantener 0,75 segundos abre el inspector; doble clic entra al subcanvas" : "Activar clic dirigido"
+                      : directedNodeOpening ? "Directed click: click to select; hold for 0.75 seconds to open the inspector; double-click to enter the subcanvas" : "Enable directed opening"}
+                    aria-label={canvasUiLocale === "es"
+                      ? directedNodeOpening ? "Desactivar clic dirigido" : "Activar clic dirigido"
+                      : directedNodeOpening ? "Disable directed opening" : "Enable directed opening"}
                   >
                     <MousePointerClick size={14} aria-hidden="true" />
                   </button>
@@ -10268,7 +10185,7 @@ function StoryCanvas({
       </ReactFlowProvider>
       {contextMenu ? (
         <div
-          className="canvas-menu"
+          className={`canvas-menu ${contextMenu.kind === "create" || contextMenu.kind === "connect-create" ? "canvas-create-menu" : ""}`}
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.kind === "selection" ? (
@@ -10366,274 +10283,325 @@ function StoryCanvas({
           ) : contextMenu.kind === "route-gate" ? (
             <>
               <span className="canvas-menu-label">Transition</span>
-              <button
-                type="button"
-                onClick={() => {
-                  if (contextMenu.edgeId) {
-                    const edgeSelection = { type: "edge" as const, id: contextMenu.edgeId };
-                    onCanvasLayerModeChange("logic");
-                    setLogicFocus({ selectionKey: `edge:${contextMenu.edgeId}`, part: "conditions" });
-                    onCanvasSelect(edgeSelection);
-                    onOpenCanvasInspector(edgeSelection);
-                  }
-                  setContextMenu(undefined);
-                }}
-              >
-                Edit route logic
-              </button>
+
             </>
           ) : contextMenu.kind === "connect-create" ? (
             <>
               <span className="canvas-menu-label">
                 {activeEventScope || activeDialogueScope
-                  ? "Create connected narrative node"
-                  : "Create connected event"}
+                  ? canvasUiLocale === "es" ? "Crear conexión" : "Create connection"
+                  : canvasUiLocale === "es" ? "Crear evento conectado" : "Create connected event"}
               </span>
-              {activeScope?.kind === "event" || activeDialogueScope
-                ? (() => {
-                    const scope = activeScope?.kind === "event"
-                      ? activeScope
-                      : activeDialogueScope;
-                    const sourceNodeId = contextMenu.sourceNodeId;
-                    if (!scope || !sourceNodeId) return null;
-                    const connectNarrativeNode = (
-                      kind: ConnectedNarrativeNodeKind,
-                      nodeKind: StoryCanvasNodeData["kind"],
-                    ) => {
-                      onCreateConnectedNarrativeNode(
-                        scope,
-                        sourceNodeId,
-                        kind,
-                        positionForNewNode(
-                          { x: contextMenu.flowX, y: contextMenu.flowY },
-                          nodeKind,
-                        ),
-                        contextMenu.sourceHandleId,
-                      );
-                      setContextMenu(undefined);
-                    };
-                    return (
-                      <>
-                        {activeEventScope ? (
-                          <>
-                            <button type="button" onClick={() => connectNarrativeNode("dialogueStart", "dialogueStart")}>
-                              {canvasUiLocale === "es" ? "Inicio de conversación" : "Conversation start"}
-                            </button>
-                            <button type="button" onClick={() => connectNarrativeNode("speechBeat", "speechBeat")}>
-                              {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
-                            </button>
-                          </>
-                        ) : null}
-                        <button type="button" onClick={() => connectNarrativeNode("decision", "decision")}>
-                          {canvasUiLocale === "es" ? "Decisión" : "Decision"}
-                        </button>
-                        <button type="button" onClick={() => connectNarrativeNode("directionBeat", "directionBeat")}>
-                          {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
-                        </button>
-                        <hr />
-                        <button type="button" onClick={() => connectNarrativeNode("dialogue", "dialogue")}>
-                          {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
-                        </button>
-                      </>
-                    );
-                  })()
-                : null}
-              {!activeEventScope ? (
-                <>
-                  <hr />
+              {activeScope?.kind === "event" || activeDialogueScope ? (() => {
+                const scope = activeScope?.kind === "event" ? activeScope : activeDialogueScope;
+                const sourceNodeId = contextMenu.sourceNodeId;
+                if (!scope || !sourceNodeId) return null;
+                const connectNarrativeNode = (
+                  kind: ConnectedNarrativeNodeKind,
+                  nodeKind: StoryCanvasNodeData["kind"],
+                ) => {
+                  onCreateConnectedNarrativeNode(
+                    scope,
+                    sourceNodeId,
+                    kind,
+                    positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, nodeKind),
+                    contextMenu.sourceHandleId,
+                  );
+                  setContextMenu(undefined);
+                };
+                return (
+                  <>
+                    <section className="canvas-menu-group">
+                      <span className="canvas-menu-group-label">
+                        {canvasUiLocale === "es" ? "Líneas narrativas" : "Narrative lines"}
+                      </span>
+                      {activeEventScope ? (
+                        <>
+                          <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="dialogueStart" size={17} />} onClick={() => connectNarrativeNode("dialogueStart", "dialogueStart")}>
+                            {canvasUiLocale === "es" ? "Activador" : "Trigger"}
+                          </CanvasCreateMenuItem>
+                          <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="speechBeat" size={17} />} onClick={() => connectNarrativeNode("speechBeat", "speechBeat")}>
+                            {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
+                          </CanvasCreateMenuItem>
+                        </>
+                      ) : null}
+                      <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="decision" size={17} />} onClick={() => connectNarrativeNode("decision", "decision")}>
+                        {canvasUiLocale === "es" ? "Decisión" : "Decision"}
+                      </CanvasCreateMenuItem>
+                      <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="directionBeat" size={17} />} onClick={() => connectNarrativeNode("directionBeat", "directionBeat")}>
+                        {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
+                      </CanvasCreateMenuItem>
+                    </section>
+                    <div className="canvas-menu-divider" />
+                    <section className="canvas-menu-group">
+                      <span className="canvas-menu-group-label">
+                        {canvasUiLocale === "es" ? "Mecánicas" : "Mechanics"}
+                      </span>
+                      <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="interaction" size={17} />} onClick={() => connectNarrativeNode("interaction", "interaction")}>
+                        {canvasUiLocale === "es" ? "Interacción" : "Interaction"}
+                      </CanvasCreateMenuItem>
+                    </section>
+                    <div className="canvas-menu-divider" />
+                    <section className="canvas-menu-group">
+                      <span className="canvas-menu-group-label">
+                        {canvasUiLocale === "es" ? "Estructura" : "Structure"}
+                      </span>
+                      {!activeEventScope ? (
+                        <EventTypeMenuButton
+                          label={activeDialogueScope ? (canvasUiLocale === "es" ? "Subevento" : "Sub-event") : (canvasUiLocale === "es" ? "Evento" : "Event")}
+                          icon={<StoryCanvasNodeIcon kind="event" size={17} />}
+                          options={eventTypeOptions}
+                          onSelect={(categoryId) => {
+                            onCreateConnectedEvent(
+                              sourceNodeId,
+                              categoryId,
+                              positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "event"),
+                              contextMenu.sourceHandleId,
+                            );
+                            setContextMenu(undefined);
+                          }}
+                        />
+                      ) : null}
+                      <CanvasCreateMenuItem icon={<StoryCanvasNodeIcon kind="dialogue" size={17} />} onClick={() => connectNarrativeNode("dialogue", "dialogue")}>
+                        {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
+                      </CanvasCreateMenuItem>
+                    </section>
+                  </>
+                );
+              })() : (
+                <section className="canvas-menu-group">
+                  <span className="canvas-menu-group-label">
+                    {canvasUiLocale === "es" ? "Eventos" : "Events"}
+                  </span>
                   <EventTypeMenuButton
-                    label="Events"
+                    label={canvasUiLocale === "es" ? "Evento" : "Event"}
+                    icon={<StoryCanvasNodeIcon kind="event" size={17} />}
                     options={eventTypeOptions}
                     onSelect={(categoryId) => {
                       if (contextMenu.sourceNodeId) {
                         onCreateConnectedEvent(
                           contextMenu.sourceNodeId,
                           categoryId,
-                          positionForNewNode(
-                            { x: contextMenu.flowX, y: contextMenu.flowY },
-                            "event",
-                          ),
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "event"),
                           contextMenu.sourceHandleId,
                         );
                       }
                       setContextMenu(undefined);
                     }}
                   />
-                </>
-              ) : null}
+                </section>
+              )}
             </>
           ) : activeDialogueScope ? (
             <>
-              <span className="canvas-menu-label">{canvasUiLocale === "es" ? "Crear dentro de la conversación" : "Create inside conversation"}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  onCreateDialogueBeat(
-                    activeDialogueScope.eventId,
-                    activeDialogueScope.id,
-                    "speech",
-                    positionForNewNode(
-                      { x: contextMenu.flowX, y: contextMenu.flowY },
-                      "speechBeat",
-                    ),
-                  );
-                  setContextMenu(undefined);
-                }}
-              >
-                {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onCreateDialogueBeat(
-                    activeDialogueScope.eventId,
-                    activeDialogueScope.id,
-                    "direction",
-                    positionForNewNode(
-                      { x: contextMenu.flowX, y: contextMenu.flowY },
-                      "directionBeat",
-                    ),
-                  );
-                  setContextMenu(undefined);
-                }}
-              >
-                {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onCreateDecision(
-                    activeDialogueScope.eventId,
-                    activeDialogueScope.id,
-                    positionForNewNode(
-                      { x: contextMenu.flowX, y: contextMenu.flowY },
-                      "decision",
-                    ),
-                  );
-                  setContextMenu(undefined);
-                }}
-              >
-                {canvasUiLocale === "es" ? "Decisión" : "Decision"}
-              </button>
+              <span className="canvas-menu-label">
+                {canvasUiLocale === "es" ? "Crear dentro de la conversación" : "Create inside conversation"}
+              </span>
+              <section className="canvas-menu-group">
+                <span className="canvas-menu-group-label">
+                  {canvasUiLocale === "es" ? "Líneas" : "Lines"}
+                </span>
+                <CanvasCreateMenuItem
+                  icon={<StoryCanvasNodeIcon kind="speechBeat" size={17} />}
+                  onClick={() => {
+                    onCreateDialogueBeat(
+                      activeDialogueScope.eventId,
+                      activeDialogueScope.id,
+                      "speech",
+                      positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "speechBeat"),
+                    );
+                    setContextMenu(undefined);
+                  }}
+                >
+                  {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
+                </CanvasCreateMenuItem>
+                <CanvasCreateMenuItem
+                  icon={<StoryCanvasNodeIcon kind="directionBeat" size={17} />}
+                  onClick={() => {
+                    onCreateDialogueBeat(
+                      activeDialogueScope.eventId,
+                      activeDialogueScope.id,
+                      "direction",
+                      positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "directionBeat"),
+                    );
+                    setContextMenu(undefined);
+                  }}
+                >
+                  {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
+                </CanvasCreateMenuItem>
+              </section>
+              <div className="canvas-menu-divider" />
+              <section className="canvas-menu-group">
+                <span className="canvas-menu-group-label">
+                  {canvasUiLocale === "es" ? "Mecánicas" : "Mechanics"}
+                </span>
+                <CanvasCreateMenuItem
+                  icon={<StoryCanvasNodeIcon kind="interaction" size={17} />}
+                  onClick={() => {
+                    onCreateInteraction(
+                      activeDialogueScope.eventId,
+                      activeDialogueScope.id,
+                      positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "interaction"),
+                    );
+                    setContextMenu(undefined);
+                  }}
+                >
+                  {canvasUiLocale === "es" ? "Interacción" : "Interaction"}
+                </CanvasCreateMenuItem>
+              </section>
+              <div className="canvas-menu-divider" />
+              <section className="canvas-menu-group">
+                <span className="canvas-menu-group-label">
+                  {canvasUiLocale === "es" ? "Bifurcación" : "Branching"}
+                </span>
+                <CanvasCreateMenuItem
+                  icon={<StoryCanvasNodeIcon kind="decision" size={17} />}
+                  onClick={() => {
+                    onCreateDecision(
+                      activeDialogueScope.eventId,
+                      activeDialogueScope.id,
+                      positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "decision"),
+                    );
+                    setContextMenu(undefined);
+                  }}
+                >
+                  {canvasUiLocale === "es" ? "Decisión" : "Decision"}
+                </CanvasCreateMenuItem>
+              </section>
             </>
           ) : (
             <>
               <span className="canvas-menu-label">
-                {activeEventScope ? "Create inside event" : "Create event"}
+                {activeEventScope
+                  ? canvasUiLocale === "es" ? "Crear dentro del evento" : "Create inside event"
+                  : canvasUiLocale === "es" ? "Crear evento" : "Create event"}
               </span>
-              {activeEventScope ? null : (
-                <EventTypeMenuButton
-                  label="Events"
-                  options={eventTypeOptions}
-                  onSelect={(categoryId) => {
-                    onCreateEvent(categoryId, {
-                      ...positionForNewNode(
-                        { x: contextMenu.flowX, y: contextMenu.flowY },
-                        "event",
-                      ),
-                    });
-                    setContextMenu(undefined);
-                  }}
-                />
-              )}
               {activeEventScope ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onCreateDialogueStart(
-                        activeEventScope.id,
-                        positionForNewNode(
-                          { x: contextMenu.flowX, y: contextMenu.flowY },
-                          "dialogueStart",
-                        ),
-                      );
-                      setContextMenu(undefined);
-                    }}
-                  >
-                    {canvasUiLocale === "es" ? "Inicio de conversación" : "Conversation start"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onCreateEventDialogueBeat(
-                        activeEventScope.id,
-                        "speech",
-                        positionForNewNode(
-                          { x: contextMenu.flowX, y: contextMenu.flowY },
-                          "speechBeat",
-                        ),
-                      );
-                      setContextMenu(undefined);
-                    }}
+                  <section className="canvas-menu-group">
+                    <span className="canvas-menu-group-label">
+                      {canvasUiLocale === "es" ? "Narrativa" : "Narrative"}
+                    </span>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="dialogueStart" size={17} />}
+                      onClick={() => {
+                        onCreateDialogueStart(
+                          activeEventScope.id,
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "dialogueStart"),
+                        );
+                        setContextMenu(undefined);
+                      }}
+                    >
+                      {canvasUiLocale === "es" ? "Activador" : "Trigger"}
+                    </CanvasCreateMenuItem>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="speechBeat" size={17} />}
+                      onClick={() => {
+                        onCreateEventDialogueBeat(
+                          activeEventScope.id,
+                          "speech",
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "speechBeat"),
+                        );
+                        setContextMenu(undefined);
+                      }}
                     >
                       {canvasUiLocale === "es" ? "Diálogo" : "Dialogue"}
-                    </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onCreateDecision(
-                        activeEventScope.id,
-                        undefined,
-                        positionForNewNode(
-                          { x: contextMenu.flowX, y: contextMenu.flowY },
-                          "decision",
-                        ),
-                      );
-                      setContextMenu(undefined);
-                    }}
-                  >
-                    {canvasUiLocale === "es" ? "Decisión" : "Decision"}
-                  </button>
-                    <button
-                      type="button"
+                    </CanvasCreateMenuItem>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="decision" size={17} />}
+                      onClick={() => {
+                        onCreateDecision(
+                          activeEventScope.id,
+                          undefined,
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "decision"),
+                        );
+                        setContextMenu(undefined);
+                      }}
+                    >
+                      {canvasUiLocale === "es" ? "Decisión" : "Decision"}
+                    </CanvasCreateMenuItem>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="directionBeat" size={17} />}
                       onClick={() => {
                         onCreateEventDialogueBeat(
                           activeEventScope.id,
                           "direction",
-                          positionForNewNode(
-                            { x: contextMenu.flowX, y: contextMenu.flowY },
-                            "directionBeat",
-                          ),
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "directionBeat"),
                         );
                         setContextMenu(undefined);
                       }}
                     >
                       {canvasUiLocale === "es" ? "Acotación" : "Stage direction"}
-                    </button>
-                    <hr style={{ margin: "8px 0", borderColor: "var(--color-border)" }} />
+                    </CanvasCreateMenuItem>
+                  </section>
+                  <div className="canvas-menu-divider" />
+                  <section className="canvas-menu-group">
+                    <span className="canvas-menu-group-label">
+                      {canvasUiLocale === "es" ? "Mecánicas" : "Mechanics"}
+                    </span>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="interaction" size={17} />}
+                      onClick={() => {
+                        onCreateInteraction(
+                          activeEventScope.id,
+                          undefined,
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "interaction"),
+                        );
+                        setContextMenu(undefined);
+                      }}
+                    >
+                      {canvasUiLocale === "es" ? "Interacción" : "Interaction"}
+                    </CanvasCreateMenuItem>
+                  </section>
+                  <div className="canvas-menu-divider" />
+                  <section className="canvas-menu-group">
+                    <span className="canvas-menu-group-label">
+                      {canvasUiLocale === "es" ? "Estructura" : "Structure"}
+                    </span>
                     <EventTypeMenuButton
-                      label="Events"
+                      label={canvasUiLocale === "es" ? "Subevento" : "Sub-event"}
+                      icon={<StoryCanvasNodeIcon kind="event" size={17} />}
                       options={eventTypeOptions}
                       onSelect={(categoryId) => {
-                        onCreateNestedEvent(activeEventScope.id, categoryId, {
-                          ...positionForNewNode(
-                            { x: contextMenu.flowX, y: contextMenu.flowY },
-                            "event",
-                          ),
-                        });
+                        onCreateNestedEvent(
+                          activeEventScope.id,
+                          categoryId,
+                          { ...positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "event") },
+                        );
                         setContextMenu(undefined);
                       }}
                     />
-                    <button
-                    type="button"
-                    onClick={() => {
-                      onCreateDialogue(
-                        activeEventScope.id,
-                        positionForNewNode(
-                          { x: contextMenu.flowX, y: contextMenu.flowY },
-                          "dialogue",
-                        ),
-                      );
-                      setContextMenu(undefined);
-                    }}
-                  >
-                    {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
-                  </button>
+                    <CanvasCreateMenuItem
+                      icon={<StoryCanvasNodeIcon kind="dialogue" size={17} />}
+                      onClick={() => {
+                        onCreateDialogue(
+                          activeEventScope.id,
+                          positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "dialogue"),
+                        );
+                        setContextMenu(undefined);
+                      }}
+                    >
+                      {canvasUiLocale === "es" ? "Conversación" : "Conversation"}
+                    </CanvasCreateMenuItem>
+                  </section>
                 </>
               ) : (
-                <>
-                </>
+                <section className="canvas-menu-group">
+                  <span className="canvas-menu-group-label">
+                    {canvasUiLocale === "es" ? "Eventos" : "Events"}
+                  </span>
+                  <EventTypeMenuButton
+                    label={canvasUiLocale === "es" ? "Evento" : "Event"}
+                    icon={<StoryCanvasNodeIcon kind="event" size={17} />}
+                    options={eventTypeOptions}
+                    onSelect={(categoryId) => {
+                      onCreateEvent(categoryId, {
+                        ...positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "event"),
+                      });
+                      setContextMenu(undefined);
+                    }}
+                  />
+                </section>
               )}
             </>
           )}
@@ -10658,6 +10626,7 @@ function StoryCanvas({
       <aside className="pb-context-surface" hidden={!contextVisible} aria-label={canvasUiLocale === "es" ? "Panel contextual" : "Context panel"}>
         <div className="pb-context-edit" hidden={contextTab !== "edit"}>
       <EventAuthoringDock onNameMutation={onAuthoringMutation} project={project} nodes={inspectorGraph.nodes} selection={inspectorSelection} eventDraft={eventDraft} eventInspector={eventInspector} tabGroups={eventInspectorTabGroups}
+        toolbarHost={inspectorToolbarHost}
         fullscreen={contextFocus} onFullscreenChange={onContextFocusChange}
         inspectorTabs={inspectorTabs} expandedInspectorTabId={expandedInspectorTabId} inspectorMaximized={inspectorMaximized} inspectorSize={inspectorSize} onInspectorResize={onInspectorResize} onFold={onCollapseInspector} inspectorStackOrder={inspectorStackOrder} onInspectorStackOrderChange={onInspectorStackOrderChange}
         onOpenEvent={id=>onOpenCanvasInspector({type:"node",id})} onCollapseEvent={onCollapseEventInspectorEvent} onCloseEvent={onCloseEventInspectorEvent} onCloseAllEvents={onCloseAllEventInspectorEvents} onCloseEventsAbove={onCloseEventInspectorEventsAbove} onCloseEventsBelow={onCloseEventInspectorEventsBelow} onCloseOtherEvents={onCloseOtherEventInspectorEvents} onPruneEvents={onPruneEventInspectorEvents}
@@ -10709,6 +10678,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }), [suiteChrome?.registerSettingsOpener]);
   const [showFeedback, setShowFeedback] = useState(false);
   const [workspace, setWorkspace] = useState<PathBranchingWorkspace>();
+  const [interactionLibrary, setInteractionLibrary] = useState(defaultInteractionMechanicsLibrary);
+  const [itemCatalog, setItemCatalog] = useState(emptyItemCatalog);
+  const [itemCatalogError, setItemCatalogError] = useState<string>();
+  const [interactionLibraryError, setInteractionLibraryError] = useState<string>();
+  const [interactionLibraryEditor, setInteractionLibraryEditor] = useState<{ presetId?: string; revision: number; projectId: string }>();
+  const creationCaptureRef = useRef<{ edited?: BranchingProject } | undefined>(undefined);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const [showInteractionTutorial, setShowInteractionTutorial] = useState(
     () =>
@@ -10730,6 +10705,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [edges, setEdges] = useState<StoryCanvasEdge[]>([]);
   const [files, setFiles] = useState<PathBranchingFileItem[]>([]);
   const [selection, setSelection] = useState<Selection>();
+  const deselectCanvasNode = useCallback((nodeId: string) => {
+    setNodes((current) => {
+      if (!current.some((node) => node.id === nodeId && node.selected)) return current;
+      return current.map((node) => node.id === nodeId ? { ...node, selected: false } : node);
+    });
+  }, []);
   const [canonOpen, setCanonOpen] = useState(true);
   const [filesOpen, setFilesOpen] = useState(true);
   const [panelVisibility, setPanelVisibility] = useState<WorkspacePanelState>(
@@ -10869,6 +10850,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const [confirmDialog, setConfirmDialog] = useState<
     | { kind: "deleteStory"; title: string; message: string }
     | { kind: "deleteSequence"; title: string; message: string }
+    | { kind: "deleteLocalExplorerEntity"; entityId: string; title: string; message: string }
   >();
   const [missingRecentProjects, setMissingRecentProjects] = useState<
     Set<string>
@@ -10986,6 +10968,18 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           }
         : workspaceRef.current;
       setProject(normalizedProject);
+      // Structural undo/redo also restores the event shown by a clean inspector.
+      // Keep unapplied text drafts intact; their changes merge when applied.
+      setEventDraft((currentDraft) => {
+        if (!currentDraft || currentDraft.dirty) return currentDraft;
+        const nextEvent = findEvent(normalizedProject, currentDraft.eventId);
+        return nextEvent ? {
+          ...currentDraft,
+          baseEvent: structuredClone(nextEvent),
+          draftEvent: structuredClone(nextEvent),
+          saving: false,
+        } : undefined;
+      });
       setActiveScopeState(normalizedScope);
       setNodes(model.nodes);
       setEdges(model.edges);
@@ -11028,6 +11022,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       canvasLayerModeRef.current = restoredLayerMode;
       const activeProject = normalizeProject({
         ...nextWorkspace.activeProject,
+        canonPropertyDescriptors: canonicalPropertyDescriptors(nextWorkspace.canonIndex.propertiesConfig),
         universeRootPath: universePath,
       });
       setPendingRecovery(readAuthoringRecovery(universePath, activeProject.storyId ?? ""));
@@ -11060,6 +11055,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       projectRevisionRef.current = 0;
       savedRevisionRef.current = 0;
       setWorkspace(nextWorkspace);
+      try { setItemCatalog(itemCatalogFromFiles(nextWorkspace.files)); setItemCatalogError(undefined); }
+      catch (catalogError) { setItemCatalog(emptyItemCatalog()); setItemCatalogError(catalogError instanceof Error ? catalogError.message : String(catalogError)); }
+      try { setInteractionLibrary(interactionLibraryFromFiles(nextWorkspace.files)); setInteractionLibraryError(undefined); }
+      catch (libraryError) { setInteractionLibrary({version:1,presets:[]}); setInteractionLibraryError(libraryError instanceof Error ? libraryError.message : String(libraryError)); }
       setProject(activeProjectWithScope);
       setActiveScopeState(normalizedScope);
       setNodes(model.nodes);
@@ -11225,9 +11224,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       label: string,
       result: mutations.MutationResult | BranchingProject,
       nextSelection?: Selection,
+      commitOptions: { recordUndo?: boolean; recordRedo?: boolean; recordActionHistory?: boolean; showStatus?: boolean } = {},
     ) => {
       const currentProject = projectRef.current;
       const mutationResult = "project" in result ? result : { project: result };
+      if (creationCaptureRef.current) { creationCaptureRef.current.edited = mutationResult.project; return true; }
+      const showStatus = commitOptions.showStatus !== false;
 
       if (!currentProject) {
         return false;
@@ -11238,27 +11240,31 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         if (mutationResult.selection) {
           setSelection(mutationResult.selection as Selection);
         }
-        if (mutationResult.message) {
+        if (showStatus && mutationResult.message) {
           setMessage(mutationResult.message);
         }
         return true;
       }
 
-      setUndoStack((current) => [...current.slice(-199), currentProject]);
-      setRedoStack([]);
-      setActionHistory((current) => [mutationResult.message ?? label, ...current].slice(0, 10));
+      if (commitOptions.recordUndo !== false) {
+        setUndoStack((current) => [...current.slice(-199), currentProject]);
+      }
+      if (commitOptions.recordRedo !== false) setRedoStack([]);
+      if (commitOptions.recordActionHistory !== false) {
+        setActionHistory((current) => [mutationResult.message ?? label, ...current].slice(0, 10));
+      }
       applyProject(mutationResult.project, { dirty: true, revision: true });
       if (mutationResult.selection) {
         setSelection(mutationResult.selection as Selection);
       } else if (nextSelection) {
         setSelection(nextSelection);
       }
-      setMessage(mutationResult.message ?? `${label}...`);
+      if (showStatus) setMessage(mutationResult.message ?? `${label}...`);
 
       try {
         await persistProjectRef.current?.();
         for (const action of learningActionsForMutation(currentProject, mutationResult.project)) reportLearning(action, mutationResult.project.storyId ?? mutationResult.project.projectId);
-        setMessage(mutationResult.message ?? `${label} saved.`);
+        if (showStatus) setMessage(mutationResult.message ?? `${label} saved.`);
         return true;
       } catch (commitError) {
         // A disk error must not erase edits already visible in the document.
@@ -11282,24 +11288,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     ) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      
-      const current = (currentProject.logicPropertyOverrides ?? []).find(
-        (item) => item.propertyId === propertyId && item.source === source,
-      ) ?? { propertyId, source };
-      
       const normalizedChanges = changes.entityPresentable === false
         ? { ...changes, dialogueTrigger: false }
         : changes;
-      
-      const updatedProject = {
-        ...currentProject,
-        logicPropertyOverrides: [
-          ...(currentProject.logicPropertyOverrides ?? []).filter(
-            (item) => item.propertyId !== propertyId || item.source !== source,
-          ),
-          { ...current, ...normalizedChanges },
-        ],
-      };
+      const updatedProject = updatePropertyCapability(currentProject, source, propertyId, normalizedChanges);
       
       // Commit directly without using drafts for immediate save
       void commitStructuralAction(
@@ -11376,6 +11368,49 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     },
     [commitStructuralAction],
   );
+
+  const addTransitionWaypoint = useCallback((edgeId: string, point: CanvasPoint) => {
+    if (!edgeId.startsWith("edge:transition:")) return;
+    const currentProject = projectRef.current;
+    if (!currentProject) return;
+    const scope = activeScope ?? activeCanvasScope(currentProject);
+    const background = settingsRef.current.canvasBackground;
+    const snappedPoint = snapCanvasPoint(point, background.snapToGrid, background.gridSize);
+    const waypoints = [...projectEdgeWaypoints(currentProject, edgeId, scope), snappedPoint];
+    commitCanvasAction("Added transition waypoint", updateProjectEdgeWaypoints(currentProject, edgeId, waypoints, scope));
+  }, [activeScope, commitCanvasAction]);
+
+  const moveTransitionWaypoint = useCallback((edgeId: string, index: number, point: CanvasPoint, commit: boolean) => {
+    if (!edgeId.startsWith("edge:transition:")) return;
+    const background = settingsRef.current.canvasBackground;
+    const snappedPoint = snapCanvasPoint(point, background.snapToGrid, background.gridSize);
+    setEdges((current) => current.map((edgeItem) => {
+      if (edgeItem.id !== edgeId || edgeItem.data?.kind !== "transition") return edgeItem;
+      const waypoints = [...(edgeItem.data.waypoints ?? [])];
+      if (index < 0 || index >= waypoints.length) return edgeItem;
+      waypoints[index] = snappedPoint;
+      return { ...edgeItem, data: { ...edgeItem.data, waypoints } };
+    }));
+    if (!commit) return;
+    const currentProject = projectRef.current;
+    if (!currentProject) return;
+    const scope = activeScope ?? activeCanvasScope(currentProject);
+    const waypoints = [...projectEdgeWaypoints(currentProject, edgeId, scope)];
+    if (index < 0 || index >= waypoints.length) return;
+    waypoints[index] = snappedPoint;
+    commitCanvasAction("Moved transition waypoint", updateProjectEdgeWaypoints(currentProject, edgeId, waypoints, scope));
+  }, [activeScope, commitCanvasAction]);
+
+  const removeTransitionWaypoint = useCallback((edgeId: string, index: number) => {
+    if (!edgeId.startsWith("edge:transition:")) return;
+    const currentProject = projectRef.current;
+    if (!currentProject) return;
+    const scope = activeScope ?? activeCanvasScope(currentProject);
+    const waypoints = [...projectEdgeWaypoints(currentProject, edgeId, scope)];
+    if (index < 0 || index >= waypoints.length) return;
+    waypoints.splice(index, 1);
+    commitCanvasAction("Removed transition waypoint", updateProjectEdgeWaypoints(currentProject, edgeId, waypoints, scope));
+  }, [activeScope, commitCanvasAction]);
 
   const updateProject = useCallback(
     (nextProject: BranchingProject, nextSelection?: Selection) => {
@@ -11746,7 +11781,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [commitStructuralAction],
   );
 
-  const deleteLocalExplorerEntity = useCallback(
+  const requestDeleteLocalExplorerEntity = useCallback(
     (id: string) => {
       const currentProject = projectRef.current;
       const entity = currentProject?.localExplorerEntities?.find(
@@ -11754,12 +11789,40 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       );
       if (!currentProject || !entity) return;
       const usages = entityUsages(currentProject, id);
-      if (usages.length) {
-        setError(`${uiLocaleRef.current === "es" ? "Resuelve los usos antes de eliminar esta entidad" : "Resolve references before deleting this entity"}: ${usages.map(usage => usage.path).join(", ")}`);
+      const isSpanish = uiLocaleRef.current === "es";
+      const useList = usages.slice(0, 4).map(usage => usage.path).join(", ");
+      const remainingCount = usages.length - Math.min(usages.length, 4);
+      setConfirmDialog({
+        kind: "deleteLocalExplorerEntity",
+        entityId: id,
+        title: isSpanish ? "Eliminar entidad local" : "Delete local entity",
+        message: usages.length
+          ? isSpanish
+            ? `¿Eliminar “${entity.name}” y quitar sus ${usages.length} referencias guardadas? ${useList}${remainingCount > 0 ? ` y ${remainingCount} más` : ""}.`
+            : `Delete “${entity.name}” and remove its ${usages.length} saved reference${usages.length === 1 ? "" : "s"}? ${useList}${remainingCount > 0 ? ` and ${remainingCount} more` : ""}.`
+          : isSpanish
+            ? `¿Eliminar “${entity.name}” de este proyecto?`
+            : `Delete “${entity.name}” from this project?`,
+      });
+    },
+    [],
+  );
+
+  const deleteLocalExplorerEntity = useCallback(
+    async (id: string) => {
+      const currentProject = projectRef.current;
+      const entity = currentProject?.localExplorerEntities?.find(
+        (candidate) => candidate.id === id,
+      );
+      if (!currentProject || !entity) return;
+      const cleanedProject = removeLocalExplorerEntityReferences(currentProject, id);
+      const remainingUsages = entityUsages(cleanedProject, id);
+      if (remainingUsages.length) {
+        const es = uiLocaleRef.current === "es";
+        setError(`${es ? "No se pudieron quitar todas las referencias antes de eliminar esta entidad" : "Some references could not be removed before deleting this entity"}: ${remainingUsages.map(usage => usage.path).join(", ")}`);
         openInspectorRef.current({type:"explorerEntity",id},"uses");
         return;
       }
-      if (!window.confirm(`Delete local entity \"${entity.name}\"?`)) return;
       const draftKey = manualInspectorDraftKey({ type: "explorerEntity", id });
       if (draftKey) {
         setManualInspectorDrafts((current) => {
@@ -11768,17 +11831,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           return next;
         });
       }
-      void commitStructuralAction("Deleted local Explorer entity", {
-        project: {
-          ...currentProject,
-          localExplorerEntities: (currentProject.localExplorerEntities ?? []).filter(
-            (candidate) => candidate.id !== id,
-          ),
-        },
-        selection: undefined,
+      await commitStructuralAction("Deleted local Explorer entity", {
+        project: cleanedProject,
       });
+      setSelection(undefined);
     },
-    [commitStructuralAction],
+    [commitStructuralAction, setSelection],
   );
 
   const createExplorerType = useCallback(() => {
@@ -11804,17 +11862,23 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     options?: ExplorerPropertyOption[];
     targetTypes?: string[];
     appliesToTypes?: string[];
-  }) => {
+    icon?: string;
+    color?: string;
+    suggestedFolder?: string;
+  }, parentPropertyId?: string) => {
     const currentProject = projectRef.current;
     if (!currentProject) return;
     const property = createLocalExplorerProperty(label, valueType, options);
+    const localExplorerProperties = appendLocalExplorerPropertyToTree(
+      currentProject.localExplorerProperties,
+      property,
+      parentPropertyId,
+    );
+    if (!localExplorerProperties) return;
     void commitStructuralAction("Created local Explorer property", {
       project: {
         ...currentProject,
-        localExplorerProperties: [
-          ...(currentProject.localExplorerProperties ?? []),
-          property,
-        ],
+        localExplorerProperties,
       },
       selection: {
         type: "explorerProperty",
@@ -11872,15 +11936,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         { type: "explorerProperty", id, source: "local" },
         (project) => ({
           ...project,
-          localExplorerProperties: (project.localExplorerProperties ?? []).map(
-            (property) =>
-              property.id === id
-                ? {
-                    ...property,
-                    ...updates,
-                    updatedAt: new Date().toISOString(),
-                  }
-                : property,
+          localExplorerProperties: updateLocalExplorerPropertyInTree(
+            project.localExplorerProperties,
+            id,
+            updates,
+            new Date().toISOString(),
           ),
         }),
       );
@@ -11889,19 +11949,45 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   );
 
   const deleteLocalExplorerProperty = useCallback(
-    (id: string) => {
+    (id: string): boolean => {
       const currentProject = projectRef.current;
-      if (!currentProject) return;
-      const usages = entityUsages(currentProject, id);
-      if (usages.length) { setError(`${uiLocaleRef.current === "es" ? "Resuelve los usos antes de eliminar esta propiedad" : "Resolve references before deleting this property"}: ${usages.map(usage => usage.path).join(", ")}`); return; }
+      if (!currentProject) return false;
+      const property = findLocalExplorerPropertyInTree(currentProject.localExplorerProperties, id);
+      if (!property) return false;
+      const deletedPropertyIds = flattenLocalExplorerPropertyTree([property]).map(item => item.id);
+      const usages = deletedPropertyIds.flatMap(propertyId => entityUsages(currentProject, propertyId));
+      const cleanedProject = deletedPropertyIds.reduce(
+        (current, propertyId) => removeLocalExplorerPropertyValues(current, propertyId),
+        currentProject,
+      );
+      const remainingUsages = deletedPropertyIds.flatMap(propertyId => entityUsages(cleanedProject, propertyId));
+      if (remainingUsages.length) {
+        const es = uiLocaleRef.current === "es";
+        const paths = remainingUsages.slice(0, 3).map(usage => usage.path).join(", ");
+        setError(es
+          ? `No se pudo eliminar “${property.label}”: aún tiene ${remainingUsages.length} referencias (${paths}${remainingUsages.length > 3 ? ", …" : ""}).`
+          : `Could not delete “${property.label}”: ${remainingUsages.length} references remain (${paths}${remainingUsages.length > 3 ? ", …" : ""}).`);
+        return false;
+      }
+      if (usages.length) {
+        const es = uiLocaleRef.current === "es";
+        const message = es
+          ? `“${property.label}” tiene ${usages.length} usos guardados. Si continúas, se quitarán esos valores y ajustes y se eliminará la propiedad. ¿Continuar?`
+          : `“${property.label}” has ${usages.length} saved uses. Continuing removes those values and settings, then deletes the property. Continue?`;
+        if (!window.confirm(message)) return false;
+      }
+      const removed = removeLocalExplorerPropertyFromTree(
+        cleanedProject.localExplorerProperties,
+        id,
+      );
+      if (!removed) return false;
       void commitStructuralAction("Deleted local Explorer property", {
         project: {
-          ...currentProject,
-          localExplorerProperties: (currentProject.localExplorerProperties ?? []).filter(
-            (property) => property.id !== id,
-          ),
+          ...cleanedProject,
+          localExplorerProperties: removed.properties,
         },
       });
+      return true;
     },
     [commitStructuralAction],
   );
@@ -12527,7 +12613,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   useEffect(() => {
     const path = suiteChrome?.sharedUniversePath;
-    if (!path || fileStateRef.current.universePath === path) return;
+    const browserDirectory = suiteChrome?.sharedUniverseDirectory;
+    if (!path) return;
+    if (browserDirectory) registerSharedBrowserUniverse(path, browserDirectory);
+    if (fileStateRef.current.universePath === path && !browserDirectory) return;
 
     let disposed = false;
     void openUniversePath(path)
@@ -12560,7 +12649,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     return () => {
       disposed = true;
     };
-  }, [applyWorkspace, suiteChrome?.sharedUniversePath]);
+  }, [applyWorkspace, suiteChrome?.sharedUniverseDirectory, suiteChrome?.sharedUniversePath]);
 
   const revealUniverse = useCallback(async () => {
     const universePath = fileStateRef.current.universePath;
@@ -12794,7 +12883,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const collapseEventInspectorForEvent = useCallback((eventId: string) => {
     setEventInspector((current) => collapseEventInspectorTab(current, eventId));
-  }, []);
+    deselectCanvasNode(eventId);
+    setSelection((current) => current?.type === "node" && current.id === eventId ? undefined : current);
+  }, [deselectCanvasNode]);
 
   const pruneEventInspectorEvents = useCallback(
     (eventIds: readonly string[]) => {
@@ -12821,6 +12912,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...next,
         open: next.open || Boolean(expandedInspectorTabId),
       });
+      deselectCanvasNode(eventId);
+      if (closingActive) {
+        setSelection((current) => current?.type === "node" && current.id === eventId ? undefined : current);
+      }
       if (closingActive && next.expandedEventId) {
         setExpandedInspectorTabId(undefined);
         setSelection({ type: "node", id: next.expandedEventId });
@@ -12841,6 +12936,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       expandedInspectorTabId,
       inspectorTabs,
       settings.inspectorTabCloseSelectsNext,
+      deselectCanvasNode,
     ],
   );
 
@@ -12865,107 +12961,90 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     setSelection(current => current?.type === "storyPlay" ? undefined : current);
   }, [inspectorTabs, prepareClosedStoryPlay]);
 
-  const applyEventInspectorClose = useCallback(
-    (next: EventInspectorState, preferredEventId: string) => {
-      const activeRemoved = Boolean(
-        eventInspector.expandedEventId &&
-        !next.openEventIds.includes(eventInspector.expandedEventId),
+  const closeInspectorStackRange = useCallback(
+    (target: InspectorStackTarget, direction: "above" | "below" | "others") => {
+      const next = closeInspectorStackTabs(
+        inspectorTabs,
+        eventInspector.openEventIds,
+        target,
+        direction,
+        inspectorStackOrder,
       );
-      const expandedEventId = activeRemoved && next.openEventIds.includes(preferredEventId)
-        ? preferredEventId
-        : next.expandedEventId;
-      const activateEvent = Boolean(
-        expandedEventId && (activeRemoved || expandedEventId !== eventInspector.expandedEventId),
-      );
-      setEventInspector({
-        ...next,
-        open: next.open || Boolean(expandedInspectorTabId),
-        expandedEventId,
+      const nextInspectorIds = new Set(next.inspectorTabs.map(tab => tab.id));
+      const nextEventIds = new Set(next.eventIds);
+      const removedInspectorTabs = inspectorTabs.filter(tab => !nextInspectorIds.has(tab.id));
+      const removedEventIds = eventInspector.openEventIds.filter(id => !nextEventIds.has(id));
+      if (removedInspectorTabs.length === 0 && removedEventIds.length === 0) return;
+
+      const removedInspectorIds = new Set(removedInspectorTabs.map(tab => tab.id));
+      const activeInspectorRemoved = Boolean(expandedInspectorTabId && removedInspectorIds.has(expandedInspectorTabId));
+      const activeEventRemoved = Boolean(eventInspector.expandedEventId && !nextEventIds.has(eventInspector.expandedEventId));
+      const activeRemoved = activeInspectorRemoved || activeEventRemoved;
+      const targetInspector = target.kind === "inspector"
+        ? next.inspectorTabs.find(tab => tab.id === target.id)
+        : undefined;
+      const targetEventExists = target.kind === "event" && nextEventIds.has(target.id);
+
+      if (removedInspectorTabs.some(tab => tab.selection.type === "storyPlay")) {
+        prepareClosedStoryPlay();
+        stopStoryTestRef.current();
+      }
+      removedInspectorTabs.forEach(tab => {
+        if (tab.selection.type === "node") deselectCanvasNode(tab.selection.id);
       });
-      if (activateEvent && expandedEventId) {
-        setExpandedInspectorTabId(undefined);
-        setSelection({ type: "node", id: expandedEventId });
+      removedEventIds.forEach(deselectCanvasNode);
+
+      const nextExpandedInspectorTabId = activeRemoved
+        ? targetInspector?.id
+        : expandedInspectorTabId && nextInspectorIds.has(expandedInspectorTabId)
+          ? expandedInspectorTabId
+          : undefined;
+      const nextExpandedEventId = activeRemoved
+        ? targetEventExists ? target.id : undefined
+        : eventInspector.expandedEventId && nextEventIds.has(eventInspector.expandedEventId)
+          ? eventInspector.expandedEventId
+          : undefined;
+
+      setInspectorTabs(next.inspectorTabs);
+      setEventInspector({
+        ...eventInspector,
+        open: activeRemoved ? true : eventInspector.open,
+        openEventIds: next.eventIds,
+        expandedEventId: nextExpandedEventId,
+      });
+      setExpandedInspectorTabId(nextExpandedInspectorTabId);
+      setInspectorStackOrder(orderedInspectorStack([
+        ...next.inspectorTabs.map(tab => ({ kind: "inspector" as const, id: tab.id })),
+        ...next.eventIds.map(id => ({ kind: "event" as const, id })),
+      ], inspectorStackOrder).map(inspectorStackKey));
+
+      const removedSelectionKeys = new Set(removedInspectorTabs.map(tab => inspectorSelectionKey(tab.selection)));
+      setSelection(current => {
+        if (current && removedSelectionKeys.has(inspectorSelectionKey(current))) return undefined;
+        if (activeEventRemoved && current?.type === "node" && current.id === eventInspector.expandedEventId) return undefined;
+        return current;
+      });
+      if (activeRemoved) {
+        if (targetInspector) setSelection(targetInspector.selection);
+        else if (targetEventExists) setSelection({ type: "node", id: target.id });
       }
     },
-    [eventInspector.expandedEventId, expandedInspectorTabId],
+    [deselectCanvasNode, eventInspector, expandedInspectorTabId, inspectorStackOrder, inspectorTabs, prepareClosedStoryPlay],
   );
 
   const closeInspectorTabsAbove = useCallback(
-    (eventId: string) => {
-      applyEventInspectorClose(closeEventInspectorTabsAbove(eventInspector, eventId), eventId);
-    },
-    [applyEventInspectorClose, eventInspector],
+    (eventId: string) => closeInspectorStackRange({ kind: "event", id: eventId }, "above"),
+    [closeInspectorStackRange],
   );
 
   const closeInspectorTabsBelow = useCallback(
-    (eventId: string) => {
-      applyEventInspectorClose(closeEventInspectorTabsBelow(eventInspector, eventId), eventId);
-    },
-    [applyEventInspectorClose, eventInspector],
+    (eventId: string) => closeInspectorStackRange({ kind: "event", id: eventId }, "below"),
+    [closeInspectorStackRange],
   );
 
   const closeOtherInspectorTabs = useCallback(
-    (eventId: string) => {
-      applyEventInspectorClose(closeOtherEventInspectorTabs(eventInspector, eventId), eventId);
-    },
-    [applyEventInspectorClose, eventInspector],
-  );
-
-  const applyExplorerInspectorClose = useCallback(
-    (nextTabs: InspectorTab[], preferredId: string) => {
-      const removedPlay = inspectorTabs.some(tab => tab.selection.type === "storyPlay" && !nextTabs.some(next => next.id === tab.id));
-      if (removedPlay) {
-        prepareClosedStoryPlay();
-        stopStoryTestRef.current();
-        setSelection(current => current?.type === "storyPlay" && !nextTabs.some(tab => inspectorSelectionKey(tab.selection) === inspectorSelectionKey(current)) ? undefined : current);
-      }
-      setInspectorTabs(nextTabs);
-      if (!expandedInspectorTabId || nextTabs.some(tab => tab.id === expandedInspectorTabId)) return;
-      const nextTab = nextTabs.find(tab => tab.id === preferredId);
-      setExpandedInspectorTabId(nextTab?.id);
-      if (nextTab) {
-        setEventInspector(current => ({ ...current, open: true, expandedEventId: undefined }));
-        setSelection(nextTab.selection);
-      }
-    },
-    [expandedInspectorTabId, inspectorTabs, prepareClosedStoryPlay],
-  );
-
-  const closeExplorerInspectorTabsAbove = useCallback(
-    (id: string) => {
-        const index = inspectorTabs.findIndex((tab) => tab.id === id);
-        if (index <= 0) return;
-        const removed = new Set(
-          inspectorTabs.slice(0, index).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
-        );
-        if (removed.size === 0) return;
-        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
-    },
-    [applyExplorerInspectorClose, inspectorTabs],
-  );
-
-  const closeExplorerInspectorTabsBelow = useCallback(
-    (id: string) => {
-        const index = inspectorTabs.findIndex((tab) => tab.id === id);
-        if (index < 0 || index >= inspectorTabs.length - 1) return;
-        const removed = new Set(
-          inspectorTabs.slice(index + 1).filter((tab) => tab.mode !== "debug").map((tab) => tab.id),
-        );
-        if (removed.size === 0) return;
-        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
-    },
-    [applyExplorerInspectorClose, inspectorTabs],
-  );
-
-  const closeOtherExplorerInspectorTabs = useCallback(
-    (id: string) => {
-        const removed = new Set(
-          inspectorTabs.filter((tab) => tab.id !== id && tab.mode !== "debug").map((tab) => tab.id),
-        );
-        if (removed.size === 0) return;
-        applyExplorerInspectorClose(inspectorTabs.filter((tab) => !removed.has(tab.id)), id);
-    },
-    [applyExplorerInspectorClose, inspectorTabs],
+    (eventId: string) => closeInspectorStackRange({ kind: "event", id: eventId }, "others"),
+    [closeInspectorStackRange],
   );
 
   const loadInspectorTabGroup = useCallback(
@@ -13044,6 +13123,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const openInspector = useCallback((target: Selection, section?: string, focusId?: string) => {
     const current = projectRef.current;
     if (!current) return;
+    const selectedOutcomeId = target.type === "node" && current.events.some(event => narrativeNodeReferences(current, event.id).some(item => item.id === target.id && item.kind === "outcome")) ? target.id : undefined;
+    const selectedDecisionNode = target.type === "node" && current.events.some(event => narrativeNodeReferences(current, event.id).some(item => item.id === target.id && item.kind === "decision"));
     const resolved = canvasInspectorTarget(current, target, nodesRef.current);
     if (!resolved) return;
     target = resolved;
@@ -13072,8 +13153,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setExpandedInspectorTabId(tab.id);
     }
     const rememberedModule = target.type === "node" && narrativeInspectorModules(current, target.id) ? readInspectorModulePreferences(current.projectId, key)?.active : undefined;
-    setInspectorRequest({selectionKey:key,section:section === "write" ? "path" : section ?? rememberedModule ?? inspectorSections[`${storyKey}|${key}`] ?? "overview",focusId,requestId:Date.now()});
+    setInspectorRequest({selectionKey:key,section:section === "write" ? "path" : section ?? (selectedOutcomeId ? "content" : selectedDecisionNode ? "narrativeDecision" : rememberedModule ?? inspectorSections[`${storyKey}|${key}`] ?? "overview"),focusId:focusId ?? selectedOutcomeId,requestId:Date.now()});
   },[inspectorSections, inspectorTabs]);
+  useEffect(() => {
+    if (inspectorTabs.some(tab => tab.selection.type === 'edge')) setInspectorTabs(tabs => tabs.filter(tab => tab.selection.type !== 'edge'));
+  }, [inspectorTabs]);
   openInspectorRef.current = openInspector;
   const openStoryPlay = useCallback(() => {
     if (playDetachedWindowActiveRef.current || playDetachingRef.current) return;
@@ -13092,6 +13176,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     else setSelection(undefined);
   }, [openInspector]);
   const pinInspectorTarget = useCallback((target:Selection) => {
+    if (target.type === "edge") return;
     const current = projectRef.current;
     if (!current) return;
     if (target.type === "node" && current.events.some(event => event.id === target.id)) {
@@ -13103,9 +13188,13 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }, [nodes]);
   const unpinInspectorTarget = useCallback((target:Selection) => {
     setEventInspector(state => ({...state,openEventIds:state.openEventIds.filter(id=>!(target.type === "node" && id === target.id))}));
+    if (target.type === "node") {
+      deselectCanvasNode(target.id);
+      setSelection(current => current?.type === "node" && current.id === target.id ? undefined : current);
+    }
     if (target.type === "storyPlay") prepareClosedStoryPlay();
     setInspectorTabs(tabs => tabs.filter(tab=>inspectorSelectionKey(tab.selection)!==inspectorSelectionKey(target)));
-  }, [prepareClosedStoryPlay]);
+  }, [deselectCanvasNode, prepareClosedStoryPlay]);
   const rememberInspectorSection = useCallback((key:string,section:string) => {
     const current = projectRef.current;
     if (!current) return;
@@ -13130,6 +13219,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const openInspectorTab = useCallback(
     (id: string) => {
       const expanding = expandedInspectorTabId !== id;
+      const target = inspectorTabs.find((tab) => tab.id === id);
       setExpandedInspectorTabId(expanding ? id : undefined);
       if (expanding) {
         setEventInspector((current) => ({
@@ -13137,17 +13227,23 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           open: true,
           expandedEventId: undefined,
         }));
-        const target = inspectorTabs.find((tab) => tab.id === id);
         if (target) setSelection(target.selection);
+      } else if (target?.selection.type === "node") {
+        deselectCanvasNode(target.selection.id);
+        setSelection((current) => current && inspectorSelectionKey(current) === inspectorSelectionKey(target.selection) ? undefined : current);
       }
     },
-    [expandedInspectorTabId, inspectorTabs],
+    [deselectCanvasNode, expandedInspectorTabId, inspectorTabs],
   );
 
   const closeInspectorTab = useCallback(
     (id: string) => {
       const closedIndex = inspectorTabs.findIndex((tab) => tab.id === id);
       const closedTab = inspectorTabs[closedIndex];
+      if (closedTab?.selection.type === "node") {
+        deselectCanvasNode(closedTab.selection.id);
+        setSelection((current) => current && inspectorSelectionKey(current) === inspectorSelectionKey(closedTab.selection) ? undefined : current);
+      }
       if (closedTab?.selection.type === "storyPlay") {
         prepareClosedStoryPlay();
         stopStoryTestRef.current();
@@ -13172,6 +13268,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           expandedEventId: current.openEventIds[0],
         }));
         setSelection({ type: "node", id: eventInspector.openEventIds[0] });
+      } else {
+        setSelection((current) => current && closedTab && inspectorSelectionKey(current) === inspectorSelectionKey(closedTab.selection) ? undefined : current);
       }
     },
     [
@@ -13180,31 +13278,33 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       inspectorTabs,
       settings.inspectorTabCloseSelectsNext,
       prepareClosedStoryPlay,
+      deselectCanvasNode,
     ],
   );
 
-  const closeDeletedNodeInspector = useCallback(
-    (nodeId: string) => {
+  const closeDeletedInspectorSelection = useCallback(
+    (target: Selection) => {
+      const targetKey = inspectorSelectionKey(target);
       const removedTabIds = new Set(
         inspectorTabs
-          .filter(
-            (tab) => tab.selection.type === "node" && tab.selection.id === nodeId,
-          )
+          .filter((tab) => inspectorSelectionKey(tab.selection) === targetKey)
           .map((tab) => tab.id),
       );
       setInspectorTabs((current) =>
-        current.filter(
-          (tab) => tab.selection.type !== "node" || tab.selection.id !== nodeId,
-        ),
+        current.filter((tab) => inspectorSelectionKey(tab.selection) !== targetKey),
       );
       setExpandedInspectorTabId((current) =>
         current && removedTabIds.has(current) ? undefined : current,
       );
       setSelection((current) =>
-        current?.type === "node" && current.id === nodeId ? undefined : current,
+        current && inspectorSelectionKey(current) === targetKey ? undefined : current,
       );
     },
     [inspectorTabs],
+  );
+  const closeDeletedNodeInspector = useCallback(
+    (nodeId: string) => closeDeletedInspectorSelection({ type: "node", id: nodeId }),
+    [closeDeletedInspectorSelection],
   );
 
   useEffect(() => {
@@ -13245,32 +13345,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (!currentProject) {
         return;
       }
-      const result = factory(currentProject);
-      const eventId = eventDraft?.eventId;
-      const nextEvent = eventId ? findEvent(result.project, eventId) : undefined;
-      if (eventId && nextEvent) {
-        setEventDraft((currentDraft) =>
-          currentDraft?.eventId === eventId
-            ? {
-                ...currentDraft,
-                baseEvent: structuredClone(nextEvent),
-                draftEvent: structuredClone(nextEvent),
-                dirty: false,
-                saving: false,
-              }
-            : currentDraft,
-        );
-      }
-      applyProject(result.project, { dirty: false, revision: true });
-      void persistProjectRef.current?.().then(() => {
-        for (const action of learningActionsForMutation(currentProject, result.project)) reportLearning(action, result.project.storyId ?? result.project.projectId);
-      }).catch((saveError) => {
-        setError(
-          saveError instanceof Error ? saveError.message : String(saveError),
-        );
-      });
+      // Canvas edits made while an event inspector is open are document edits,
+      // so they must use the same undo, redo and save transaction as other edits.
+      void commitStructuralAction("Updated event", factory(currentProject));
     },
-    [applyProject, eventDraft?.eventId, reportLearning],
+    [commitStructuralAction],
   );
 
   const importAssets = useCallback(async () => {
@@ -13303,6 +13382,34 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setError(assetError instanceof Error ? assetError.message : String(assetError));
     }
   }, [commitStructuralAction, fileState.universePath]);
+
+  const importInteractionPreviewImage = useCallback(async () => {
+    if (!fileState.universePath) {
+      setMessage(uiLocale === 'es' ? 'Abre un universo antes de cargar una imagen.' : 'Open a universe before uploading an image.');
+      return [];
+    }
+    try {
+      const imported = await importSceneImages(fileState.universePath);
+      if (!imported.length) return [];
+      const current = projectRef.current;
+      if (!current) return [];
+      const importedAt = new Date().toISOString();
+      const registered = imported.map((asset) => ({
+        ...asset,
+        id: `asset:${crypto.randomUUID()}`,
+        origin: 'uncanon' as const,
+        importedAt,
+      }));
+      await commitStructuralAction('Imported interaction preset image', {
+        project: { ...current, assets: [...(current.assets ?? []), ...registered] },
+        message: `Imported ${registered.length} interaction preset image${registered.length === 1 ? '' : 's'}.`,
+      });
+      return registered;
+    } catch (assetError) {
+      setError(assetError instanceof Error ? assetError.message : String(assetError));
+      return [];
+    }
+  }, [commitStructuralAction, fileState.universePath, uiLocale]);
 
   const importSceneImageForBeat = useCallback(async (
     eventId: string,
@@ -13608,7 +13715,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   ]);
 
   const navigateCanvasScope = useCallback(
-    (scope: CanvasScope, nextSelection?: Selection) => {
+    (scope: CanvasScope, nextSelection?: Selection, options?: { preserveSelection?: boolean }) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
       const nextProject = {
@@ -13639,7 +13746,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setFiles(model.files);
       setCanvasMode("branching");
       setFocusNodeId(undefined);
-      setSelection(nextSelection ?? { type: "node", id: scope.id });
+      if (!options?.preserveSelection) setSelection(nextSelection ?? { type: "node", id: scope.id });
     },
     [],
   );
@@ -14042,6 +14149,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     const dialog = confirmDialog;
     if (!dialog) return;
     setConfirmDialog(undefined);
+    if (dialog.kind === "deleteLocalExplorerEntity") {
+      await deleteLocalExplorerEntity(dialog.entityId);
+      return;
+    }
     if (dialog.kind === "deleteSequence") {
       const currentProject = projectRef.current;
       const sequenceId = currentProject
@@ -14087,7 +14198,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         );
       }
     }
-  }, [applyWorkspace, confirmDialog, confirmDiscardChanges, updateProject]);
+  }, [applyWorkspace, confirmDialog, confirmDiscardChanges, deleteLocalExplorerEntity, updateProject]);
 
   const createBranch = useCallback(
     (position?: { x: number; y: number }) => {
@@ -14244,6 +14355,31 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           position,
           connected: { scope, sourceNodeId, sourceHandleId },
         });
+        return;
+      }
+      if (kind === "interaction") {
+        if (eventDraft?.eventId === eventId) {
+          setEventDraft(undefined);
+        }
+        const created = addInteraction(sourceProject, eventId, "dice", {
+          pendingMechanic: true,
+          dialogueId: scope.kind === "dialogue" ? scope.id : undefined,
+          afterNodeId: sourceHandleId ?? sourceNodeId,
+        });
+        const positioned = positionMutationNode(
+          created,
+          snapCanvasPoint(
+            position,
+            settingsRef.current.canvasBackground.snapToGrid,
+            settingsRef.current.canvasBackground.gridSize,
+          ),
+          scope,
+        );
+        if (positioned.project === sourceProject) {
+          setMessage(positioned.message ?? "Could not create the connected interaction.");
+          return;
+        }
+        runCanvasMutation(positioned, "Created connected interaction");
         return;
       }
       if (eventDraft?.eventId === eventId) {
@@ -14787,6 +14923,42 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [commitCanvasAction, nodes],
   );
 
+  const createSequenceCharacter = useCallback(
+    (sequenceId: string, name: string) => {
+      const currentProject = projectRef.current;
+      const trimmedName = name.trim();
+      const sequence = currentProject?.sequences.find((candidate) => candidate.id === sequenceId);
+      if (!currentProject || !sequence || !trimmedName) return;
+
+      const existingIds = new Set([
+        ...currentProject.canonRefs.map((ref) => ref.id),
+        ...(currentProject.localExplorerEntities ?? []).map((entity) => entity.id),
+      ]);
+      const baseEntity = createLocalExplorerEntity("character", trimmedName);
+      let entity = baseEntity;
+      let suffix = 2;
+      while (existingIds.has(entity.id)) {
+        entity = { ...baseEntity, id: `${baseEntity.id}-${suffix}` };
+        suffix += 1;
+      }
+
+      const characterRefs = sequence.characterRefs ?? (sequence.characterRef ? [sequence.characterRef] : []);
+      const updatedProject = mutations.updateSequence(currentProject, sequenceId, {
+        characterRefs: [...characterRefs, entity.id],
+        characterRef: undefined,
+      }).project;
+      const es = uiLocaleRef.current === "es";
+      void commitStructuralAction(es ? "Creado personaje local para la secuencia" : "Created local sequence character", {
+        project: {
+          ...updatedProject,
+          localExplorerEntities: [...(currentProject.localExplorerEntities ?? []), entity],
+        },
+        message: es ? "Personaje creado y añadido a Actores." : "Character created and added to Actors.",
+      });
+    },
+    [commitStructuralAction],
+  );
+
   const updateSequence = useCallback(
     (id: string, updates: Partial<Sequence>) => {
       if (!project) {
@@ -15148,7 +15320,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     (eventId: string, dialogueId: string, beatId: string) => {
       const currentProject = projectRef.current;
       if (!currentProject) return;
-      closeDeletedNodeInspector(`beat:${eventId}:${dialogueId}:${beatId}`);
+      closeDeletedNodeInspector(`beat:${eventId}:${beatId}`);
       runCanvasMutation(mutations.deleteDialogueBeat(currentProject, eventId, dialogueId, beatId));
     },
     [closeDeletedNodeInspector, runCanvasMutation],
@@ -15312,11 +15484,14 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         mutateEventDraft((draftProject) =>
           mutations.deleteTransition(draftProject, transitionId),
         );
+        closeDeletedInspectorSelection({ type: "edge", id: `edge:transition:${transitionId}` });
         return;
       }
       runCanvasMutation(mutations.deleteTransition(project, transitionId));
+      closeDeletedInspectorSelection({ type: "edge", id: `edge:transition:${transitionId}` });
     },
     [
+      closeDeletedInspectorSelection,
       eventDraft?.draftEvent.transitions,
       mutateEventDraft,
       project,
@@ -15381,10 +15556,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             ),
           },
         });
+        closeDeletedInspectorSelection({ type: "edge", id: edgeId });
         return;
       }
       if (edgeId.startsWith("edge:boundary:")) {
         removeBoundaryBinding(edgeId.replace("edge:boundary:", ""));
+        closeDeletedInspectorSelection({ type: "edge", id: edgeId });
         return;
       }
       if (!edgeId.startsWith("edge:dialogue-entry:") || activeScope?.kind !== "dialogue") {
@@ -15392,8 +15569,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
       const dialogueId = edgeId.replace("edge:dialogue-entry:", "");
       updateDialogue(activeScope.eventId, dialogueId, { entryBeatId: undefined });
+      closeDeletedInspectorSelection({ type: "edge", id: edgeId });
     },
-    [activeScope, removeBoundaryBinding, runCanvasMutation, updateDialogue],
+    [activeScope, closeDeletedInspectorSelection, removeBoundaryBinding, runCanvasMutation, updateDialogue],
   );
 
   const createCanonSuggestion = useCallback(
@@ -15544,6 +15722,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       horizontalGapCells: number;
       verticalGapCells: number;
       selectedNodeIds?: string[];
+      automatic?: boolean;
     }) => {
       if (!activeScope || activeScope.kind === "sequence") return;
       const currentProject = projectRef.current;
@@ -15585,7 +15764,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       );
       const positionedProject = updateProjectCanvas(currentProject, nextNodes, activeScope);
       const scopeKey = canvasScopeKey(activeScope);
-      commitCanvasAction(options.mode === "linear" ? "Organized nodes in a line" : "Organized nodes in grid", {
+      const arrangedProject = {
         ...positionedProject,
         canvas: {
           ...positionedProject.canvas,
@@ -15597,9 +15776,20 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             },
           },
         },
-      });
+      };
+      const actionLabel = options.mode === "linear" ? "Organized nodes in a line" : "Organized nodes in grid";
+      if (options.automatic) {
+        void commitStructuralAction(actionLabel, arrangedProject, undefined, {
+          recordUndo: false,
+          recordRedo: false,
+          recordActionHistory: false,
+          showStatus: false,
+        });
+      } else {
+        commitCanvasAction(actionLabel, arrangedProject);
+      }
     },
-    [activeScope, commitCanvasAction, edges, nodes],
+    [activeScope, commitCanvasAction, commitStructuralAction, edges, nodes],
   );
 
   const handleNodesChange = useCallback(
@@ -15930,15 +16120,6 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           snap.gridSize,
         ),
       };
-      // A gate stores the compact visual knot anchor. Convert the dragged
-      // Logic card rectangle back using its actual rendered dimensions.
-      if (node.data.kind === "routeGate" && canvasLayerModeRef.current === "logic") {
-        nextNode.position = routeGateVisualAnchorFromLogicPosition(
-          nextNode.position,
-          node.width,
-          node.height,
-        );
-      }
       const nextNodes = nodes.map((item) =>
         item.id === node.id ? nextNode : item,
       );
@@ -16122,27 +16303,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
       if (selectedNode?.data.kind === "routeGate") {
         const routeSourceId = selectedNode.data.details?.routeSourceId;
-        if (typeof routeSourceId === "string") {
-          const scopeKey = activeScope ? canvasScopeKey(activeScope) : undefined;
-          const currentSources = scopeKey
-            ? currentProject.canvas?.scopes?.[scopeKey]?.routeGateSources ?? []
-            : currentProject.canvas?.routeGateSources ?? [];
-          const nextCanvas = scopeKey
-            ? {
-                ...currentProject.canvas,
-                scopes: {
-                  ...(currentProject.canvas?.scopes ?? {}),
-                  [scopeKey]: {
-                    ...(currentProject.canvas?.scopes?.[scopeKey] ?? {}),
-                    routeGateSources: currentSources.filter((source) => source !== routeSourceId),
-                  },
-                },
-              }
-            : {
-                ...currentProject.canvas,
-                routeGateSources: currentSources.filter((source) => source !== routeSourceId),
-              };
-          runCanvasMutation({ project: { ...currentProject, canvas: nextCanvas } });
+        const eventId = selectedNode.data.details?.eventId;
+        if (typeof routeSourceId === "string" && typeof eventId === "string") {
+          runCanvasMutation({ project: mutations.deleteRoutesFromSource(currentProject, eventId, routeSourceId) });
+          closeDeletedNodeInspector(id);
           return;
         }
       }
@@ -16154,6 +16318,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             events: currentProject.events.map((event) => event.id === eventId ? { ...event, script: undefined } : event),
           },
         });
+        closeDeletedNodeInspector(id);
         return;
       }
       if (selectedNode?.data.kind === "runtimeAction") {
@@ -16170,6 +16335,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   : event),
               },
             });
+            closeDeletedNodeInspector(id);
             return;
           }
           const ownerOutcome = currentProject.events.flatMap((event) =>
@@ -16194,6 +16360,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   : event),
               },
             });
+            closeDeletedNodeInspector(id);
             return;
           }
           const ownerBeat = currentProject.events.flatMap((event) => [
@@ -16223,6 +16390,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                 }),
               },
             });
+            closeDeletedNodeInspector(id);
             return;
           }
           const ownerDialogue = currentProject.events.flatMap((event) =>
@@ -16242,9 +16410,43 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
                   : event),
               },
             });
+            closeDeletedNodeInspector(id);
             return;
           }
         }
+      }
+      if (selectedNode?.data.kind === "interaction" && typeof selectedNode.data.details?.eventId === "string") {
+        const eventId = selectedNode.data.details.eventId;
+        const use = selectedNode.data.details.interactionUse as { id?: string } | undefined;
+        if (use?.id) {
+          try {
+            const sourceProject = eventDraft?.eventId === eventId
+              ? applyEventDraftToProject(currentProject, eventDraft)
+              : currentProject;
+            if (eventDraft?.eventId === eventId) setEventDraft(undefined);
+            const nextProject = deleteInteractionUse(sourceProject, eventId, use.id);
+            runCanvasMutation({ project: nextProject }, "Deleted interaction");
+            closeDeletedNodeInspector(id);
+            setSelection(undefined);
+          } catch (error) {
+            setMessage(error instanceof Error ? error.message : String(error));
+          }
+        }
+        return;
+      }
+      if (selectedNode?.data.kind === "barrier" && typeof selectedNode.data.details?.eventId === "string") {
+        const barrier = selectedNode.data.details.interactionBarrier as { id?: string } | undefined;
+        if (barrier?.id) {
+          try {
+            const nextProject = deleteInteractionBarrier(currentProject, selectedNode.data.details.eventId, barrier.id);
+            runCanvasMutation({ project: nextProject }, "Deleted interaction barrier");
+            closeDeletedNodeInspector(id);
+            setSelection(undefined);
+          } catch (error) {
+            setMessage(error instanceof Error ? error.message : String(error));
+          }
+        }
+        return;
       }
       if (
         (selectedNode?.data.kind === "speechBeat" || selectedNode?.data.kind === "directionBeat") &&
@@ -16254,10 +16456,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const dialogueId = selectedNode.data.details?.dialogueId;
         if (beat?.id) {
           const eventId = selectedNode.data.details.eventId;
-          closeDeletedNodeInspector(typeof dialogueId === "string" ? `beat:${eventId}:${dialogueId}:${beat.id}` : `beat:${eventId}:${beat.id}`);
           runCanvasMutation(typeof dialogueId === "string"
             ? mutations.deleteDialogueBeat(currentProject, eventId, dialogueId, beat.id)
             : mutations.deleteEventDialogueBeat(currentProject, eventId, beat.id));
+          closeDeletedNodeInspector(id);
           setSelection(undefined);
         }
         return;
@@ -16266,6 +16468,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const start = selectedNode.data.details.start as { id?: string } | undefined;
         if (start?.id) {
           runCanvasMutation(mutations.deleteDialogueStart(currentProject, selectedNode.data.details.eventId, start.id));
+          closeDeletedNodeInspector(id);
           setSelection(undefined);
         }
         return;
@@ -16277,7 +16480,6 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const dialogue = selectedNode.data.details.dialogue as
           { id?: string } | undefined;
         if (dialogue?.id) {
-          closeDeletedNodeInspector(`dialogue:${selectedNode.data.details.eventId}:${dialogue.id}`);
           runCanvasMutation(
             mutations.deleteDialogue(
               currentProject,
@@ -16285,6 +16487,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               dialogue.id,
             ),
           );
+          closeDeletedNodeInspector(id);
           setSelection(undefined);
         }
         return;
@@ -16296,14 +16499,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const decision = selectedNode.data.details.decision as
           { id?: string } | undefined;
         if (decision?.id) {
-          closeDeletedNodeInspector(`decision:${selectedNode.data.details.eventId}:${decision.id}`);
-          runCanvasMutation(
-            mutations.deleteDecision(
-              currentProject,
-              selectedNode.data.details.eventId,
-              decision.id,
-            ),
-          );
+          deleteDecision(selectedNode.data.details.eventId, decision.id);
           setSelection(undefined);
         }
         return;
@@ -16335,6 +16531,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               missingEventId,
             ),
           );
+          closeDeletedNodeInspector(id);
           setSelection(undefined);
         }
         return;
@@ -16374,12 +16571,14 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             ? { type: "node", id: nextSequences[0].id }
             : undefined,
         );
+        closeDeletedNodeInspector(id);
         return;
       }
 
       const branch = findBranch(project, id);
       if (branch) {
         updateProject(mutations.deleteBranch(project, branch.id).project, undefined);
+        closeDeletedNodeInspector(id);
         setSelection(undefined);
         return;
       }
@@ -16451,10 +16650,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           }),
           undefined,
         );
+        closeDeletedNodeInspector(id);
+        pruneEventInspectorEvents(currentProject.events.filter((item) => item.id !== event.id).map((item) => item.id));
         setSelection(undefined);
       }
     },
-    [activeScope, closeDeletedNodeInspector, deleteTransition, nodes, project, runCanvasMutation, updateProject],
+    [activeScope, closeDeletedNodeInspector, deleteDecision, deleteTransition, eventDraft, nodes, project, pruneEventInspectorEvents, runCanvasMutation, updateProject],
   );
 
   const deleteNodeSelections = useCallback(
@@ -16464,42 +16665,75 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
       const selectedIds = new Set(nodeIds);
       const selectedNodes = nodes.filter((node) => selectedIds.has(node.id));
-      let nextProject = currentProject;
+      const draft = eventDraft && selectedNodes.some(
+        (node) => node.data.details?.eventId === eventDraft.eventId,
+      ) ? eventDraft : undefined;
+      let nextProject = draft
+        ? applyEventDraftToProject(currentProject, draft)
+        : currentProject;
+      if (draft) setEventDraft(undefined);
       let deletedCount = 0;
+      let interactionDeletionError: unknown;
+      const deletedInspectorNodeIds: string[] = [];
 
       for (const node of selectedNodes) {
         const eventId = node.data.details?.eventId;
         const dialogueId = node.data.details?.dialogueId;
-        if (
+        if (node.data.kind === "interaction" && typeof eventId === "string") {
+          const use = node.data.details?.interactionUse as { id?: string } | undefined;
+          if (use?.id) {
+            try {
+              nextProject = deleteInteractionUse(nextProject, eventId, use.id);
+              deletedInspectorNodeIds.push(node.id);
+              deletedCount += 1;
+            } catch (error) {
+              interactionDeletionError = error;
+              break;
+            }
+          }
+        } else if (node.data.kind === "barrier" && typeof eventId === "string") {
+          const barrier = node.data.details?.interactionBarrier as { id?: string } | undefined;
+          if (barrier?.id) {
+            try {
+              nextProject = deleteInteractionBarrier(nextProject, eventId, barrier.id);
+              deletedInspectorNodeIds.push(node.id);
+              deletedCount += 1;
+            } catch (error) {
+              interactionDeletionError = error;
+              break;
+            }
+          }
+        } else if (
           (node.data.kind === "speechBeat" || node.data.kind === "directionBeat") &&
           typeof eventId === "string"
         ) {
           const beat = node.data.details?.beat as { id?: string } | undefined;
           if (beat?.id) {
-            closeDeletedNodeInspector(typeof dialogueId === "string" ? `beat:${eventId}:${dialogueId}:${beat.id}` : `beat:${eventId}:${beat.id}`);
             nextProject = (typeof dialogueId === "string"
               ? mutations.deleteDialogueBeat(nextProject, eventId, dialogueId, beat.id)
               : mutations.deleteEventDialogueBeat(nextProject, eventId, beat.id)).project;
+            deletedInspectorNodeIds.push(node.id);
             deletedCount += 1;
           }
         } else if (node.data.kind === "dialogueStart" && typeof eventId === "string") {
           const start = node.data.details?.start as { id?: string } | undefined;
           if (start?.id) {
             nextProject = mutations.deleteDialogueStart(nextProject, eventId, start.id).project;
+            deletedInspectorNodeIds.push(node.id);
             deletedCount += 1;
           }
         } else if (node.data.kind === "dialogue" && typeof eventId === "string") {
           const dialogue = node.data.details?.dialogue as { id?: string } | undefined;
           if (dialogue?.id) {
-            closeDeletedNodeInspector(`dialogue:${eventId}:${dialogue.id}`);
             nextProject = mutations.deleteDialogue(nextProject, eventId, dialogue.id).project;
+            deletedInspectorNodeIds.push(node.id);
             deletedCount += 1;
           }
         } else if (node.data.kind === "decision" && typeof eventId === "string") {
           const decision = node.data.details?.decision as { id?: string } | undefined;
           if (decision?.id) {
-            closeDeletedNodeInspector(`decision:${eventId}:${decision.id}`);
             nextProject = mutations.deleteDecision(nextProject, eventId, decision.id).project;
+            deletedInspectorNodeIds.push(node.id);
             deletedCount += 1;
           }
         } else if (node.data.kind === "missingRef") {
@@ -16507,6 +16741,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           const missingEventId = node.data.details?.missingEventId;
           if (typeof ownerId === "string" && typeof missingEventId === "string") {
             nextProject = mutations.removeMissingEventReference(nextProject, ownerId, missingEventId).project;
+            deletedInspectorNodeIds.push(node.id);
             deletedCount += 1;
           }
         } else if (node.data.kind === "outcome" && typeof eventId === "string" && typeof node.data.details?.decisionId === "string") {
@@ -16516,6 +16751,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             deletedCount += 1;
           }
         }
+      }
+
+      if (interactionDeletionError) {
+        setMessage(interactionDeletionError instanceof Error ? interactionDeletionError.message : String(interactionDeletionError));
+        return;
       }
 
       const branchIds = selectedNodes
@@ -16533,6 +16773,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           })),
           events: nextProject.events.map((event) => removedBranches.has(event.branchRef ?? "") ? { ...event, branchRef: undefined } : event),
         };
+        deletedInspectorNodeIds.push(...branchIds);
         deletedCount += branchIds.length;
       }
 
@@ -16581,7 +16822,6 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               ),
             })),
         };
-        eventIds.forEach((id) => closeDeletedNodeInspector(id));
         deletedCount += eventIds.length;
       }
 
@@ -16594,12 +16834,17 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
       setSelection(undefined);
+      deletedInspectorNodeIds.forEach(closeDeletedNodeInspector);
+      eventIds.forEach(closeDeletedNodeInspector);
+      if (eventIds.length > 0) {
+        pruneEventInspectorEvents(nextProject.events.map((event) => event.id));
+      }
       commitCanvasAction(
         `Deleted ${deletedCount} selected node${deletedCount === 1 ? "" : "s"}`,
         nextProject,
       );
     },
-    [closeDeletedNodeInspector, commitCanvasAction, nodes],
+    [closeDeletedNodeInspector, commitCanvasAction, eventDraft, nodes, pruneEventInspectorEvents],
   );
 
   const canvasSelectionNodeIds = useCallback(() => {
@@ -17025,6 +17270,27 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     );
   }, [activeScope, runCanvasMutation]);
 
+  const createInteractionNode = useCallback((eventId: string, dialogueId?: string, position?: CanvasPoint) => {
+    const currentProject = projectRef.current;
+    if (!currentProject) return;
+    const sourceProject = eventDraft?.eventId === eventId
+      ? applyEventDraftToProject(currentProject, eventDraft)
+      : currentProject;
+    const created = addInteraction(sourceProject, eventId, "dice", { dialogueId, pendingMechanic: true });
+    if (eventDraft?.eventId === eventId) setEventDraft(undefined);
+    const scope: CanvasScope = dialogueId
+      ? { kind: "dialogue", id: dialogueId, eventId }
+      : { kind: "event", id: eventId };
+    const placement = position
+      ? snapCanvasPoint(
+          position,
+          settingsRef.current.canvasBackground.snapToGrid,
+          settingsRef.current.canvasBackground.gridSize,
+        )
+      : undefined;
+    runCanvasMutation(positionMutationNode(created, placement, scope), "Created interaction");
+  }, [eventDraft, runCanvasMutation]);
+
   const updateDialogueStart = useCallback((eventId: string, startId: string, updates: Partial<DialogueStart>) => {
     const currentProject = projectRef.current;
     if (!currentProject) return;
@@ -17057,8 +17323,18 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
       const target = event.target;
-      // Conversation has protected line deletion; a focused row must never delete its owner scene.
-      if (target instanceof Element && target.closest(".conversation-editor")) return;
+      if (target instanceof Element && target.closest(".canvas-edge-waypoint")) return;
+      const currentSelection = selectionRef.current;
+      const selectedNode = currentSelection?.type === "node"
+        ? nodes.find((node) => node.id === currentSelection.id)
+        : undefined;
+      if (
+        target instanceof Element &&
+        target.closest(".conversation-editor") &&
+        selectedNode?.data.kind !== "decision" &&
+        selectedNode?.data.kind !== "interaction" &&
+        selectedNode?.data.kind !== "barrier"
+      ) return;
       if (
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
@@ -17069,18 +17345,20 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       }
 
       const currentProject = projectRef.current;
-      const currentSelection = selectionRef.current;
       if (!currentProject || !currentSelection) {
         return;
       }
 
       if (currentSelection.type === "node") {
         event.preventDefault();
+        event.stopPropagation();
         const selectedNodeIds = nodes.filter((node) => node.selected).map((node) => node.id);
-        if (selectedNodeIds.length > 0) {
+        if (selectedNodeIds.length > 1) {
           deleteNodeSelections(selectedNodeIds);
         } else {
-          deleteSelection(currentSelection);
+          deleteSelection(selectedNodeIds[0]
+            ? { type: "node", id: selectedNodeIds[0] }
+            : currentSelection);
         }
         return;
       }
@@ -17090,6 +17368,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         currentSelection.id.startsWith("edge:transition:")
       ) {
         event.preventDefault();
+        event.stopPropagation();
         deleteTransition(currentSelection.id.replace("edge:transition:", ""));
         setSelection(undefined);
         return;
@@ -17102,6 +17381,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           currentSelection.id.startsWith("edge:entry:"))
       ) {
         event.preventDefault();
+        event.stopPropagation();
         deleteBoundaryEdge(currentSelection.id);
         setSelection(undefined);
       }
@@ -17623,6 +17903,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         open={Boolean(confirmDialog)}
         title={confirmDialog?.title ?? ""}
         message={confirmDialog?.message ?? ""}
+        confirmLabel={confirmDialog?.kind === "deleteLocalExplorerEntity" ? (uiLocale === "es" ? "Eliminar" : "Delete") : undefined}
         onConfirm={confirmActionDialog}
         onCancel={() => setConfirmDialog(undefined)}
       />
@@ -17717,6 +17998,81 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     suiteChrome?.suiteSettings?.localePreference ?? settings.localePreference,
   );
 
+  const saveMechanicsLibrary = async (next: InteractionMechanicsLibrary) => {
+    if (interactionLibraryError) throw new Error(interactionLibraryError);
+    const current = workspaceRef.current;
+    const universePath = fileStateRef.current.universePath;
+    if (!current || !universePath) throw new Error(uiLocale === 'es' ? 'Abre un universo para guardar mecánicas.' : 'Open a universe to save mechanics.');
+    const content = serializeInteractionMechanicsLibrary(next);
+    const result = await saveUniverseBatch(universePath, universeBatchFiles(current.files, [{relativePath:interactionMechanicsPath,content}]));
+    if (!result.ok) throw new Error(result.message ?? 'Cannot save mechanics library');
+    if (fileStateRef.current.universePath !== universePath) return;
+    setInteractionLibrary(next);
+    setWorkspace(previous => {
+      if (!previous) return previous;
+      const updated = {...previous,files:[...previous.files.filter(file=>file.relativePath !== interactionMechanicsPath),{relativePath:interactionMechanicsPath,content,modifiedMs:result.files.find(file=>file.relativePath === interactionMechanicsPath)?.modifiedMs}]};
+      workspaceRef.current = updated;
+      return updated;
+    });
+  };
+  const saveItemCatalog = async (next: ItemCatalogLibrary) => {
+    if (itemCatalogError) throw new Error(itemCatalogError);
+    const current = workspaceRef.current, universePath = fileStateRef.current.universePath;
+    if (!current || !universePath) throw new Error(uiLocale === 'es' ? 'Abre un universo para guardar ítems globales.' : 'Open a universe to save global items.');
+    const content = serializeItemCatalog(next);
+    const result = await saveUniverseBatch(universePath, universeBatchFiles(current.files, [{ relativePath: itemCatalogPath, content }]));
+    if (!result.ok) throw new Error(result.message ?? 'Cannot save item catalog');
+    if (fileStateRef.current.universePath !== universePath) throw new Error('El universo cambió durante el guardado del catálogo.');
+    setItemCatalog(next);
+    setWorkspace(previous => {
+      if (!previous) return previous;
+      const updated = { ...previous, files: [...previous.files.filter(file => file.relativePath !== itemCatalogPath), { relativePath: itemCatalogPath, content, modifiedMs: result.files.find(file => file.relativePath === itemCatalogPath)?.modifiedMs }] };
+      workspaceRef.current = updated;
+      return updated;
+    });
+  };
+  const refreshItemCatalog = async () => {
+    const universePath = fileStateRef.current.universePath;
+    if (!universePath) return;
+    try {
+      const opened = await openUniversePath(universePath);
+      if (!opened.workspace || fileStateRef.current.universePath !== universePath) return;
+      const next = itemCatalogFromFiles(opened.workspace.files), file = opened.workspace.files.find(item => item.relativePath === itemCatalogPath);
+      setItemCatalog(next); setItemCatalogError(undefined);
+      setWorkspace(previous => { if (!previous) return previous; const updated = { ...previous, files: [...previous.files.filter(item => item.relativePath !== itemCatalogPath), ...(file ? [file] : [])] }; workspaceRef.current = updated; return updated; });
+    } catch (catalogError) { setItemCatalogError(catalogError instanceof Error ? catalogError.message : String(catalogError)); }
+  };
+  const refreshMechanicsLibrary = async () => {
+    const universePath=fileStateRef.current.universePath;
+    if (!universePath) return;
+    try {
+      const opened=await openUniversePath(universePath);
+      if (!opened.workspace || fileStateRef.current.universePath !== universePath) return;
+      const next=interactionLibraryFromFiles(opened.workspace.files);
+      setInteractionLibrary(next); setInteractionLibraryError(undefined);
+      const file=opened.workspace.files.find(item=>item.relativePath === interactionMechanicsPath);
+      setWorkspace(previous=>{if (!previous) return previous; const updated={...previous,files:[...previous.files.filter(item=>item.relativePath !== interactionMechanicsPath),...(file?[file]:[])]};workspaceRef.current=updated;return updated;});
+    } catch (libraryError) { setInteractionLibraryError(libraryError instanceof Error ? libraryError.message : String(libraryError)); }
+  };
+  const canonRefreshRevision = useRef<{ universePath: string; revision: number } | undefined>(undefined);
+  useEffect(() => {
+    if (!suiteChrome?.active || suiteChrome.canonRevision === undefined) return;
+    const revision = suiteChrome.canonRevision;
+    const universePath = fileStateRef.current.universePath;
+    if (!universePath || !workspaceRef.current || initialLoading) return;
+    if (canonRefreshRevision.current?.universePath === universePath && canonRefreshRevision.current.revision === revision) return;
+    let cancelled = false;
+    void openUniversePath(universePath).then(opened => {
+      if (cancelled || fileStateRef.current.universePath !== universePath || !projectRef.current || !opened.workspace) return;
+      const canonIndex = opened.workspace.canonIndex;
+      const current = projectRef.current;
+      const refs = [...canonIndex.canonRefs.map(ref=>({...ref,workingCopyPath:current.canonRefs.find(item=>item.id === ref.id)?.workingCopyPath})),...current.canonRefs.filter(ref=>!canonIndex.canonRefs.some(item=>item.id === ref.id))];
+      applyProject({...current,canonRefs:refs,canonPropertyDescriptors:canonicalPropertyDescriptors(canonIndex.propertiesConfig)});
+      setWorkspace(previous=>{ if (!previous) return previous; const next={...previous,canonIndex,activeProject:projectRef.current!}; workspaceRef.current=next; return next; });
+      canonRefreshRevision.current={universePath,revision};
+    }).catch(refreshError=>{if (!cancelled) setError(String(refreshError));});
+    return ()=>{cancelled=true;};
+  }, [suiteChrome?.active,suiteChrome?.canonRevision,fileState.universePath,initialLoading,applyProject]);
   if (error && !project) {
     return (
       <>
@@ -17807,7 +18163,18 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }
 
   return (
-    <>
+    <ItemCatalogContext.Provider value={{ library: itemCatalog, error: itemCatalogError, refresh: refreshItemCatalog, save: saveItemCatalog }}>
+    <ConditionReferenceCreationContext.Provider value={{ propertiesConfig: workspace?.canonIndex.propertiesConfig, create: (draft, onCreated) => {
+      const base = projectRef.current;
+      if (!base || base.projectId !== project.projectId || base.storyId !== project.storyId) throw new Error('La historia cambió. Vuelve a abrir la condición.');
+      const created = createConditionReference(base, draft);
+      const capture: { edited?: BranchingProject } = {};
+      creationCaptureRef.current = capture;
+      try { onCreated(created.condition); } finally { creationCaptureRef.current = undefined; }
+      const next = mergeConditionReferenceCreation(base, created.project, capture.edited ?? base);
+      void commitStructuralAction(draft.kind === 'value' ? 'Created and linked variable' : draft.kind === 'external' ? 'Created and linked external condition function' : 'Created and linked local entity', next);
+    } }}>
+    <InteractionAuthoringContext.Provider value={{library:interactionLibrary,libraryError:interactionLibraryError,refreshLibrary:refreshMechanicsLibrary,onLibraryChange:saveMechanicsLibrary,libraryEditor:interactionLibraryEditor,openLibrary:(presetId)=>{setInteractionLibraryEditor(current=>({presetId,revision:(current?.revision??0)+1,projectId:project.projectId}));setPanelVisibility(current=>({...current,assets:true}));setPanelCollapsedState('assets',false);setExplorerTab('assets');setRequestedPanel(current=>({id:'assets',revision:(current?.revision??0)+1}));}}}>
       <div className="app-shell" ref={appShellRef}>
         <Topbar
           project={project}
@@ -17844,7 +18211,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
         {pendingRecovery ? <div className="workspace-error-banner" role="status"><span>{uiLocale === "es" ? "Hay una edición recuperable que no llegó a guardarse en disco." : "An unsaved editing session can be recovered."}</span><button type="button" onClick={() => { void commitStructuralAction("Recovered editing session", pendingRecovery.project); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Recuperar edición" : "Recover edits"}</button><button type="button" onClick={() => { if (fileState.universePath && project.storyId) clearAuthoringRecovery(fileState.universePath, project.storyId); setPendingRecovery(undefined); }}>{uiLocale === "es" ? "Descartar recuperación" : "Discard recovery"}</button></div> : null}
         <AdaptiveWorkspace resizing={panelResizing} requestedPanel={requestedPanel}
-          onResetLayout={() => { setPanelVisibility(DEFAULT_WORKSPACE_PANEL_VISIBILITY); setPanelCollapsed(DEFAULT_WORKSPACE_PANEL_COLLAPSED); setExplorerTab("outline"); setStoriesWidth(DEFAULT_PANEL_WIDTH); setContextFocus(false); setRequestedPanel((current) => ({ id: "outline", revision: (current?.revision ?? 0) + 1 })); }}
+          explorerWidth={canonWidth}
+          onExplorerResize={resizeCanon}
+          onExplorerResizeStateChange={setPanelResizing}
+          onResetExplorerWidth={() => setCanonWidth(DEFAULT_EXPLORER_WIDTH)}
           explorerTab={explorerTab} onExplorerTabChange={setExplorerTab}
           onCollapsedChange={setPanelCollapsedState}
           panels={VISIBLE_WORKSPACE_PANEL_IDS.map((id) => ({ id, visible: panelVisibility[id], collapsed: panelCollapsed[id], width: id === "outline" ? storiesWidth : DEFAULT_PANEL_WIDTH }))}>
@@ -17855,12 +18225,17 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onCollapsedChange={(collapsed) => setPanelCollapsedState("assets", collapsed)}
             onContextMenu={openPanelContextMenu}
             onImport={() => void importAssets()}
+            onImportInteractionImage={importInteractionPreviewImage}
             selected={selection}
             onSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
             onOpenInspector={selectWithEventDraftGuard}
             onCreateEntity={createExplorerEntity}
-            onDeleteEntity={deleteLocalExplorerEntity}
+            onDeleteEntity={requestDeleteLocalExplorerEntity}
             onInitializeProperties={initializePropertiesFromTemplate}
+            currentEventId={activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : undefined}
+            currentDialogueId={activeScope?.kind === "dialogue" ? activeScope.id : undefined}
+            characterSheets={{initialOwnerLabel:storyTest.scenario?.name,initialState:storyTest.scenarioState,currentState:storyTest.active?storyTest.state:undefined,onOpenCanonEntity:suiteChrome?.onOpenCanonEntity ?? (target=>{const ref=project.canonRefs.find(item=>item.id === target.entityId);setMessage(`${uiLocale === 'es'?'Edita la ficha y vuelve a abrir el universo':'Edit the sheet and reopen the universe'}: ${ref?.canonSourcePath ?? target.entityId}`);})}}
+            onUpdateProject={updateProject}
           /></WorkspacePanelSlot> : null}
           {panelVisibility.logic ? <WorkspacePanelSlot id="logic" side="left" title={uiCopy.logic}><LogicPanel
             project={project}
@@ -17871,8 +18246,6 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onUpdate={(nextProject) => updateProject(nextProject)}
             selected={selection}
             onSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
-            currentEventId={activeScope?.kind === "event" ? activeScope.id : activeScope?.kind === "dialogue" ? activeScope.eventId : undefined}
-            currentDialogueId={activeScope?.kind === "dialogue" ? activeScope.id : undefined}
             onOpenInspector={selectWithEventDraftGuard}
             onCreateProperty={createExplorerProperty}
             onInitializeProperties={initializePropertiesFromTemplate}
@@ -17903,6 +18276,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onRenameSequence={requestRenameSequence}
             onDeleteSequence={requestDeleteSequence}
             onUpdateSequence={updateSequence}
+            onCreateSequenceCharacter={createSequenceCharacter}
             onCreateBranch={() => createBranch()}
             onUpdateBranch={updateBranch}
             onDeleteBranch={(id) => deleteSelection({ type: "node", id })}
@@ -17921,12 +18295,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             <StoryCreationEmptyState kind="sequence" />
           ) : <StoryCanvas
             contextTab={contextTab} contextFocus={contextFocus && (eventInspector.open || storyTest.active)} onContextTabChange={setContextTab} onContextFocusChange={setContextFocus}
-            stories={workspace?.manifest.stories ?? []} activeStoryId={workspace?.activeStory?.id} onStoryChange={setActiveStory}
             project={project}
             storyTestActive={storyTest.active} inspectorRequest={inspectorRequest} inspectorSections={inspectorSections} inspectorSize={inspectorSize} onInspectorResize={setInspectorSize} inspectorStackOrder={inspectorStackOrder} onInspectorStackOrderChange={setInspectorStackOrder} onInspectorSectionChange={rememberInspectorSection}
             onAuthoringMutation={async mutate=>{if(projectRef.current) await commitStructuralAction("Updated story",mutate(projectRef.current));}}
             onOpenInspectorSection={openInspector} onOpenStoryPlay={openStoryPlay} onPinInspectorTarget={pinInspectorTarget} onUnpinInspectorTarget={unpinInspectorTarget}
-            onCollapseInspector={()=>{setEventInspector(state=>({...state,open:true,expandedEventId:undefined}));setExpandedInspectorTabId(undefined);if(selection?.type==="storyDebug")dispatchStoryTest({type:"debug",open:false});}}
+            onCollapseInspector={()=>{setEventInspector(state=>({...state,open:true,expandedEventId:undefined}));setExpandedInspectorTabId(undefined);if(selection?.type==="node"){deselectCanvasNode(selection.id);setSelection(undefined);}if(selection?.type==="storyDebug")dispatchStoryTest({type:"debug",open:false});}}
             inspectorDebugContent={<div className="inspector-debug-content"><button type="button" onClick={()=>dispatchStoryTest({type:"debug",open:false})}>{uiLocale === "es" ? "Cerrar depuración" : "Close debug"}</button>{storyTestWindows.canDetach ? <button type="button" onClick={()=>{void storyTestWindows.detach("preview");}}>{uiLocale === "es" ? "Abrir Play Mode completo" : "Open full Play Mode"}</button> : null}<StoryTestDebug integrated snapshot={storyTest} dispatch={dispatchStoryTest}/></div>}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             files={files}
@@ -17971,9 +18344,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
+            onAddTransitionWaypoint={addTransitionWaypoint}
+            onMoveTransitionWaypoint={moveTransitionWaypoint}
+            onRemoveTransitionWaypoint={removeTransitionWaypoint}
             onNodeDragStop={handleNodeDragStop}
             onSelect={selectWithEventDraftGuard}
-            onCanvasSelect={target=>{if(target && eventInspector.open)openInspector(target);else setSelection(target);}}
+            onCanvasSelect={setSelection}
             onOpenCanvasInspector={selectWithEventDraftGuard}
             onNavigateScope={navigateCanvasScope}
             onOpenEventScript={(eventId,textKey)=>openInspector({type:"node",id:eventId},"path",textKey)}
@@ -18054,6 +18430,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onDetachDialogueMembers={detachDialogueMembers}
             onDissolveDialogue={dissolveDialogue}
             onCreateDialogueStart={createDialogueStart}
+            onCreateInteraction={createInteractionNode}
             onOpenRule={openLogicRule}
             onActivateMarkdownTab={setActiveMarkdownTabId}
             onCloseMarkdownTab={closeMarkdownTab}
@@ -18077,6 +18454,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onOpenInspectorTab={openInspectorTab}
             onCloseInspectorTab={closeInspectorTab}
             onCloseAllInspectorTabs={closeAllInspectorTabs}
+            onCloseInspectorStackRange={closeInspectorStackRange}
             onDisableInspectorDebug={() => changeInspectorDebugEnabled(false)}
             onToggleInspectorMaximized={() => setInspectorMaximized((current) => !current)}
             onSaveManualInspector={() => {
@@ -18138,6 +18516,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       {settingsModal}
       {appDialogs}
       {showFeedback ? <FeedbackModal screen="workspace" onClose={() => setShowFeedback(false)} onOpenExternal={(url) => { window.open(url, "_blank", "noopener,noreferrer"); }} /> : null}
-    </>
+    </InteractionAuthoringContext.Provider>
+    </ConditionReferenceCreationContext.Provider>
+    </ItemCatalogContext.Provider>
   );
 }
