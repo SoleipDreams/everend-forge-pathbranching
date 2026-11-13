@@ -97,6 +97,14 @@ has at most one owner: an entity, another copy, or a player profile. Container
 cycles are rejected. Inventory quantities are derived from copies. Ownership
 is edited through the owner control, not a separate contradictory `owned` flag.
 
+Inventory conditions can find some/all matching copies or compare their count,
+with filters evaluated on the same copy. New inventory conditions target the
+active protagonist profile by default. Their owner picker also offers characters
+referenced by the current sequence, event or conversation before the full
+character catalog. New copy consequences and all-copy consequence scopes use
+that same protagonist default; create/move destinations and owner filters can
+instead target a character present in the current story context.
+
 Where-used lists show narrative names with technical paths available separately.
 Referenced entities, properties, copies, actions and rules cannot be removed
 until their references are resolved. Locate opens the owning canvas content,

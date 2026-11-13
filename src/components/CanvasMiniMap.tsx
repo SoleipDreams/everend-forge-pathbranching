@@ -1,5 +1,6 @@
 import { Panel, useEdges, useNodes, useReactFlow, useStore } from "@xyflow/react";
-import { useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { layoutMinimapMarkers, minimapMarkerGeometryKey } from "../canvas/minimapMarkerLayout.js";
 import type { StoryCanvasEdge, StoryCanvasNode } from "../canvas/storyCanvasModel.js";
 import { StoryCanvasNodeIcon } from "./StoryNode.js";
 
@@ -14,7 +15,6 @@ type MapNode = {
 };
 
 type MapBounds = { x: number; y: number; width: number; height: number };
-type MapMarkerPosition = { item: MapNode; x: number; y: number };
 
 const MAP_WIDTH = 210;
 const MAP_HEIGHT = 138;
@@ -69,77 +69,18 @@ function edgePath(source: MapNode, target: MapNode) {
   return `M ${source.centerX} ${sourceY} C ${source.centerX} ${sourceY + direction * bend}, ${target.centerX} ${targetY - direction * bend}, ${target.centerX} ${targetY}`;
 }
 
-function separateMarkerPositions(items: MapNode[], scale: number, viewBox: MapBounds, markerSize: number): MapMarkerPosition[] {
-  if (items.length < 2 || scale <= 0) {
-    return items.map((item) => ({ item, x: item.centerX, y: item.centerY }));
-  }
-
-  const contentWidth = viewBox.width * scale;
-  const contentHeight = viewBox.height * scale;
-  const offsetX = (MAP_WIDTH - contentWidth) / 2;
-  const offsetY = (MAP_HEIGHT - contentHeight) / 2;
-  const inset = markerSize / 2 + 2;
-  const clampX = (x: number) => Math.max(inset, Math.min(MAP_WIDTH - inset, x));
-  const clampY = (y: number) => Math.max(inset, Math.min(MAP_HEIGHT - inset, y));
-  const anchors = items.map((item) => ({
-    x: clampX((item.centerX - viewBox.x) * scale + offsetX),
-    y: clampY((item.centerY - viewBox.y) * scale + offsetY),
-  }));
-  const positions = anchors.map((point) => ({ ...point }));
-  const minDistance = markerSize + 2;
-
-  // Repel colliding markers in minimap pixels and gently pull them back toward
-  // their true locations. This keeps dense branches legible without changing
-  // any canvas positions or exported layout.
-  for (let iteration = 0; iteration < 36; iteration += 1) {
-    for (let left = 0; left < positions.length; left += 1) {
-      for (let right = left + 1; right < positions.length; right += 1) {
-        const first = positions[left];
-        const second = positions[right];
-        let dx = second.x - first.x;
-        let dy = second.y - first.y;
-        let distance = Math.hypot(dx, dy);
-        if (distance >= minDistance) continue;
-        if (distance < 0.001) {
-          const angle = ((left * 37 + right * 17) % 16) * Math.PI / 8;
-          dx = Math.cos(angle);
-          dy = Math.sin(angle);
-          distance = 1;
-        }
-        const push = (minDistance - distance) * 0.52;
-        const pushX = dx / distance * push;
-        const pushY = dy / distance * push;
-        first.x = clampX(first.x - pushX);
-        first.y = clampY(first.y - pushY);
-        second.x = clampX(second.x + pushX);
-        second.y = clampY(second.y + pushY);
-      }
-    }
-    positions.forEach((point, index) => {
-      point.x = clampX(point.x + (anchors[index].x - point.x) * 0.035);
-      point.y = clampY(point.y + (anchors[index].y - point.y) * 0.035);
-    });
-  }
-
-  return items.map((item, index) => ({
-    item,
-    x: viewBox.x + (positions[index].x - offsetX) / scale,
-    y: viewBox.y + (positions[index].y - offsetY) / scale,
-  }));
-}
-
-function MiniMapMarker({ item, x, y, size, scale }: { item: MapNode; x: number; y: number; size: number; scale: number }) {
-  const kind = item.node.data.kind;
+const MiniMapMarker = memo(function MiniMapMarker({ node, x, y, size, scale }: { node: StoryCanvasNode; x: number; y: number; size: number; scale: number }) {
+  const kind = node.data.kind;
   const radius = size / (2 * scale);
   const strokeWidth = 1;
   const iconSize = Math.max(1, (size - 4) / scale);
-  const color = nodeColor(item.node);
+  const color = nodeColor(node);
   const isDialogue = kind === "dialogue" || kind === "speechBeat";
   const isDocument = kind === "event" || kind === "inkSection";
   const isAction = kind === "interaction" || kind === "runtimeAction" || kind === "dialogueStart";
   return (
     <g transform={`translate(${x} ${y})`} style={{ color: "#ffffff" }}>
-      <title>{item.node.data.title || kind}</title>
+      <title>{node.data.title || kind}</title>
       {kind === "start" ? (
         <circle r={radius} fill={color} stroke="var(--wn-panel)" strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
       ) : kind === "decision" || kind === "routeGate" ? (
@@ -161,13 +102,13 @@ function MiniMapMarker({ item, x, y, size, scale }: { item: MapNode; x: number; 
       ) : (
         <rect x={-radius} y={-radius * 0.74} width={radius * 2} height={radius * 1.48} rx={radius * 0.38} fill={color} stroke="var(--wn-panel)" strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
       )}
-      {item.node.selected ? <circle className="canvas-minimap-selection" r={radius * 1.35} /> : null}
+      {node.selected ? <circle className="canvas-minimap-selection" r={radius * 1.35} /> : null}
       <g transform={`translate(${-iconSize / 2} ${-iconSize / 2})`}>
-        <StoryCanvasNodeIcon kind={kind} details={item.node.data.details} size={iconSize} className="canvas-minimap-node-icon" />
+        <StoryCanvasNodeIcon kind={kind} details={node.data.details} size={iconSize} className="canvas-minimap-node-icon" />
       </g>
     </g>
   );
-}
+});
 
 export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -216,9 +157,14 @@ export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
   const scale = Math.min((MAP_WIDTH - 16) / viewBox.width, (MAP_HEIGHT - 16) / viewBox.height);
   const iconPixels = mapNodes.length > 48 ? 9 : mapNodes.length > 24 ? 12 : 15;
   const markerSize = iconPixels + 4;
+  const markerGeometryKey = minimapMarkerGeometryKey(mapNodes);
+  const markerCoordinates = useMemo(
+    () => layoutMinimapMarkers(mapNodes, scale, viewBox, markerSize).map(({ x, y }) => ({ x, y })),
+    [markerGeometryKey, scale, viewBox.x, viewBox.y, viewBox.width, viewBox.height, markerSize],
+  );
   const markerPositions = useMemo(
-    () => separateMarkerPositions(mapNodes, scale, viewBox, markerSize),
-    [mapNodes, scale, viewBox.x, viewBox.y, viewBox.width, viewBox.height, markerSize],
+    () => mapNodes.map((item, index) => ({ item, ...markerCoordinates[index] })),
+    [mapNodes, markerCoordinates],
   );
   const visibleEdges = edges.filter((edge) => !edge.hidden && mapNodeById.has(edge.source) && mapNodeById.has(edge.target));
 
@@ -345,7 +291,7 @@ export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
           />;
         })}
         {markerPositions.map(({ item, x, y }) => (
-          <MiniMapMarker key={item.node.id} item={item} x={x} y={y} size={markerSize} scale={scale} />
+          <MiniMapMarker key={item.node.id} node={item.node} x={x} y={y} size={markerSize} scale={scale} />
         ))}
         {viewport ? (
           <rect

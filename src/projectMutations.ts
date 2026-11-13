@@ -18,6 +18,7 @@ import type {
   Sequence,
   Transition,
 } from "./domain.js";
+import { entityCapabilities, initialAuthoringState } from "./authoringEntities.js";
 import {
   conditionInputsFromConsequences,
   inferredTransitionRole,
@@ -354,6 +355,7 @@ export function createSequence(
     entryEventId: eventId,
     eventIds: [eventId],
     branchIds: [],
+    initialInventory: [],
   };
 
   return {
@@ -413,11 +415,17 @@ export function deleteSequence(
   );
   const nextSequences = project.sequences
     .filter((item) => item.id !== sequenceId)
-    .map((item) => ({
-      ...item,
-      eventIds: item.eventIds.filter((eventId) => !deletedEventIds.has(eventId)),
-      branchIds: item.branchIds?.filter((branchId) => !deletedBranchIds.has(branchId)),
-    }));
+    .map((item) => {
+      const detachedInventory = item.inheritInventoryFromSequenceId === sequenceId
+        ? (initialAuthoringState(project, undefined, item.id).entityInstances ?? []).filter(copy => entityCapabilities(project, copy.entityId).inventoryItem)
+        : undefined;
+      return {
+        ...item,
+        ...(detachedInventory ? { inheritInventoryFromSequenceId: undefined, initialInventory: detachedInventory } : {}),
+        eventIds: item.eventIds.filter((eventId) => !deletedEventIds.has(eventId)),
+        branchIds: item.branchIds?.filter((branchId) => !deletedBranchIds.has(branchId)),
+      };
+    });
   const nextSequenceId = nextSequences[0]?.id;
   const currentEntrySequenceId = project.entrySequenceId ?? project.sequences[0]?.id;
   const removedNodeIds = new Set([

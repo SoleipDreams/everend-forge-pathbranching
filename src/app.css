@@ -7180,8 +7180,8 @@ button:disabled {
 
 .event-inspector-card.expanded {
   min-height: 0;
-  flex: 0 0 var(--inspector-card-height, 440px);
-  height: var(--inspector-card-height, 440px);
+  flex: 0 0 var(--inspector-card-height, 480px);
+  height: var(--inspector-card-height, 480px);
   max-height: 100%;
 }
 
@@ -7435,6 +7435,10 @@ button:disabled {
   justify-content: flex-end;
   flex-wrap: nowrap;
   gap: 6px;
+}
+
+.event-inspector-card.minimized .event-editor-actions {
+  display: none;
 }
 
 .event-inspector-body {

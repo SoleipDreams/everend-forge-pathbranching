@@ -45,9 +45,9 @@ function worldIntervalResults(mechanic: Extract<Mechanic, { kind: 'skillcheck' }
   const failureMax = successMin - 1;
   const thresholdOnly = results.length === 2 && results.some(result => result.key === 'success') && results.some(result => result.key === 'failure');
   return results.flatMap(result => {
+    if (result.range) return [{ ...result, range: { ...result.range } }];
     if (thresholdOnly && result.key === 'failure') return [{ ...result, range: { max: failureMax, maxInclusive: true } }];
     if (thresholdOnly && result.key === 'success') return [{ ...result, range: { min: successMin, minInclusive: true } }];
-    if (result.range) return [{ ...result, range: { ...result.range } }];
     if (result.key === 'success') return [{ ...result, range: { min: successMin, ...(successMin <= domain.max ? { max: domain.max } : {}) } }];
     if (result.key === 'failure') return [{ ...result, range: { ...(failureMax >= domain.min ? { min: domain.min } : {}), max: failureMax } }];
     return [];
@@ -101,9 +101,11 @@ function MechanicSummary({ project, mechanic, es }: { project: BranchingProject;
 
 export function InteractionResultsFlow({ project, mechanic, results, configuration, source, locale, onAdd, onChange, onDelete, renderResult }: Props) {
   const es = locale === 'es';
+  const thresholdResultPair = mechanic.kind === 'skillcheck' && results.length === 2 && results.some(result => result.key === 'success') && results.some(result => result.key === 'failure');
   const [selectedId, setSelectedId] = useState(results[0]?.id);
   const [configOpen, setConfigOpen] = useState(false);
-  const [rangeEditorMode, setRangeEditorMode] = useState<'slider' | 'cards'>('slider');
+  const [rangeEditorModeOverride, setRangeEditorModeOverride] = useState<'slider' | 'cards'>();
+  const rangeEditorMode = rangeEditorModeOverride ?? (thresholdResultPair ? 'cards' : 'slider');
   const [rangeDrafts, setRangeDrafts] = useState<Record<string, string>>({});
   const previousIds = useRef(results.map(result => result.id));
   const identities = JSON.stringify(results.map(result => result.id));
@@ -124,7 +126,7 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
     })()
     : undefined;
   const worldIntervals = mechanic.kind === 'skillcheck' && intervalDomain ? worldIntervalResults(mechanic, results, intervalDomain) : [];
-  const showWorldIntervals = mechanic.kind === 'skillcheck' && results.length >= 3;
+  const showWorldIntervals = mechanic.kind === 'skillcheck' && (results.length >= 3 || thresholdResultPair);
   const intervalSelection = worldIntervals.some(result => result.id === selectedId) ? selectedId : worldIntervals[0]?.id;
   const intervalById = new Map(worldIntervals.map(result => [result.id, result]));
   const orderedResults = mechanic.kind === 'skillcheck'
@@ -161,15 +163,24 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
   const rangeFor = (result: InteractionResult) => intervalById.get(result.id)?.range ?? result.range ?? {};
   const editRangeBound = (resultId: string, bound: 'min' | 'max', value: number | undefined) => {
     const index = orderedResults.findIndex(result => result.id === resultId);
-    onChange(results.map(result => result.id === resultId ? {
-      ...result,
-      range: {
-        ...rangeFor(result),
-        min: bound === 'min' ? value : rangeFor(result).min ?? (index === 0 ? undefined : intervalDomain?.min),
-        max: bound === 'max' ? value : rangeFor(result).max ?? (index === orderedResults.length - 1 ? undefined : intervalDomain?.max),
-        [`${bound}Inclusive`]: true,
-      },
-    } : result));
+    onChange(results.map(result => {
+      const range = { ...rangeFor(result) };
+      if (result.id === resultId) {
+        range[bound] = value;
+        range[`${bound}Inclusive`] = true;
+        if (bound === 'min') range.max ??= index === orderedResults.length - 1 ? undefined : intervalDomain?.max;
+        else range.min ??= index === 0 ? undefined : intervalDomain?.min;
+      }
+      return { ...result, range };
+    }));
+  };
+  const editRangeInclusivity = (resultId: string, inclusive: boolean) => {
+    onChange(results.map(result => ({ ...result, range: { ...rangeFor(result), ...(result.id === resultId ? { minInclusive: inclusive, maxInclusive: inclusive } : {}) } })));
+  };
+  const inlineRangeInclusivity = (result: InteractionResult) => {
+    const range = rangeFor(result);
+    const inclusive = range.minInclusive !== false && range.maxInclusive !== false;
+    return <button type="button" className="interaction-flow-bound-operator" aria-label={es ? `Inclusión de los límites · ${name(result)}` : `Bound inclusion · ${name(result)}`} title={inclusive ? es ? 'Excluir ambos límites' : 'Exclude both bounds' : es ? 'Incluir ambos límites' : 'Include both bounds'} aria-pressed={inclusive} onClick={() => editRangeInclusivity(result.id, !inclusive)}>{inclusive ? '≤' : '<'}</button>;
   };
   const inlineRangeBound = (result: InteractionResult, index: number, bound: 'min' | 'max') => {
     if (!intervalDomain) return null;
@@ -182,10 +193,11 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
     const value = range[bound] ?? fallback;
     const label = bound === 'min' ? es ? 'Desde' : 'From' : es ? 'Hasta' : 'To';
     const infinityLabel = bound === 'min' ? '−∞' : '+∞';
-    return <label className={`interaction-flow-range-bound${open ? ' is-infinite' : ''}`} key={bound}>
-      <span>{label}</span>
+    return <div className={`interaction-flow-range-bound${open ? ' is-infinite' : ''}`} key={bound}>
+      <span className="interaction-flow-range-label">{label}</span>
+      <div className={`interaction-flow-range-control ${bound}`}>
       {open
-        ? <button type="button" className="interaction-flow-infinity-bound" aria-label={es ? `Establecer límite ${bound === 'min' ? 'inferior' : 'superior'} finito para ${name(result)}` : `Set ${bound} bound finite for ${name(result)}`} title={es ? `Convertir ${infinity} en un límite fijo` : `Change ${infinity} to a fixed bound`} onClick={() => { setRangeDrafts(current => { const next = { ...current }; delete next[draftKey]; return next; }); editRangeBound(result.id, bound, fallback); }}>{infinityLabel}</button>
+        ? <span className="interaction-flow-range-input-wrap"><button type="button" className="interaction-flow-infinity-bound" aria-label={es ? `Establecer límite ${bound === 'min' ? 'inferior' : 'superior'} finito para ${name(result)}` : `Set ${bound} bound finite for ${name(result)}`} title={es ? `Convertir ${infinity} en un límite fijo` : `Change ${infinity} to a fixed bound`} onClick={() => { setRangeDrafts(current => { const next = { ...current }; delete next[draftKey]; return next; }); editRangeBound(result.id, bound, fallback); }}>{infinityLabel}</button></span>
         : <span className="interaction-flow-range-input-wrap"><input type="number" step="1" aria-label={`${label} · ${name(result)}`} value={rangeDrafts[draftKey] ?? String(value)} onFocus={() => setSelectedId(result.id)} onChange={event => {
           const text = event.currentTarget.value;
           setRangeDrafts(current => ({ ...current, [draftKey]: text }));
@@ -195,7 +207,8 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
           if (!text || !Number.isSafeInteger(Number(text))) setRangeDrafts(current => { const next = { ...current }; delete next[draftKey]; return next; });
           else setRangeDrafts(current => ({ ...current, [draftKey]: String(Number(text)) }));
         }} />{edge ? <button type="button" className="interaction-flow-infinity-toggle" aria-label={es ? `Extender ${name(result)} hasta ${infinity}` : `Extend ${name(result)} to ${infinity}`} title={es ? `Extender hasta ${infinity}` : `Extend to ${infinity}`} onClick={() => { setRangeDrafts(current => { const next = { ...current }; delete next[draftKey]; return next; }); editRangeBound(result.id, bound, undefined); }}>{infinity}</button> : null}</span>}
-    </label>;
+      </div>
+    </div>;
   };
   const addWorldResult = (insertAt: number) => {
     if (mechanic.kind !== 'skillcheck' || !intervalDomain || !worldIntervals.length) { onAdd(); return; }
@@ -294,7 +307,7 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
           ? es ? `Añadir opción después de ${name(previous)}` : `Add an option after ${name(previous)}`
           : es ? 'Añadir opción' : 'Add an option';
     return <div className="interaction-flow-insert-slot" key={placementKey}>
-      <button type="button" className="interaction-flow-insert" aria-label={label} title={es ? 'Añadir opción' : 'Add an option'} disabled={!worldIntervals.length} onClick={() => addWorldResult(insertAt)}><Plus size={18} /></button>
+      <button type="button" className="interaction-flow-insert" aria-label={label} title={es ? 'Añadir opción' : 'Add an option'} disabled={!worldIntervals.length} onClick={() => addWorldResult(insertAt)}><Plus size={15} /></button>
     </div>;
   };
   return <section className="interaction-results-flow" data-mechanic={mechanic.kind} aria-label={es ? 'Flujo de resultados de interacción' : 'Interaction result flow'}>
@@ -305,26 +318,24 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
     {mechanic.kind === 'skillcheck' ? <>
       {showWorldIntervals ? <div className="interaction-flow-range-mode" role="group" aria-label={es ? 'Modo para editar intervalos' : 'Interval editing mode'}>
         <span>{es ? 'Editar límites con' : 'Edit bounds with'}</span>
-        <button type="button" className={rangeEditorMode === 'slider' ? 'selected' : ''} aria-pressed={rangeEditorMode === 'slider'} onClick={() => setRangeEditorMode('slider')}><SlidersHorizontal size={16} />Slider</button>
-        <button type="button" className={rangeEditorMode === 'cards' ? 'selected' : ''} aria-pressed={rangeEditorMode === 'cards'} onClick={() => setRangeEditorMode('cards')}><LayoutGrid size={16} />{es ? 'Tarjetas' : 'Cards'}</button>
+        <button type="button" className={rangeEditorMode === 'slider' ? 'selected' : ''} aria-pressed={rangeEditorMode === 'slider'} onClick={() => setRangeEditorModeOverride('slider')}><SlidersHorizontal size={14} />Slider</button>
+        <button type="button" className={rangeEditorMode === 'cards' ? 'selected' : ''} aria-pressed={rangeEditorMode === 'cards'} onClick={() => setRangeEditorModeOverride('cards')}><LayoutGrid size={14} />{es ? 'Tarjetas' : 'Cards'}</button>
       </div> : null}
       {showWorldIntervals && rangeEditorMode === 'slider' ? worldDomain ? <div className="interaction-flow-slider-layout">
-        <button type="button" className="interaction-flow-slider-add" aria-label={es ? 'Añadir resultado antes del primero' : 'Add result before the first'} title={es ? 'Añadir antes' : 'Add before'} onClick={() => addWorldResult(0)}><Plus size={18} /></button>
-        <NumericResultIntervals results={worldIntervals} min={worldDomain.min} max={worldDomain.max} locale={locale} selectedId={intervalSelection} allowUnbounded onSelect={setSelectedId} onDelete={onDelete} onRename={(id, nextName) => onChange(results.map(result => result.id === id ? { ...result, name: nextName } : result))} onInsertAfter={id => {
+        <NumericResultIntervals results={worldIntervals} min={worldDomain.min} max={worldDomain.max} locale={locale} selectedId={intervalSelection} allowUnbounded onSelect={setSelectedId} onDelete={onDelete} onRename={(id, nextName) => onChange(results.map(result => result.id === id ? { ...result, name: nextName } : result))} onInsertBefore={() => addWorldResult(0)} onInsertAfter={id => {
           const index = orderedResults.findIndex(result => result.id === id);
           if (index >= 0) addWorldResult(index + 1);
         }} onChange={changed => {
           const byId = new Map(changed.map(result => [result.id, result]));
           onChange(results.map(result => { const next = byId.get(result.id); return next ? { ...result, range: next.range } : result; }));
         }} />
-        <button type="button" className="interaction-flow-slider-add" aria-label={es ? 'Añadir resultado después del último' : 'Add result after the last'} title={es ? 'Añadir después' : 'Add after'} onClick={() => addWorldResult(orderedResults.length)}><Plus size={18} /></button>
       </div> : <p className="interaction-flow-interval-status" role="status">{es ? 'Configura dados y valores numéricos válidos para ajustar los intervalos.' : 'Configure valid dice and numeric values to adjust the ranges.'}</p> : null}
     </> : null}
     {mechanic.kind === 'skillcheck' ? (!showWorldIntervals || rangeEditorMode === 'cards') ? <div className="interaction-flow-result-choices" role="group" aria-label={es ? 'Opciones de resultado' : 'Result options'}>
       {Array.from({ length: Math.max(1, Math.ceil(orderedResults.length / 3)) }, (_, rowIndex) => {
         const start = rowIndex * 3;
         const row = orderedResults.slice(start, start + 3);
-        return <div className="interaction-flow-result-row" key={`result-row-${rowIndex}`}>
+        return <div className={`interaction-flow-result-row${row.length === 1 ? ' is-single' : ''}`} key={`result-row-${rowIndex}`}>
           {row.map((result, offset) => {
             const index = start + offset;
             return <Fragment key={result.id}>
@@ -336,7 +347,7 @@ export function InteractionResultsFlow({ project, mechanic, results, configurati
                 <input className="interaction-flow-result-name-editor" type="text" aria-label={es ? `Nombre de ${String.fromCharCode(65 + index)}` : `Name of ${String.fromCharCode(65 + index)}`} value={name(result)} onFocus={() => setSelectedId(result.id)} onClick={event => event.stopPropagation()} onChange={event => onChange(results.map(item => item.id === result.id ? { ...item, name: event.target.value } : item))} />
                 <button type="button" className="interaction-flow-result-delete" aria-label={es ? `Eliminar resultado ${name(result)}` : `Delete result ${name(result)}`} title={es ? 'Eliminar resultado' : 'Delete result'} disabled={results.length <= 1} onClick={event => { event.stopPropagation(); onDelete(result.id); }}><Trash2 size={15} /></button>
                 {showWorldIntervals && rangeEditorMode === 'cards' && intervalById.has(result.id) ? <div className="interaction-flow-inline-range" aria-label={es ? `Límites de ${name(result)}` : `${name(result)} bounds`}>
-                  {inlineRangeBound(result, index, 'min')}{inlineRangeBound(result, index, 'max')}
+                  {inlineRangeBound(result, index, 'min')}{inlineRangeInclusivity(result)}{inlineRangeBound(result, index, 'max')}
                 </div> : null}
               </div>
             </Fragment>;

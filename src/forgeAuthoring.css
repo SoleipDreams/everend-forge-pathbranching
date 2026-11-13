@@ -63,6 +63,7 @@
   .pb-canvas-stage .canvas-breadcrumb-edge:hover, .pb-canvas-stage .canvas-breadcrumb-edge:focus-visible { color: var(--ef-text); opacity: 1; outline: none; }
   .breadcrumb-crumb > button { -webkit-user-select: none; user-select: none; }
   .pb-canvas-tool-row { position: absolute; z-index: 16; top: 12px; left: 12px; right: 12px; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: start; gap: 8px; pointer-events: none; }
+  .pb-canvas-tool-row:has(.story-test-scenario-manager) { z-index: 40; }
   .pb-canvas-tool-row > * { pointer-events: auto; }
   .pb-canvas-stage .canvas-layer-switch { position: relative; inset: auto; grid-column: 2; transform: none; border-radius: 10px; box-shadow: 0 6px 20px #0002; }
   .pb-canvas-locale-tools { position: absolute; z-index: 17; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; }
@@ -72,6 +73,7 @@
   .pb-canvas-locale-tools .canvas-findings-button { display: inline-flex; align-items: center; gap: 6px; width: auto; height: 32px; padding: 6px 8px; border: 1px solid var(--ef-border); border-radius: 8px; }
   .pb-canvas-locale-tools .canvas-findings-popup { top: calc(100% + 8px); bottom: auto; left: auto; right: 0; }
   .pb-canvas-primary-actions { position: relative; grid-column: 3; justify-self: start; z-index: 16; display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px; border: 1px solid var(--ef-border); border-radius: 10px; background: var(--ef-panel); box-shadow: 0 6px 20px #0002; }
+  .pb-canvas-primary-actions:has(.story-test-scenario-manager) { z-index: 40; }
   .pb-canvas-primary-actions > button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px; width: auto; height: auto; font-size: 12px; }
   .pb-canvas-primary-actions .story-test-controls { border: 0; padding: 0; }
   .pb-canvas-primary-actions .story-test-settings { left: auto; right: 0; transform: none; }
@@ -97,7 +99,7 @@
   .pb-context-surface .unified-authoring-inspector :is(fieldset,details) { border: 0; border-top: 1px solid var(--ef-border); border-radius: 0; padding: 12px 0; margin: 12px 0; }
   .pb-context-surface .inspector-subtabs { padding: 8px 12px; gap: 4px; border-bottom: 1px solid var(--ef-border); }
   .pb-context-surface .inspector-subtabs button { border: 0; border-radius: 6px; padding: 6px 8px; }
-  .pb-canvas-layout.context-floating .pb-context-surface { position: absolute; z-index: 32; left: auto; top: auto; right: 12px; bottom: 12px; transform: none; width: min(var(--inspector-width,420px),calc(100% - 24px)); height: min(var(--inspector-height,484px),calc(100% - 116px)); border: 1px solid var(--ef-border); border-radius: 8px; box-shadow: 0 12px 40px #0004; overflow: visible; }
+  .pb-canvas-layout.context-floating .pb-context-surface { position: absolute; z-index: 32; left: auto; top: auto; right: 12px; bottom: 12px; transform: none; width: min(var(--inspector-width,640px),calc(100% - 24px)); height: min(var(--inspector-height,524px),calc(100% - 116px)); border: 1px solid var(--ef-border); border-radius: 8px; box-shadow: 0 12px 40px #0004; overflow: visible; }
   .pb-canvas-layout.context-floating.inspector-enlarged:not(.context-focus) .pb-context-surface { width: min(900px,calc(100% - 24px)); height: calc(100% - 24px); }
   .pb-canvas-layout.context-focus { grid-template-columns: minmax(0,1fr); }
   .pb-canvas-layout.context-floating.context-focus .pb-context-surface { left: 50%; top: 50%; right: auto; bottom: auto; transform: translate(-50%,-50%); width: calc(100% - 32px); height: calc(100% - 32px); border-radius: 8px; box-shadow: 0 0 40px #0004; }
@@ -112,7 +114,7 @@
   .pb-context-edit .unified-authoring-dock .event-inspector-stack { height: 100%; min-height: 0; }
   .pb-context-edit .unified-authoring-dock .event-inspector-tab-cluster { height: auto; min-height: 0; max-height: 100%; }
   .pb-context-edit .unified-authoring-dock .event-inspector-cards { flex: 1 1 auto; min-height: 0; scrollbar-gutter: auto; }
-  .pb-context-edit .unified-authoring-dock .event-inspector-card.expanded { flex: 0 0 var(--inspector-card-height,440px); min-height: 0; height: var(--inspector-card-height,440px); max-height: 100%; }
+  .pb-context-edit .unified-authoring-dock .event-inspector-card.expanded { flex: 0 0 var(--inspector-card-height,480px); min-height: 0; height: var(--inspector-card-height,480px); max-height: 100%; }
   .pb-context-edit .unified-authoring-dock .event-inspector-card.minimized { flex: 0 0 42px; }
   .pb-context-edit .unified-authoring-dock .event-inspector-card-resize-border { display: block; }
   .pb-context-edit .unified-authoring-dock .unified-inspector-width-resize { top: 48px; bottom: 0; }

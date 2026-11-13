@@ -1,9 +1,17 @@
-import type { BranchingProject, LogicSubject, PlayerSimulationState } from './domain.js';
+import type { BranchingProject, EntityOwner, LogicSubject, PlayerSimulationState } from './domain.js';
 import type { ConditionAuthoringContext } from './conditionAuthoring.js';
 import { canonVariantsForRef } from './worldnotionVariants.js';
 import { propertyIsEntityPresentable } from './explorerSchema.js';
 
 export type CharacterSheetEntry = { id: string; entityId: string; instanceId?: string; name: string; variantId: string; variantName: string; source: 'canon' | 'local'; context: string[]; contextual: boolean; subject: LogicSubject };
+
+/** Matches the profile used to seed a new authoring run. */
+export function defaultPlayerProfileId(project: BranchingProject): string {
+  const active = project.activePlayerProfileId;
+  if (active && (active === 'default' || project.playerProfiles?.some(profile => profile.id === active))) return active;
+  return project.playerProfiles?.[0]?.id ?? 'default';
+}
+
 /** Scene membership is a catalog hint; opening a sheet never assigns the runtime actor. */
 export function characterSheetEntries(project: BranchingProject, context: ConditionAuthoringContext = {}, state?: PlayerSimulationState): CharacterSheetEntry[] {
   const event = project.events.find(item => item.id === context.eventId);
@@ -35,6 +43,18 @@ export function characterSheetEntries(project: BranchingProject, context: Condit
     }
   }
   return output;
+}
+
+/** Every character sheet identity, including each canon variant, can own inventory copies. */
+export function characterInventoryOwnerOptions(project: BranchingProject, locale: 'es' | 'en' = 'es', context: ConditionAuthoringContext = {}): { owner: Extract<EntityOwner, { kind: 'entity' }>; label: string; entityId: string; variantId: string; contextual: boolean; context: string[] }[] {
+  return characterSheetEntries(project, context).filter(entry => entry.subject.kind === 'entity').map(entry => ({
+    owner: { kind: 'entity' as const, entityId: entry.entityId, ...(entry.variantId !== 'base' ? { variantId: entry.variantId } : {}) },
+    label: entry.variantId === 'base' ? entry.name : `${entry.name} · ${entry.variantName}`,
+    entityId: entry.entityId,
+    variantId: entry.variantId,
+    contextual: entry.contextual,
+    context: entry.context,
+  })).sort((left, right) => Number(right.contextual) - Number(left.contextual) || left.label.localeCompare(right.label, locale));
 }
 
 export type CharacterStoryReferences = {

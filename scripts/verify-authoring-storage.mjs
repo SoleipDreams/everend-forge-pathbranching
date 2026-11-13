@@ -15,8 +15,8 @@ const universe = { relativePath: ".everend/universe.json", content: JSON.stringi
 const manifest = { relativePath: ".everend/.pathbranching/manifest.json", content: serializePathBranchingManifest({ version: "0.2", activeStoryId: story.id, stories: [story] }) };
 const project = normalizeProject({
   specVersion: "0.1", projectId: "storage-test", storyId: story.id, name: story.name,
-  canonRefs: [{ id: "key", kind: "item", label: "Key" }],
-  sequences: [{ id: "s", name: "Sequence", eventIds: ["e"], entryEventId: "e" }], branches: [],
+  canonRefs: [{ id: "key", kind: "item", label: "Key" }, { id: "hero", kind: "character", label: "Hero", frontmatter: { variants: { winter: { label: "Winter" } } } }],
+  sequences: [{ id: "s", name: "Sequence", eventIds: ["e"], entryEventId: "e", initialInventory: [{ id: "winter-key", entityId: "key", owner: { kind: "entity", entityId: "hero", variantId: "winter" } }] }], branches: [],
   events: [{ id: "e", name: "Event", type: "normal", text: { format: "plain", content: "Hello" } }],
   scripts: [], externalFunctions: [], variables: {},
   canonWorkingCopies: [{ canonRefId: "key", sourcePath: canon.relativePath, sourceContent: canon.content, sourceModifiedMs: 17, draftContent: "Draft", path: "working/key.md", createdAt: "2026-10-07", updatedAt: "2026-10-07" }],
@@ -53,7 +53,7 @@ try {
   assert.equal(STORAGE_VERSION, "0.5");
   assert.equal(loaded.saveBlocked, false);
   assert.deepEqual(loaded.loadWarnings ?? [], []);
-  for (const field of ["canonWorkingCopies", "canonChangeSets", "canonEntityGalleries", "playerProfiles", "playerSimulation", "activePlayerProfileId", "entityInstances", "entityOverrides", "narrativeActions", "narrativeRules", "authoringScenarios"]) {
+  for (const field of ["canonWorkingCopies", "canonChangeSets", "canonEntityGalleries", "playerProfiles", "playerSimulation", "activePlayerProfileId", "entityInstances", "entityOverrides", "narrativeActions", "narrativeRules", "authoringScenarios", "sequences"]) {
     assert.deepEqual(loaded.activeProject[field], project[field], `${field} must survive modular disk storage`);
   }
   assert.deepEqual(loaded.activeProject.localizationCatalog.entries.custom, project.localizationCatalog.entries.custom);

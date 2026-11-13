@@ -1,7 +1,7 @@
 import type { AuthoringScenario, BranchingProject, ConditionInput, DialogueNode, EntityInstance, EventNode, InstanceEffect, LogicMoment, LogicSubject, NarrativeAction, NarrativeEffect, NarrativeRule, PlayerSimulationState, Transition } from './domain.js';
 import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEvaluationResult } from './conditionEvaluation.js';
 import { applyConsequenceDetailed, combineConditions, effectiveConditions, orderedTransitions, orderedMomentEffects } from './logic.js';
-import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
+import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveContextSubject, resolveOwner, sequenceForStartingPoint } from './authoringEntities.js';
 import { resolveLogicField } from './logicCapabilities.js';
 import { barrierNodeId, defaultInteractionEnvironment, freezeInteractionParticipants, freezeInteractionRoll, interactionNodeId, interactionUsesFor, resolveInteraction, type InteractionEnvironment, type InteractionExecution } from './interactions.js';
 import { resolveCharacterSubject } from './characterStats.js';
@@ -571,13 +571,14 @@ function advance(project: BranchingProject, session: AuthoringSession, destinati
   refreshView(project, session);
 }
 export function createAuthoringSession(project: BranchingProject, scenario?: AuthoringScenario, startNodeId?: string, environment: InteractionEnvironment = defaultInteractionEnvironment): AuthoringSession {
-  const state = initialAuthoringState(project, scenario);
-  const session: AuthoringSession = { interactions: [], interactionSerial: 0, revision: authoringRevision(project), scenarioId: scenario?.id, startNodeId: startNodeId ?? scenario?.startNodeId, status: 'ready', state, view: { choices: [], actions: [] }, trace: [], applied: [], returns: [], ruleTruth: {}, history: [], visitedNodeIds: [] };
+  const requestedStartNodeId = startNodeId ?? scenario?.startNodeId;
+  const entrySequence = project.sequences.find(s => s.id === project.entrySequenceId) ?? (project.sequences.length === 1 ? project.sequences[0] : undefined);
+  const start = requestedStartNodeId ?? (entrySequence ? `start:${entrySequence.id}` : project.events.length === 1 ? project.events[0].id : undefined);
+  const state = initialAuthoringState(project, scenario, sequenceForStartingPoint(project, start));
+  const session: AuthoringSession = { interactions: [], interactionSerial: 0, revision: authoringRevision(project), scenarioId: scenario?.id, startNodeId: requestedStartNodeId, status: 'ready', state, view: { choices: [], actions: [] }, trace: [], applied: [], returns: [], ruleTruth: {}, history: [], visitedNodeIds: [] };
   if (new Set(state.entityInstances?.map(i => i.id)).size !== state.entityInstances?.length) { stop(session, 'Duplicate copy IDs'); return session; }
   for (const i of state.entityInstances ?? []) { const error = instanceOwnerIssue(project, state.entityInstances ?? [], i); if (error) { stop(session, error, i.id); return session; } }
   for (const { r } of rules(project)) if (r.trigger === 'stateChanged') session.ruleTruth[r.id] = evaluate(project, state, r.when).status === 'satisfied';
-  const sequence = project.sequences.find(s => s.id === project.entrySequenceId) ?? (project.sequences.length === 1 ? project.sequences[0] : undefined);
-  const start = session.startNodeId ?? (sequence ? `start:${sequence.id}` : project.events.length === 1 ? project.events[0].id : undefined);
   if (!start) { stop(session, 'Choose a story entry; several sequences are possible'); return session; }
   if (project.events.some(e => e.interactionDefinitions?.some(d => d.mechanic.kind === 'qte'))) session.interactionClockAt = environment.now();
   advance(project, session, start, { value: 0 }, false, environment);

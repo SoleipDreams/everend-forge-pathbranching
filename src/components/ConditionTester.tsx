@@ -5,7 +5,8 @@ import { conditionValueMatchesType, effectiveConditions, evaluateConditionDetail
 import { isConditionSet, type NarrativeEvaluationState } from '../logic.js';
 import { grantableEntities } from '../explorerSchema.js';
 import { conditionDiagnosticMessage, conditionExpressionAtPath, conditionPredicateLabel, conditionRouteResolution, conditionTestControls, conditionTreeSummary, conditionUiCopy, narrativeTargetLabel, type ConditionTestControl, type ConditionUiLocale } from '../conditionPresentation.js';
-import { entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey } from '../authoringEntities.js';
+import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, ownerKey, resolveOwner } from '../authoringEntities.js';
+import { characterInventoryOwnerOptions } from '../characterSheets.js';
 import { EntityOwnerPicker } from './EntityOwnerPicker.js';
 import { InstancePropertyFields } from './NarrativeEffectEditor.js';
 import { useInterfaceLocale } from '../i18n.js';
@@ -52,7 +53,8 @@ function updateControlState(state: NarrativeEvaluationState, control: ConditionT
     if (predicate.type === 'state' && predicate.stateId === 'owned') {
       const copies = state.entityInstances ?? project.entityInstances ?? [];
       const profileId = state.context?.profileId ?? 'default';
-      const isOwnedHere = (copy: EntityInstance) => copy.entityId === s.entityId && (ownerKey(copy.owner) === `profile:${profileId}` || state.context?.actor?.kind === 'entity' && ownerKey(copy.owner) === `entity:${state.context.actor.entityId}`);
+      const actorOwner = resolveOwner({ kind: 'context', role: 'actor' }, state);
+      const isOwnedHere = (copy: EntityInstance) => copy.entityId === s.entityId && (ownerKey(copy.owner) === `profile:${profileId}` || actorOwner?.kind === 'entity' && ownerKey(copy.owner) === ownerKey(actorOwner));
       if (!value) return { ...state, entityInstances: copies.map(copy => isOwnedHere(copy) ? { ...copy, owner: undefined } : copy) };
       if (copies.some(isOwnedHere)) return state;
       const available = copies.find(copy => copy.entityId === s.entityId && !copy.owner);
@@ -154,6 +156,8 @@ export function ConditionTester({project, conditions, locale: localeOverride}: {
   const routeTitle = (route: typeof routes[number]) => `${route.mode === 'fallback' ? c.else : route.label?.trim() || c.route} → ${narrativeTargetLabel(project, route.to)}`;
   const copies = state.entityInstances ?? [];
   const entities = [...project.canonRefs.map(entity => entity.id), ...(project.localExplorerEntities ?? []).map(entity => entity.id)];
+  const characterOwners = characterInventoryOwnerOptions(project, locale);
+  const actorValue = state.context?.actor?.kind === 'entity' ? JSON.stringify({ kind: 'entity', entityId: state.context.actor.entityId, ...(state.context.actor.variantId && state.context.actor.variantId !== 'base' ? { variantId: state.context.actor.variantId } : {}) }) : '';
   const hasCopyQuery = JSON.stringify(conditions ?? {}).includes('"instanceQuery"');
   const updateCopy = (id: string, patch: Partial<EntityInstance>) => {
     const next = copies.map(copy => copy.id === id ? { ...copy, ...patch } : copy);
@@ -165,7 +169,7 @@ export function ConditionTester({project, conditions, locale: localeOverride}: {
   return <details className="condition-tester condition-ux"><summary>{c.tester}</summary>
     <p>{c.temporary}</p>
     <label className="condition-field">{locale === 'es' ? 'Escenario inicial' : 'Initial scenario'}<select value={scenarioId} onChange={event => { const id = event.target.value; setScenarioId(id); setState(initialAuthoringState(project, project.authoringScenarios?.find(scenario => scenario.id === id))); setAdvancedError(''); }}><option value="">{locale === 'es' ? 'Valores del proyecto' : 'Project values'}</option>{project.authoringScenarios?.map(scenario => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></label>
-    <label className="condition-field">{locale === 'es' ? 'Actor temporal' : 'Temporary actor'}<select value={state.context?.actor?.kind === 'entity' ? state.context.actor.entityId : ''} onChange={event => setState(current => ({ ...current, context: { ...current.context, actor: event.target.value ? { kind: 'entity', entityId: event.target.value } : undefined } }))}><option value="">{locale === 'es' ? 'Inventario del protagonista' : 'Protagonist inventory'}</option>{entities.map(id => <option key={id} value={id}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
+    <label className="condition-field">{locale === 'es' ? 'Actor temporal' : 'Temporary actor'}<select value={actorValue} onChange={event => setState(current => ({ ...current, context: { ...current.context, actor: event.target.value ? JSON.parse(event.target.value) : undefined } }))}><option value="">{locale === 'es' ? 'Inventario del protagonista' : 'Protagonist inventory'}</option>{characterOwners.map(option => <option key={`${option.entityId}:${option.variantId}`} value={JSON.stringify(option.owner)}>{option.label}</option>)}{entities.filter(id => !characterOwners.some(option => option.entityId === id) && entityCapabilities(project, id).container).map(id => <option key={id} value={JSON.stringify({ kind: 'entity', entityId: id })}>{entityDefinition(project, id)?.name ?? id}</option>)}</select></label>
     <label className="condition-field"><span>{c.routeSource}</span><select value={source} onChange={event => setSource(event.target.value)}><option value="">{c.thisCondition}</option>{[...groups.keys()].map(id => <option key={id} value={id}>{narrativeTargetLabel(project, id)}</option>)}</select></label>
     <h4>{c.usedValues}</h4>
     {used.length ? <div className="condition-test-controls">{used.map(renderControl)}</div> : <p className="condition-empty">{c.noUsedValues}</p>}

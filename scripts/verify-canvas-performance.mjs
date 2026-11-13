@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createCanvasValidationCache, requiresSubcanvasLayout } from "../lib/canvas/interactionPerformance.js";
 import { createCanvasPresentationCache } from "../lib/canvas/presentationCache.js";
+import { layoutMinimapMarkers, minimapMarkerGeometryKey } from "../lib/canvas/minimapMarkerLayout.js";
 import { inspectorDocumentIndex } from "../lib/inspectorDocumentIndex.js";
 import { diagnosticSelection } from "../lib/diagnosticPresentation.js";
 import { createNarrativeValidationCache, narrativeContentUnchanged } from "../lib/narrativeValidation.js";
@@ -12,6 +13,83 @@ const project = normalizeProject({ specVersion: "0.1", projectId: "performance-t
   { id: "e-long", name: "Second event", type: "ending" },
 ], sequences: [{ id: "s", name: "Sequence", eventIds: ["e", "e-long"], entryEventId: "e" }], scripts: [], externalFunctions: [], variables: {} });
 const model = buildStoryCanvasModel(project, { scope: { kind: "sequence", id: "s" } });
+
+function referenceMinimapMarkers(items, scale, viewBox, markerSize) {
+  const mapWidth = 210;
+  const mapHeight = 138;
+  if (items.length < 2 || scale <= 0) return items.map(item => ({ x: item.centerX, y: item.centerY }));
+  const contentWidth = viewBox.width * scale;
+  const contentHeight = viewBox.height * scale;
+  const offsetX = (mapWidth - contentWidth) / 2;
+  const offsetY = (mapHeight - contentHeight) / 2;
+  const inset = markerSize / 2 + 2;
+  const clampX = x => Math.max(inset, Math.min(mapWidth - inset, x));
+  const clampY = y => Math.max(inset, Math.min(mapHeight - inset, y));
+  const anchors = items.map(item => ({
+    x: clampX((item.centerX - viewBox.x) * scale + offsetX),
+    y: clampY((item.centerY - viewBox.y) * scale + offsetY),
+  }));
+  const positions = anchors.map(point => ({ ...point }));
+  const minDistance = markerSize + 2;
+  for (let iteration = 0; iteration < 36; iteration += 1) {
+    for (let left = 0; left < positions.length; left += 1) {
+      for (let right = left + 1; right < positions.length; right += 1) {
+        const first = positions[left];
+        const second = positions[right];
+        let dx = second.x - first.x;
+        let dy = second.y - first.y;
+        let distance = Math.hypot(dx, dy);
+        if (distance >= minDistance) continue;
+        if (distance < 0.001) {
+          const angle = ((left * 37 + right * 17) % 16) * Math.PI / 8;
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          distance = 1;
+        }
+        const push = (minDistance - distance) * 0.52;
+        const pushX = dx / distance * push;
+        const pushY = dy / distance * push;
+        first.x = clampX(first.x - pushX);
+        first.y = clampY(first.y - pushY);
+        second.x = clampX(second.x + pushX);
+        second.y = clampY(second.y + pushY);
+      }
+    }
+    positions.forEach((point, index) => {
+      point.x = clampX(point.x + (anchors[index].x - point.x) * 0.035);
+      point.y = clampY(point.y + (anchors[index].y - point.y) * 0.035);
+    });
+  }
+  return items.map((_item, index) => ({
+    x: viewBox.x + (positions[index].x - offsetX) / scale,
+    y: viewBox.y + (positions[index].y - offsetY) / scale,
+  }));
+}
+
+const minimapCases = [
+  Array.from({ length: 48 }, (_item, index) => ({ centerX: 120 + index % 8 * 24, centerY: 90 + Math.floor(index / 8) * 30 })),
+  Array.from({ length: 48 }, () => ({ centerX: 300, centerY: 220 })),
+];
+let randomSeed = 341987;
+minimapCases.push(Array.from({ length: 100 }, () => {
+  randomSeed = (randomSeed * 48271) % 2147483647;
+  const centerX = randomSeed / 2147483647 * 7200;
+  randomSeed = (randomSeed * 48271) % 2147483647;
+  const centerY = randomSeed / 2147483647 * 3400;
+  return { centerX, centerY };
+}));
+for (const items of minimapCases) {
+  const viewBox = { x: 0, y: 0, width: 7600, height: 3600 };
+  const scale = Math.min((210 - 16) / viewBox.width, (138 - 16) / viewBox.height);
+  const optimized = layoutMinimapMarkers(items, scale, viewBox, 13).map(({ x, y }) => ({ x, y }));
+  assert.deepEqual(optimized, referenceMinimapMarkers(items, scale, viewBox, 13), "cached minimap layout preserves the previous marker positions");
+}
+assert.equal(
+  minimapMarkerGeometryKey(minimapCases[0]),
+  minimapMarkerGeometryKey(minimapCases[0].map(item => ({ ...item, selected: true }))),
+  "selection-only node changes keep the marker geometry cache key stable",
+);
+
 const globalWaypointProject = {
   ...project,
   canvas: { ...project.canvas, edgeWaypoints: { "edge:transition:route": [{ x: 420, y: 175 }] } },
@@ -88,6 +166,10 @@ assert.equal(editorFirst, editorNext, "equivalent nested editor props preserve n
 assert.deepEqual(editorFirst[0].data.details.eventEditor.imageAssets, [], "empty arrays keep their value");
 editorFirst[0].data.details.eventEditor.onDescriptionUpdate();
 assert.equal(value, 2);
+const editorHandler = editorFirst[0].data.details.eventEditor.onDescriptionUpdate;
+editors([{ ...node, data: { ...node.data, details: { eventEditor: { imageAssets: [] } } } }]);
+const editorRestored = editors([{ ...node, data: { ...node.data, details: { eventEditor: { imageAssets: [], onDescriptionUpdate: () => value = 3 } } } }]);
+assert.notEqual(editorRestored[0].data.details.eventEditor.onDescriptionUpdate, editorHandler, "removed nested callbacks are released before the path is reused");
 assert.equal(present([]).length, 0);
 assert.notEqual(present([node])[0], changed[0], "removed IDs cannot keep stale selection or callbacks");
 const index = inspectorDocumentIndex(project);

@@ -546,6 +546,44 @@ test('saving a run uses its actual actor even after selecting another scenario f
   run(c, { type: 'restart' }); assert.deepEqual(snap(c).state.context.actor, actor);
 });
 
+test('scenario inventory copies can be prepared outside Play and default to the selected actor variant', () => {
+  const p = fixture(), writes = [];
+  p.canonRefs.push({ id: 'hero', kind: 'character', label: 'Hero', frontmatter: { variants: { winter: { label: 'Winter' } } } });
+  p.authoringScenarios[0].actor = { kind: 'entity', entityId: 'hero', variantId: 'winter' };
+  const c = new StoryTestController(p, { onUpdate: project => writes.push(project) });
+  assert.equal(snap(c).active, false);
+  assert.equal(c.dispatch({ type: 'scenarioInventoryCopy', id: 'key' }), true);
+  const copy = snap(c).scenarioState.entityInstances.at(-1);
+  assert.deepEqual(copy.owner, { kind: 'entity', entityId: 'hero', variantId: 'winter' });
+  assert.equal(writes.length, 1, 'The initial scenario is saved to the document without starting Play.');
+  assert.equal(snap(c).active, false);
+});
+
+test('sequence inventories can be edited and explicitly shared outside Play', () => {
+  const p = fixture(), writes = [];
+  p.canonRefs.push({ id: 'hero', kind: 'character', label: 'Hero', frontmatter: { variants: { winter: { label: 'Winter' } } } });
+  p.sequences.push({ id: 'second', name: 'Second sequence', entryEventId: 'hall', eventIds: ['hall'], initialInventory: [] });
+  const c = new StoryTestController(p, { onUpdate: project => writes.push(project) });
+  assert.equal(snap(c).active, false);
+  assert.equal(c.dispatch({ type: 'sequenceInventoryCopy', sequenceId: 'seq', id: 'key' }), true);
+  const added = snap(c).sequenceInventories.find(sequence => sequence.sequenceId === 'seq').copies.find(copy => !['key-a', 'key-b'].includes(copy.id));
+  assert.ok(added);
+  assert.equal(c.dispatch({ type: 'sequenceCopyOwner', sequenceId: 'seq', copyId: added.id, owner: { kind: 'entity', entityId: 'hero', variantId: 'winter' } }), true);
+  assert.equal(c.dispatch({ type: 'sequenceInventorySource', sequenceId: 'second', sourceSequenceId: 'seq' }), true);
+  assert.ok(snap(c).sequenceInventories.find(sequence => sequence.sequenceId === 'second').copies.some(copy => copy.id === added.id));
+  assert.equal(c.dispatch({ type: 'sequenceInventorySource', sequenceId: 'seq', sourceSequenceId: 'second' }), false, 'Circular sharing is rejected.');
+  const saved = writes.at(-1);
+  assert.equal(saved.sequences.find(sequence => sequence.id === 'seq').initialInventory.find(copy => copy.id === added.id).owner.variantId, 'winter');
+  assert.equal(saved.sequences.find(sequence => sequence.id === 'second').inheritInventoryFromSequenceId, 'seq');
+  const enhanced = exportRuntimePackage(saved, { profile: 'enhanced' });
+  assert.equal(enhanced.pathBranching.sequences.find(sequence => sequence.id === 'seq').initialInventory.find(copy => copy.id === added.id).owner.variantId, 'winter');
+  assert.equal(c.dispatch({ type: 'sequenceInventorySource', sequenceId: 'second' }), true, 'Detaching makes an independent copy of the shared inventory.');
+  const detached = writes.at(-1).sequences.find(sequence => sequence.id === 'second');
+  assert.equal(detached.inheritInventoryFromSequenceId, undefined);
+  assert.notEqual(detached.initialInventory[0].id, saved.sequences.find(sequence => sequence.id === 'seq').initialInventory[0].id);
+  assert.equal(snap(c).active, false, 'Sequence inventory editing does not start Play.');
+});
+
 test('removing a scenario actor copy is rejected without persisting a dangling reference', () => {
   const p = fixture(), writes = [];
   p.authoringScenarios[0].actor = { kind: 'instance', instanceId: 'key-a' };
@@ -623,8 +661,8 @@ test('transport snapshots omit the project, narrative revision and engine histor
     assert.equal(Object.hasOwn(entry, 'before'), false, 'Trace transport uses readable changes rather than complete before states.');
     assert.equal(Object.hasOwn(entry, 'after'), false, 'Trace transport uses readable changes rather than complete after states.');
   }
-  wire.state.entityInstances[0].properties.wear = 99; wire.trace.length = 0;
-  assert.equal(snap(c).state.entityInstances[0].properties.wear, 8); assert.ok(snap(c).trace.length > 0);
+  wire.state.entityInstances.find(copy => copy.id === 'key-a').properties.wear = 99; wire.trace.length = 0;
+  assert.equal(snap(c).state.entityInstances.find(copy => copy.id === 'key-a').properties.wear, 8); assert.ok(snap(c).trace.length > 0);
 });
 
 test('a complete temporary run and presentation changes leave the narrative and runtime export unchanged', () => {

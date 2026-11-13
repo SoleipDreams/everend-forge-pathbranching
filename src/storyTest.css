@@ -65,6 +65,12 @@
 .story-test-controls.compact .story-test-extra-controls { max-width: 0; overflow: hidden; opacity: 0; visibility: hidden; transition: max-width 180ms ease, opacity 140ms ease, visibility 180ms; }
 .story-test-controls.compact.expanded .story-test-extra-controls { max-width: 72px; opacity: 1; visibility: visible; }
 .story-test-settings { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 290px; max-width: calc(100vw - 40px); padding: 12px; border: 1px solid var(--wn-border); border-radius: 8px; background: var(--wn-panel); color: var(--wn-text); box-shadow: 0 8px 24px #0003; font-size: 13px; z-index: 24; }
+.story-test-scenario-manager { position: absolute; z-index: 25; top: calc(100% + 8px); left: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(580px, calc(100vw - 32px)); max-height: min(78vh, 760px); overflow: hidden; border: 1px solid var(--wn-border); border-radius: 10px; background: var(--wn-panel); color: var(--wn-text); box-shadow: 0 12px 32px #0005; }
+.story-test-scenario-manager > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid var(--wn-border); }
+.story-test-scenario-manager-content { min-height: 0; overflow: auto; padding: 12px; overscroll-behavior: contain; }
+.story-test-scenario-manager-content .story-test-playback-settings { min-width: 0; }
+.story-test-scenario-manager-content .story-test-initial-state-content { grid-template-columns: minmax(0, 1fr); }
+.story-test-scenario-manager-content .story-test-initial-state-group { min-width: 0; }
 .story-test-settings .field-label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .story-test-settings select { width: 100%; font-size: 13px; padding: 6px; }
 .story-test-settings button { min-height: 30px; font-size: 13px; }

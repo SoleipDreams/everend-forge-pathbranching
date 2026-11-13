@@ -13,7 +13,7 @@ function concrete(subject: LogicSubject | undefined, state: PlayerSimulationStat
 }
 function sameSubject(left: Subject | undefined, right: Subject): boolean {
   return left?.kind === 'instance' ? right.kind === 'instance' && left.instanceId === right.instanceId
-    : left?.kind === 'entity' && right.kind === 'entity' && left.entityId === right.entityId && (left.variantId === undefined || left.variantId === (right.variantId ?? 'base'));
+    : left?.kind === 'entity' && right.kind === 'entity' && left.entityId === right.entityId && (left.variantId ?? 'base') === (right.variantId ?? 'base');
 }
 function ownerSubject(project: Partial<BranchingProject>, state: PlayerSimulationState, owner: EntityOwner | undefined): Subject | undefined {
   if (!owner) return undefined;

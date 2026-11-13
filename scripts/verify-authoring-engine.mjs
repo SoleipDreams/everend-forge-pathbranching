@@ -103,6 +103,53 @@ test('inventory copy queries count only inventoryable copies, including the any-
   const explicit=evaluateConditionDetailed({...query,entityId:'chest'},p,state);
   assert.equal(explicit.status,'satisfied');assert.equal(explicit.actual,1,'Saved explicit copy queries retain their behavior.');
 });
+test('character variants own separate copy inventories and actor context retains its variant',()=>{
+  const p=fixture();
+  p.canonRefs=[{id:'hero',kind:'character',label:'Hero',frontmatter:{variants:{winter:{label:'Winter'}}}}];
+  p.authoringScenarios=[{id:'winter-run',name:'Winter run',actor:{kind:'entity',entityId:'hero',variantId:'winter'},profileId:'default',state:{entityInstances:[
+    {id:'winter-key-a',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'winter'}},
+    {id:'winter-key-b',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'winter'}},
+    {id:'base-key',entityId:'key',owner:{kind:'entity',entityId:'hero'}},
+  ]}}];
+  const scenario=p.authoringScenarios[0], state=initialAuthoringState(p,scenario);
+  const count={type:'instanceQuery',entityId:'key',owner:{kind:'context',role:'actor'},quantifier:'count',operator:'==',value:2};
+  const result=evaluateConditionDetailed(count,p,state);
+  assert.equal(result.status,'satisfied');assert.equal(result.actual,2,'A count condition only sees copies owned by the actor variant.');
+  assert.equal(evaluateConditionDetailed({...count,owner:{kind:'entity',entityId:'hero'},value:1},p,state).status,'satisfied','Base inventory remains independent from the winter variant.');
+  const created=applyInstanceEffect(p,state,{type:'instanceEffect',operation:'create',entityId:'key',instanceId:'new-winter-key',owner:{kind:'context',role:'actor'}});
+  assert.equal(created.error,undefined);
+  assert.deepEqual(created.state.entityInstances.find(copy=>copy.id==='new-winter-key').owner,{kind:'entity',entityId:'hero',variantId:'winter'});
+  const moved=applyInstanceEffect(p,state,{type:'instanceEffect',operation:'move',instanceId:'base-key',owner:{kind:'context',role:'actor'}});
+  assert.deepEqual(moved.state.entityInstances.find(copy=>copy.id==='base-key').owner,{kind:'entity',entityId:'hero',variantId:'winter'});
+  assert.match(instanceOwnerIssue(p,[{id:'invalid',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'summer'}}],{id:'invalid',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'summer'}}),/Missing variant summer/);
+  const reopened=parseProject(serializeProject(p));
+  assert.deepEqual(reopened.authoringScenarios[0].actor,scenario.actor);
+  assert.deepEqual(reopened.authoringScenarios[0].state.entityInstances,scenario.state.entityInstances);
+});
+test('sequence inventories stay isolated unless a sequence explicitly inherits them',()=>{
+  const p=fixture();
+  p.canonRefs=[{id:'hero',kind:'character',label:'Hero',frontmatter:{variants:{winter:{label:'Winter'}}}}];
+  p.sequences[0].initialInventory=[
+    {id:'winter-key-a',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'winter'}},
+    {id:'winter-key-b',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'winter'}},
+  ];
+  p.sequences.push({id:'isolated',name:'Isolated',entryEventId:'hall',eventIds:['hall'],initialInventory:[]});
+  const count={type:'instanceQuery',entityId:'key',owner:{kind:'entity',entityId:'hero',variantId:'winter'},quantifier:'count',operator:'==',value:2};
+  const scenario={id:'isolated-run',name:'Isolated run',startNodeId:'start:isolated',actor:{kind:'entity',entityId:'hero',variantId:'winter'},state:{}};
+  const session=createAuthoringSession(p,scenario);
+  assert.deepEqual(session.state.context.actor,scenario.actor,'The actor keeps its selected variant at the new sequence entry.');
+  const firstState=initialAuthoringState(p,undefined,'seq');
+  assert.equal(evaluateConditionDetailed(count,p,firstState).actual,2,'Individual copies count in their owning sequence.');
+  assert.equal(evaluateConditionDetailed(count,p,session.state).actual,0,'Another sequence starts without implicitly copying those items.');
+  assert.equal(evaluateConditionDetailed(count,p,session.state).status,'unsatisfied');
+  const shared={...p,sequences:p.sequences.map(sequence=>sequence.id==='isolated'?{...sequence,inheritInventoryFromSequenceId:'seq'}:sequence)};
+  assert.equal(evaluateConditionDetailed(count,shared,initialAuthoringState(shared,undefined,'isolated')).actual,2,'Explicit inheritance shares the source sequence inventory.');
+
+  const legacy=normalizeProject({...fixture(),sequences:[...fixture().sequences,{id:'later',name:'Later',entryEventId:'hall',eventIds:['hall']} ]});
+  const chestCount={type:'instanceQuery',entityId:'key',owner:{kind:'entity',entityId:'chest'},quantifier:'count',operator:'=='};
+  assert.equal(evaluateConditionDetailed({...chestCount,value:2},legacy,initialAuthoringState(legacy,undefined,'seq')).actual,2,'Older shared inventory stays at the legacy entry sequence.');
+  assert.equal(evaluateConditionDetailed({...chestCount,value:0},legacy,initialAuthoringState(legacy,undefined,'later')).actual,0,'Legacy inventory is not extrapolated to another sequence.');
+});
 test('strict consequences reject coercion and actually update data objects',()=>{
   const p=fixture(),state=initialAuthoringState(p);
   const invalid=applyConsequenceDetailed(p,state,{type:'value',subject:{kind:'variable',variableId:'strength'},operation:'set',value:'five'});

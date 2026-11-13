@@ -18,7 +18,7 @@ import type {
 } from "./domain.js";
 
 import { conditionValueMatchesType, conditionValueType, evaluateConditionDetailed, effectiveConditions, type ConditionProject } from './conditionEvaluation.js';
-import { entityDefinition, ownerKey, resolveContextSubject } from './authoringEntities.js';
+import { entityDefinition, ownerKey, resolveContextSubject, resolveOwner } from './authoringEntities.js';
 import { characterPropertyDescriptor, characterVariantOverlay, resolveCharacterProperty } from './characterStats.js';
 import { resolveLogicField } from './logicCapabilities.js';
 export { evaluateConditionDetailed, effectiveConditions, combineConditions } from './conditionEvaluation.js';
@@ -288,6 +288,7 @@ export function applyConsequenceDetailed(project: BranchingProject, state: Playe
   let next = applyLogicEffect({ ...effect, subject } as LogicEffect, hydrated);
   if (effect.type === 'state' && effect.stateId === 'owned' && subject.kind === 'entity') {
     const profileId = state.context?.profileId ?? 'default';
+    const actorOwner = resolveOwner({ kind: 'context', role: 'actor' }, state);
     const legacyId = `instance:legacy:${encodeURIComponent(profileId)}:${encodeURIComponent(subject.entityId)}`;
     const instances = (state.entityInstances ?? []).map(i => ({...i}));
     const owned = next.entityStates?.[subject.entityId]?.states?.owned;
@@ -296,7 +297,7 @@ export function applyConsequenceDetailed(project: BranchingProject, state: Playe
       if (existing) existing.owner = { kind:'profile',profileId };
       else instances.push({ id:legacyId,entityId:subject.entityId,owner:{kind:'profile',profileId} });
     }
-    next = { ...next, inventory: [], entityInstances: owned ? instances : instances.map(i => i.entityId === subject.entityId && (ownerKey(i.owner) === `profile:${profileId}` || state.context?.actor?.kind === 'entity' && ownerKey(i.owner) === `entity:${state.context.actor.entityId}`) ? { ...i, owner:undefined } : i) };
+    next = { ...next, inventory: [], entityInstances: owned ? instances : instances.map(i => i.entityId === subject.entityId && (ownerKey(i.owner) === `profile:${profileId}` || actorOwner?.kind === 'entity' && ownerKey(i.owner) === ownerKey(actorOwner)) ? { ...i, owner:undefined } : i) };
     if (next.entityStates?.[subject.entityId]?.states) { const { owned: _owned, ...states } = next.entityStates[subject.entityId]!.states!; next.entityStates = { ...next.entityStates,[subject.entityId]:{...next.entityStates[subject.entityId],states} }; }
   }
   return { status: 'applied', state: next };

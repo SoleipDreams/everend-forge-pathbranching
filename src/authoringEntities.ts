@@ -1,5 +1,7 @@
 import type { BranchingProject, EntityInstance, EntityOwner, LogicSubject, PlayerSimulationState } from './domain.js';
 import { typeCapability } from './explorerSchema.js';
+import { characterInventoryOwnerOptions } from './characterSheets.js';
+import { canonVariantsForRef } from './worldnotionVariants.js';
 
 export function entityDefinition(project: Partial<BranchingProject>, id: string) {
   const canon = project.canonRefs?.find(e => e.id === id);
@@ -24,25 +26,26 @@ export function entityCapabilities(project: EntityCapabilityProject, id: string)
     container: override?.container ?? inherited?.container ?? false, runtimeRoles: roles,
     properties: override?.properties ?? {} };
 }
-export function resolveContextSubject(subject: LogicSubject, state: PlayerSimulationState, depth = 0): LogicSubject | undefined {
+export function resolveContextSubject(subject: LogicSubject, state: Pick<PlayerSimulationState, 'context'>, depth = 0): LogicSubject | undefined {
   if (depth > 3) return undefined;
   return subject.kind === 'context' ? state.context?.[subject.role] ? resolveContextSubject(state.context[subject.role]!, state, depth + 1) : undefined : subject;
 }
-export function resolveOwner(owner: EntityOwner | undefined | null, state: PlayerSimulationState): EntityOwner | undefined {
+export function resolveOwner(owner: EntityOwner | undefined | null, state: Pick<PlayerSimulationState, 'context'>): EntityOwner | undefined {
   if (!owner) return undefined;
   if (owner.kind !== 'context') return owner;
   const resolved = resolveContextSubject({ kind: 'context', role: owner.role }, state);
-  if (resolved?.kind === 'entity') return { kind: 'entity', entityId: resolved.entityId };
+  if (resolved?.kind === 'entity') return { kind: 'entity', entityId: resolved.entityId, ...(resolved.variantId && resolved.variantId !== 'base' ? { variantId: resolved.variantId } : {}) };
   if (resolved?.kind === 'instance') return { kind: 'instance', instanceId: resolved.instanceId };
   if (owner.role === 'actor' && state.context?.profileId) return { kind: 'profile', profileId: state.context.profileId };
   return undefined;
 }
 export function ownerKey(owner: EntityOwner | undefined) {
-  return !owner ? '' : owner.kind === 'entity' ? `entity:${owner.entityId}` : owner.kind === 'instance' ? `instance:${owner.instanceId}` : owner.kind === 'profile' ? `profile:${owner.profileId}` : `context:${owner.role}`;
+  return !owner ? '' : owner.kind === 'entity' ? `entity:${owner.entityId}${owner.variantId && owner.variantId !== 'base' ? `:variant:${owner.variantId}` : ''}` : owner.kind === 'instance' ? `instance:${owner.instanceId}` : owner.kind === 'profile' ? `profile:${owner.profileId}` : `context:${owner.role}`;
 }
-export function instanceOwnerIssue(project: BranchingProject, instances: EntityInstance[], instance: EntityInstance): string | undefined {
-  if (!entityDefinition(project, instance.entityId)) return `Missing entity ${instance.entityId}`;
-  const owner = instance.owner;
+export function canOwnInventory(project: BranchingProject, entityId: string, variantId = 'base') {
+  return entityCapabilities(project, entityId).container || characterInventoryOwnerOptions(project).some(option => option.entityId === entityId && option.variantId === (variantId || 'base'));
+}
+export function inventoryOwnerIssue(project: BranchingProject, instances: EntityInstance[], owner: EntityOwner | undefined | null): string | undefined {
   if (!owner) return undefined;
   if (owner.kind === 'context') return 'Unresolved owner context';
   if (owner.kind === 'profile') return project.playerProfiles?.some(p => p.id === owner.profileId) || project.authoringScenarios?.some(s => s.profileId === owner.profileId) || owner.profileId === 'default' ? undefined : `Missing profile ${owner.profileId}`;
@@ -50,7 +53,21 @@ export function instanceOwnerIssue(project: BranchingProject, instances: EntityI
   if (owner.kind === 'instance' && !parent) return `Missing container copy ${owner.instanceId}`;
   const entityId = owner.kind === 'entity' ? owner.entityId : parent!.entityId;
   if (!entityDefinition(project, entityId)) return `Missing container ${entityId}`;
-  if (!entityCapabilities(project, entityId).container) return `Entity ${entityId} cannot contain copies`;
+  const variantId = owner.kind === 'entity' ? owner.variantId ?? 'base' : owner.kind === 'instance' ? parent?.variantId ?? 'base' : 'base';
+  if (variantId !== 'base') {
+    const ref = project.canonRefs.find(item => item.id === entityId);
+    if (!ref || !canonVariantsForRef(ref).some(variant => variant.id === variantId)) return `Missing variant ${variantId} for inventory owner ${entityId}`;
+  }
+  if (!canOwnInventory(project, entityId, variantId)) return `Entity ${entityId} cannot contain copies`;
+  return undefined;
+}
+export function instanceOwnerIssue(project: BranchingProject, instances: EntityInstance[], instance: EntityInstance): string | undefined {
+  if (!entityDefinition(project, instance.entityId)) return `Missing entity ${instance.entityId}`;
+  const owner = instance.owner;
+  const ownerIssue = inventoryOwnerIssue(project, instances, owner);
+  if (ownerIssue) return ownerIssue;
+  if (!owner || owner.kind !== 'instance') return undefined;
+  const parent = instances.find(i => i.id === owner.instanceId);
   const seen = new Set([instance.id]);
   let current = parent;
   while (current) {
@@ -70,16 +87,77 @@ export function migrateLegacyInstances(project: BranchingProject, state: PlayerS
   }
   return { ...state, inventory: [], entityInstances: instances };
 }
+export function sequenceForStartingPoint(project: BranchingProject, startNodeId?: string): string | undefined {
+  if (startNodeId?.startsWith('start:')) {
+    const id = startNodeId.slice('start:'.length);
+    if (project.sequences.some(sequence => sequence.id === id)) return id;
+  }
+  const event = project.events.find(candidate => {
+    if (!startNodeId || candidate.id === startNodeId) return Boolean(startNodeId);
+    const ids = [
+      ...(candidate.dialogues ?? []).flatMap(dialogue => [
+        `dialogue:${candidate.id}:${dialogue.id}`,
+        ...(dialogue.beats ?? []).map(beat => `beat:${candidate.id}:${beat.id}`),
+      ]),
+      ...(candidate.dialogueBeats ?? []).map(beat => `beat:${candidate.id}:${beat.id}`),
+      ...(candidate.decisions ?? []).flatMap(decision => [
+        `decision:${candidate.id}:${decision.id}`,
+        ...decision.outcomes.map(outcome => `outcome:${candidate.id}:${decision.id}:${outcome.id}`),
+      ]),
+      ...(candidate.interactionUses ?? []).filter(use => !use.ownerNodeId).map(use => `interaction:${candidate.id}:${use.id}`),
+      ...(candidate.interactionBarriers ?? []).map(barrier => `barrier:${candidate.id}:${barrier.id}`),
+    ];
+    return ids.includes(startNodeId);
+  });
+  const sequence = event && project.sequences.find(candidate => candidate.entryEventId === event.id || candidate.eventIds.includes(event.id));
+  return sequence?.id ?? project.entrySequenceId ?? (project.sequences.length === 1 ? project.sequences[0].id : undefined);
+}
+function inventoryInstances(project: BranchingProject, instances: EntityInstance[] | undefined) {
+  return (instances ?? []).filter(instance => entityCapabilities(project, instance.entityId).inventoryItem);
+}
 export function normalizeAuthoringEntities(project: BranchingProject): BranchingProject {
-  return { ...project,
+  const entrySequenceId = project.entrySequenceId ?? project.sequences[0]?.id;
+  const normalized: BranchingProject = { ...project,
+    sequences: project.sequences.map(sequence => sequence.initialInventory !== undefined || sequence.inheritInventoryFromSequenceId || sequence.id === entrySequenceId
+      ? sequence : { ...sequence, initialInventory: [] }),
     ...(project.playerSimulation ? { playerSimulation: migrateLegacyInstances(project, project.playerSimulation) } : {}),
     ...(project.playerProfiles ? { playerProfiles: project.playerProfiles.map(p => ({ ...p, simulation: migrateLegacyInstances(project, p.simulation, p.id) })) } : {}),
-    ...(project.authoringScenarios ? { authoringScenarios: project.authoringScenarios.map(s => ({ ...s, state: migrateLegacyInstances(project, s.state ?? {}, s.profileId ?? 'default') })) } : {}) };
+  };
+  if (project.authoringScenarios) normalized.authoringScenarios = project.authoringScenarios.map(scenario => {
+    const scenarioProject = scenario.state?.entityInstances === undefined ? { ...project, entityInstances: [] } : project;
+    const state = migrateLegacyInstances(scenarioProject, scenario.state ?? {}, scenario.profileId ?? 'default');
+    const hasInventory = inventoryInstances(project, scenario.state?.entityInstances).length > 0 || (scenario.state?.inventory?.length ?? 0) > 0;
+    return { ...scenario, state, ...(scenario.inventorySequenceId || !hasInventory ? {} : { inventorySequenceId: sequenceForStartingPoint(normalized, scenario.startNodeId) }) };
+  });
+  return normalized;
 }
-export function initialAuthoringState(project: BranchingProject, scenario?: import('./domain.js').AuthoringScenario): PlayerSimulationState {
+function startingInventory(project: BranchingProject, sequenceId: string | undefined, fallback: EntityInstance[], seen = new Set<string>()): EntityInstance[] {
+  const sequence = project.sequences.find(candidate => candidate.id === sequenceId);
+  if (!sequence) return inventoryInstances(project, fallback);
+  if (seen.has(sequence.id)) return [];
+  const nextSeen = new Set(seen).add(sequence.id);
+  if (sequence.inheritInventoryFromSequenceId) return startingInventory(project, sequence.inheritInventoryFromSequenceId, fallback, nextSeen);
+  if (sequence.initialInventory !== undefined) return structuredClone(sequence.initialInventory);
+  return sequence.id === (project.entrySequenceId ?? project.sequences[0]?.id) ? inventoryInstances(project, fallback) : [];
+}
+export function initialAuthoringState(project: BranchingProject, scenario?: import('./domain.js').AuthoringScenario, startingSequenceId?: string): PlayerSimulationState {
   const profileId = scenario?.profileId ?? project.activePlayerProfileId ?? project.playerProfiles?.[0]?.id ?? 'default';
   const profile = project.playerProfiles?.find(p => p.id === profileId);
   const base = profile?.simulation ?? (profileId === 'default' ? project.playerSimulation : undefined) ?? {};
+  const sequenceId = startingSequenceId ?? sequenceForStartingPoint(project, scenario?.startNodeId);
+  const baseState = migrateLegacyInstances(project, base, profileId);
+  const scenarioProject = scenario?.state?.entityInstances === undefined ? { ...project, entityInstances: [] } : project;
+  const scenarioState = scenario ? migrateLegacyInstances(scenarioProject, scenario.state ?? {}, scenario.profileId ?? profileId) : undefined;
+  const scenarioHasInventory = Boolean(scenario?.inventorySequenceId || inventoryInstances(project, scenarioState?.entityInstances).length || scenario?.state?.inventory?.length);
+  const scenarioInventorySequenceId = scenario?.inventorySequenceId ?? (scenarioHasInventory ? sequenceForStartingPoint(project, scenario?.startNodeId) : undefined);
+  const selectedSequenceInventory = scenarioHasInventory && scenarioInventorySequenceId === sequenceId
+    ? inventoryInstances(project, scenarioState?.entityInstances)
+    : startingInventory(project, sequenceId, baseState.entityInstances ?? []);
+  const stateInstancesById = new Map<string, EntityInstance>();
+  for (const instance of [...(baseState.entityInstances ?? []), ...(scenarioState?.entityInstances ?? [])]) {
+    if (!entityCapabilities(project, instance.entityId).inventoryItem) stateInstancesById.set(instance.id, structuredClone(instance));
+  }
+  for (const instance of selectedSequenceInventory) stateInstancesById.set(instance.id, structuredClone(instance));
   const mergeStates = <T extends { properties?: Record<string, unknown>; states?: Partial<Record<string, boolean>> }>(left: Record<string, T> | undefined, right: Record<string, T> | undefined) => {
     const merged = { ...left, ...right };
     for (const id of Object.keys(right ?? {})) merged[id] = { ...left?.[id], ...right![id], properties: { ...left?.[id]?.properties, ...right![id].properties }, states: { ...left?.[id]?.states, ...right![id].states } };
@@ -91,7 +169,7 @@ export function initialAuthoringState(project: BranchingProject, scenario?: impo
     ...base, ...scenario?.state,
     variables: { ...Object.fromEntries((project.logicVariables ?? []).map(v => [v.id, v.value])), ...base.variables, ...scenario?.state?.variables },
     dataObjects: scenario?.state?.dataObjects ?? base.dataObjects ?? project.projectDataObjects,
-    entityInstances: scenario?.state?.entityInstances ?? base.entityInstances,
+    entityInstances: [...stateInstancesById.values()],
     entityStates: mergeStates(base.entityStates, scenario?.state?.entityStates),
     entityVariantStates: variantStates,
     context: { ...base.context, ...scenario?.state?.context, profileId, actor: scenario?.actor ?? scenario?.state?.context?.actor ?? base.context?.actor ?? (profile?.playableCharacterRef ? { kind: 'entity', entityId: profile.playableCharacterRef, ...(profile.playableVariantId ? { variantId: profile.playableVariantId } : {}) } : undefined) },
@@ -99,7 +177,7 @@ export function initialAuthoringState(project: BranchingProject, scenario?: impo
   // Player v0.4 keyed some values by their display name. IDs are authoritative.
   for (const v of project.logicVariables ?? []) if (!(v.id in (scenario?.state?.variables ?? {})) && Object.prototype.hasOwnProperty.call(base.variables ?? {}, v.name)) state.variables![v.id] = base.variables![v.name];
   delete state.interactionResults;
-  return structuredClone(migrateLegacyInstances(project, state, profileId));
+  return structuredClone(migrateLegacyInstances(project, { ...state, inventory: [] }, profileId));
 }
 /** Removes saved values and capability metadata before a local property is deleted. */
 export function removeLocalExplorerPropertyValues(

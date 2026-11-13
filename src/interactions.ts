@@ -181,8 +181,7 @@ export function interactionDefinitionIssues(definition: InteractionDefinition): 
   }
   if (m.kind === 'skillcheck') {
     if (definition.results.some(result => !result.key && !result.range)) issues.push('Extreme results need a total range before this interaction can run');
-    const thresholdResults = definition.results.length === 2 && definition.results.some(result => result.key === 'success') && definition.results.some(result => result.key === 'failure');
-    if (!thresholdResults) issues.push(...rangeIssues(definition.results.filter(result => result.range), 'skillcheck result'));
+    issues.push(...rangeIssues(definition.results.filter(result => result.range), 'skillcheck result'));
   }
   return issues;
 }
@@ -230,7 +229,8 @@ export function resolveInteraction(project: BranchingProject, state: PlayerSimul
       total = (rolls ?? []).reduce((a, b) => a + b, 0) + skillValue + modifier;
       if (m.kind === 'skillcheck') {
         const thresholdResults = definition.results.length === 2 && definition.results.some(item => item.key === 'success') && definition.results.some(item => item.key === 'failure');
-        if (thresholdResults) {
+        const hasConfiguredRanges = definition.results.some(item => item.range);
+        if (thresholdResults && !hasConfiguredRanges) {
           const success = m.difficultyOperator === '>' ? total! > m.difficulty : total! >= m.difficulty;
           result = definition.results.find(item => item.key === (success ? 'success' : 'failure'));
         } else {

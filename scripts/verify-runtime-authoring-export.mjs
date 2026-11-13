@@ -10,7 +10,7 @@ function fixture() {
   const strong = { type: 'value', subject: { kind: 'variable', variableId: 'strength' }, operator: '>=', value: 5 };
   return normalizeProject({
     specVersion: '0.1', projectId: 'export-acceptance', storyId: 'story', name: 'The training key',
-    canonRefs: [], scripts: [], externalFunctions: [], variables: {}, branches: [], entrySequenceId: 'seq',
+    canonRefs: [{ id: 'hero', kind: 'character', label: 'Hero', frontmatter: { variants: { winter: { label: 'Winter' } } } }], scripts: [], externalFunctions: [], variables: {}, branches: [], entrySequenceId: 'seq',
     sequences: [{ id: 'seq', name: 'Training', entryEventId: 'room', eventIds: ['room', 'hall', 'wait'] }],
     logicVariables: [{ id: 'strength', name: 'Strength', type: 'number', value: 0, groupId: 'default' }, { id: 'visits', name: 'Visits', type: 'number', value: 0, groupId: 'default' }],
     localExplorerEntities: [{ id: 'key', name: 'Key', type: 'item', properties: { wear: 0 }, status: 'draft', createdAt: '', updatedAt: '' }],
@@ -22,7 +22,10 @@ function fixture() {
     entityInstances: [{ id: 'key-a', entityId: 'key', name: 'Initial key', properties: { wear: 1 }, owner: { kind: 'profile', profileId: 'player' } }],
     playerProfiles: [{ id: 'player', name: 'Player', simulation: { variables: { strength: 0, visits: 0 } } }],
     activePlayerProfileId: 'player', playerSimulation: { variables: { strength: 1 } },
-    authoringScenarios: [{ id: 'strong', name: 'Already strong', profileId: 'player', state: { variables: { strength: 5, visits: 0 }, entityInstances: [] } }],
+    authoringScenarios: [
+      { id: 'strong', name: 'Already strong', profileId: 'player', state: { variables: { strength: 5, visits: 0 }, entityInstances: [] } },
+      { id: 'winter', name: 'Winter inventory', actor: { kind: 'entity', entityId: 'hero', variantId: 'winter' }, profileId: 'player', state: { variables: { strength: 0, visits: 0 }, entityInstances: [{ id: 'winter-key', entityId: 'key', owner: { kind: 'entity', entityId: 'hero', variantId: 'winter' } }] } },
+    ],
     narrativeActions: [{ id: 'train', name: 'Train', repeat: 'each-entry', effects: [effect('strength', 5), { type: 'instanceEffect', operation: 'create', entityId: 'key', instanceId: 'new-key', properties: { wear: 0 }, owner: { kind: 'profile', profileId: 'player' } }] }],
     narrativeRules: [{ id: 'ready', name: 'Ready', trigger: 'stateChanged', scope: { kind: 'global' }, when: strong, priority: 2, effects: [effect('visits', 1)] }],
     assets: [{ id: 'cover', kind: 'image', path: '.everend/assets/image/key.png', name: 'key.png', origin: 'uncanon' }],
@@ -75,6 +78,10 @@ test('reopened export executes the same actions, copy creation, rules and both r
     assert.deepEqual(b, a);
   }
   assert.deepEqual(createAuthoringSession(exported, exported.authoringScenarios[0]), createAuthoringSession(original, original.authoringScenarios[0]));
+  const winterOriginal=createAuthoringSession(original,original.authoringScenarios[1]);
+  const winterExported=createAuthoringSession(exported,exported.authoringScenarios[1]);
+  assert.deepEqual(winterExported,winterOriginal,'Enhanced export preserves the scenario actor variant and its independent inventory.');
+  assert.deepEqual(winterExported.state.entityInstances[0].owner,{kind:'entity',entityId:'hero',variantId:'winter'});
 });
 
 test('canvas, panels and temporary run edits never alter runtime output', () => {

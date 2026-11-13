@@ -7,7 +7,7 @@ import { entitySupportsDialogueTrigger, findLocalExplorerPropertyByReference, fl
 import { logicEffectOperations, logicOperatorsFor, resolveLogicField } from "./logicCapabilities.js";
 import { isGenericSpeakerRef } from "./speakerRoles.js";
 import { canonVariantsForRef } from "./worldnotionVariants.js";
-import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue } from './authoringEntities.js';
+import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, inventoryOwnerIssue } from './authoringEntities.js';
 import { authoringNodeExists } from './authoringEngine.js';
 import { itemModifierIssues } from './itemCatalog.js';
 
@@ -452,6 +452,19 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
 
     validateConditionRefs(findings, projectRefs, canonIds, sequence.id, `Sequence "${sequence.id}" availability`, sequence.availability);
     validateConsequenceCanonRefs(findings, projectRefs, canonIds, sequence.id, `Sequence "${sequence.id}" consequence`, sequence.consequences);
+    for (const copy of sequence.initialInventory ?? []) {
+      if (!entityDefinition(project, copy.entityId) || !entityCapabilities(project, copy.entityId).inventoryItem) findings.push(finding('invalid_consequence','error','Sequence inventory contains an entity that is not an inventory item.',{id:copy.id,ref:copy.entityId}));
+    }
+    if (sequence.inheritInventoryFromSequenceId) {
+      let current = project.sequences.find(item => item.id === sequence.inheritInventoryFromSequenceId);
+      const seen = new Set([sequence.id]);
+      if (!current) findings.push(finding('invalid_consequence','error','Sequence inventory inherits from a missing sequence.',{id:sequence.id,ref:sequence.inheritInventoryFromSequenceId}));
+      while (current) {
+        if (seen.has(current.id)) { findings.push(finding('invalid_consequence','error','Sequence inventory inheritance contains a cycle.',{id:sequence.id,ref:current.id})); break; }
+        seen.add(current.id);
+        current = current.inheritInventoryFromSequenceId ? project.sequences.find(item => item.id === current!.inheritInventoryFromSequenceId) : undefined;
+      }
+    }
   });
 
   project.branches.forEach((branch) => {
@@ -1005,16 +1018,13 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
 }
 
 function authoredCopies(project: BranchingProject): EntityInstance[] {
-  return [...(project.entityInstances ?? []),...(project.playerSimulation?.entityInstances ?? []),...(project.playerProfiles ?? []).flatMap(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).flatMap(s=>s.state?.entityInstances ?? [])];
+  return [...(project.entityInstances ?? []),...(project.playerSimulation?.entityInstances ?? []),...(project.playerProfiles ?? []).flatMap(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).flatMap(s=>s.state?.entityInstances ?? []),...project.sequences.flatMap(sequence=>sequence.initialInventory ?? [])];
 }
 function validateOwner(findings: ValidationFinding[], project: BranchingProject, id: string, owner: EntityOwner | undefined | null, context: string) {
   if (!owner) return;
   if (owner.kind === 'context') { if (!['actor','self','target'].includes(owner.role)) findings.push(finding('invalid_consequence','error',`${context} has invalid owner context.`,{id})); return; }
-  if (owner.kind === 'profile') { if (owner.profileId !== 'default' && !project.playerProfiles?.some(p=>p.id===owner.profileId) && !project.authoringScenarios?.some(s=>s.profileId===owner.profileId)) findings.push(finding('invalid_consequence','error',`${context} references missing profile.`,{id,ref:owner.profileId})); return; }
-  const templateId = owner.kind === 'entity' ? owner.entityId : authoredCopies(project).find(i=>i.id===owner.instanceId)?.entityId;
-  const ref = owner.kind === 'entity' ? owner.entityId : owner.instanceId;
-  if (!templateId || !entityDefinition(project,templateId)) findings.push(finding('invalid_consequence','error',`${context} references a missing owner.`,{id,ref}));
-  else if (!entityCapabilities(project,templateId).container) findings.push(finding('invalid_consequence','error',`${context} owner is not configured to contain copies.`,{id,ref:templateId}));
+  const issue = inventoryOwnerIssue(project, authoredCopies(project), owner);
+  if (issue) findings.push(finding('invalid_consequence','error',`${context}: ${issue}.`,{id,ref:owner.kind === 'entity' ? owner.entityId : owner.kind === 'instance' ? owner.instanceId : owner.profileId}));
 }
 function validateNarrativeEffects(findings: ValidationFinding[], refs: ProjectReferenceSets, canonIds: Set<string>, id: string, effects: NarrativeEffect[] | undefined) {
   const project=refs.project;
@@ -1045,9 +1055,12 @@ function validateAuthoringDefinitions(findings: ValidationFinding[], refs: Proje
   const exists=(id:string)=>authoringNodeExists(project,id);
   const copies=project.entityInstances ?? [];
   for(const duplicate of findDuplicates(copies.map(i=>i.id))) findings.push(finding('duplicate_id','error','Duplicate copy ID.',{id:duplicate}));
-  const pools=[copies,project.playerSimulation?.entityInstances ?? [],...(project.playerProfiles ?? []).map(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).map(s=>s.state?.entityInstances ?? [])];
+  const sequenceCopies=project.sequences.flatMap(sequence=>sequence.initialInventory ?? []);
+  for(const duplicate of findDuplicates(sequenceCopies.map(copy=>copy.id))) findings.push(finding('duplicate_id','error','Duplicate sequence inventory copy ID.',{id:duplicate}));
+  const pools=[copies,project.playerSimulation?.entityInstances ?? [],...(project.playerProfiles ?? []).map(p=>p.simulation.entityInstances ?? []),...(project.authoringScenarios ?? []).map(s=>s.state?.entityInstances ?? []),...project.sequences.map(sequence=>sequence.initialInventory ?? [])];
+  const availableCopies=authoredCopies(project);
   for(const pool of pools) for(const copy of pool) {
-    const error=instanceOwnerIssue(project,pool,copy);if(error)findings.push(finding('invalid_consequence','error',error,{id:copy.id,ref:copy.entityId}));
+    const error=instanceOwnerIssue(project,availableCopies,copy);if(error)findings.push(finding('invalid_consequence','error',error,{id:copy.id,ref:copy.entityId}));
     for(const [propertyId,value] of Object.entries(copy.properties ?? {})) { const p=findLocalExplorerPropertyByReference(project.localExplorerProperties,propertyId);if(!conditionValueMatchesType(value,p?.valueType)) findings.push(finding('invalid_consequence','error','Copy property has incompatible type.',{id:copy.id,ref:propertyId})); }
   }
   for(const override of project.entityOverrides ?? []) if(!entityDefinition(project,override.entityId)) findings.push(finding('missing_canon_ref','error','Capability override references missing entity.',{id:override.entityId}));

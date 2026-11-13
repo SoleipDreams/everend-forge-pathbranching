@@ -41,6 +41,7 @@
     "src/canvas/returnConnectors.ts",
     "src/canvas/boundaryAdderPlacement.ts",
     "src/canvas/interactionPerformance.ts",
+    "src/canvas/minimapMarkerLayout.ts",
     "src/canvas/presentationCache.ts",
     "src/inspectorDocumentIndex.ts",
     "src/inspectorFlow.ts",

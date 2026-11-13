@@ -18,6 +18,7 @@ export function createCanvasPresentationCache<T extends StoryCanvasNode | StoryC
       const cached = items.get(candidate.id);
       const callbacks = cached?.callbacks ?? new Map<string, { current: Function; stable: Function }>();
       const liveCallbacks = new Set<string>();
+      const reusedObjectPaths = new Set<string>();
       const stableValue = (value: unknown, previousValue: unknown, path: string, depth: number): unknown => {
         if (typeof value === "function") {
           liveCallbacks.add(path);
@@ -30,9 +31,7 @@ export function createCanvasPresentationCache<T extends StoryCanvasNode | StoryC
           return callback.stable;
         }
         if (Object.is(value, previousValue)) {
-          for (const callbackPath of callbacks.keys()) {
-            if (callbackPath.startsWith(`${path}.`)) liveCallbacks.add(callbackPath);
-          }
+          if (value && typeof value === "object") reusedObjectPaths.add(path);
           return value;
         }
         if (depth === 0) return value;
@@ -51,7 +50,22 @@ export function createCanvasPresentationCache<T extends StoryCanvasNode | StoryC
       // Editor props contain short arrays and callbacks. Bound recursion so an
       // updated narrative snapshot is never deeply compared in the render path.
       const data = stableValue(candidate.data, cached?.item.data, "data", 4) as T["data"];
-      for (const path of callbacks.keys()) if (!liveCallbacks.has(path)) callbacks.delete(path);
+      // Reused object prefixes preserve their descendant callbacks. Scan the
+      // callback map once per item instead of rescanning it at every shared
+      // nested object during a canvas selection update.
+      for (const path of callbacks.keys()) {
+        if (liveCallbacks.has(path)) continue;
+        let parent = path;
+        let preserved = false;
+        while (parent.includes(".")) {
+          parent = parent.slice(0, parent.lastIndexOf("."));
+          if (reusedObjectPaths.has(parent)) {
+            preserved = true;
+            break;
+          }
+        }
+        if (!preserved) callbacks.delete(path);
+      }
       const next = { ...candidate, data } as T;
       const item = cached && shallowEqual(cached.item, next) ? cached.item : next;
       items.set(candidate.id, { item, callbacks });

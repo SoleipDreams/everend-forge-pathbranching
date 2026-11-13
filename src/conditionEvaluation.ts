@@ -110,7 +110,11 @@ export function resolveConditionValue(predicate: LogicPredicate, project: Condit
   if (predicate.type === 'state' && explicit?.runtimeRoles?.[predicate.stateId] === false) return { error: `State ${predicate.stateId} is disabled` };
   if (predicate.type === 'state') {
     const key = predicate.stateId, overlay = state.entityStates?.[s.entityId]?.states;
-    if (key === 'owned' && state.entityInstances !== undefined) return { value: state.entityInstances.some(i => i.entityId === s.entityId && (ownerKey(i.owner) === `profile:${state.context?.profileId ?? 'default'}` || state.context?.actor?.kind === 'entity' && ownerKey(i.owner) === `entity:${state.context.actor.entityId}`)) };
+    if (key === 'owned' && state.entityInstances !== undefined) {
+      const profileOwner = { kind: 'profile' as const, profileId: state.context?.profileId ?? 'default' };
+      const actorOwner = resolveOwner({ kind: 'context', role: 'actor' }, state as PlayerSimulationState);
+      return { value: state.entityInstances.some(i => i.entityId === s.entityId && (ownerKey(i.owner) === ownerKey(profileOwner) || actorOwner?.kind === 'entity' && ownerKey(i.owner) === ownerKey(actorOwner))) };
+    }
     if (own(overlay, key)) return { value: overlay![key] };
     if (own(state.canonStates?.[s.entityId], key)) return { value: state.canonStates![s.entityId][key] };
     if (key === 'owned') return { value: new Set(state.inventory ?? []).has(s.entityId) };

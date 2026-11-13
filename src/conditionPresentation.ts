@@ -1,5 +1,6 @@
 import type { BranchingProject, ConditionExpression, ConditionInput, EntityOwner, InstanceQuery, LogicPredicate, Transition } from './domain.js';
 import { entityDefinition } from './authoringEntities.js';
+import { canonVariantsForRef } from './worldnotionVariants.js';
 import { conditionStructureIssues, conditionValueMatchesType, conditionValueType, effectiveConditions, evaluateConditionDetailed, externalConditionKey, type ConditionEvaluationResult } from './conditionEvaluation.js';
 import { asConditionExpressions, isConditionSet, migrateConditionInput, orderedTransitions, type NarrativeEvaluationState } from './logic.js';
 import { logicOperatorsFor, logicSubjectKey, logicSubjectOptions, presentConditionInput, resolveLogicField, type LogicPresentation } from './logicCapabilities.js';
@@ -193,7 +194,13 @@ export function conditionTreeSummary(project: BranchingProject, input: Condition
 
 export function conditionOwnerLabel(project: BranchingProject, owner: EntityOwner, locale: ConditionUiLocale = "en"): string {
   if (owner.kind === "context") return locale === "es" ? ({ actor: "Actor", self: "Origen", target: "Destinatario" })[owner.role] : ({ actor: "Actor", self: "Self", target: "Recipient" })[owner.role];
-  if (owner.kind === "entity") return entityDefinition(project, owner.entityId)?.name ?? owner.entityId;
+  if (owner.kind === "entity") {
+    const name = entityDefinition(project, owner.entityId)?.name ?? owner.entityId;
+    if (!owner.variantId || owner.variantId === 'base') return name;
+    const ref = project.canonRefs.find(item => item.id === owner.entityId);
+    const variant = ref ? canonVariantsForRef(ref).find(item => item.id === owner.variantId) : undefined;
+    return `${name} · ${variant?.label ?? owner.variantId}`;
+  }
   if (owner.kind === "profile") return project.playerProfiles?.find(profile => profile.id === owner.profileId)?.name ?? (owner.profileId === "default" ? locale === "es" ? "Protagonista" : "Protagonist" : owner.profileId);
   const instance = project.entityInstances?.find(copy => copy.id === owner.instanceId);
   return instance?.name ?? (instance ? `${entityDefinition(project, instance.entityId)?.name ?? instance.entityId} · ${locale === "es" ? "copia" : "copy"}` : owner.instanceId);

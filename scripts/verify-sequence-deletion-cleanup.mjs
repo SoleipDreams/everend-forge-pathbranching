@@ -18,7 +18,7 @@ const project = {
   canonRefs: [],
   sequences: [
     { id: "sequence:removed", name: "Removed", entryEventId: "event:removed", eventIds: ["event:removed"], branchIds: ["branch:removed"] },
-    { id: "sequence:kept", name: "Kept", entryEventId: "event:kept", eventIds: ["event:kept"], branchIds: [] },
+    { id: "sequence:kept", name: "Kept", entryEventId: "event:kept", eventIds: ["event:kept"], branchIds: [], inheritInventoryFromSequenceId: "sequence:removed" },
   ],
   // Reproduce a partially saved branch file: events still point at the branch,
   // but the branch's eventIds list was emptied before the sequence was removed.
@@ -83,6 +83,8 @@ const result = deleteSequence(project, "sequence:removed");
 const next = result.project;
 
 assert.deepEqual(next.sequences.map((sequence) => sequence.id), ["sequence:kept"]);
+assert.equal(next.sequences[0].inheritInventoryFromSequenceId, undefined, "Deleting an inventory source detaches and snapshots its dependent sequence.");
+assert.deepEqual(next.sequences[0].initialInventory, []);
 assert.equal(next.entrySequenceId, "sequence:kept");
 assert.deepEqual(next.events.map((event) => event.id), ["event:kept"]);
 assert.deepEqual(next.events[0].transitions, []);

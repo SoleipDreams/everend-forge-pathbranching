@@ -13,6 +13,7 @@ type Props = {
   onSelect?: (id: string) => void;
   onDelete?: (id: string) => void;
   onRename?: (id: string, name: string) => void;
+  onInsertBefore?: () => void;
   onInsertAfter?: (id: string) => void;
   selectedId?: string;
   handleOnly?: { id: string; bound: Bound };
@@ -37,7 +38,7 @@ function rangeLattice(result: InteractionResult, domainMin: number, domainMax: n
   };
 }
 
-export function NumericResultIntervals({ results, min: baseMin, max: baseMax, locale, onChange, onSelect, onDelete, onRename, onInsertAfter, selectedId, handleOnly, extendHandle, extendAllHandles = false, allowUnbounded = false, axisLabel, expandRanges = true }: Props) {
+export function NumericResultIntervals({ results, min: baseMin, max: baseMax, locale, onChange, onSelect, onDelete, onRename, onInsertBefore, onInsertAfter, selectedId, handleOnly, extendHandle, extendAllHandles = false, allowUnbounded = false, axisLabel, expandRanges = true }: Props) {
   const es = locale === 'es';
   const [internalSelectedId, setInternalSelectedId] = useState(results[0]?.id);
   const [drag, setDrag] = useState<IntervalDrag>();
@@ -103,6 +104,12 @@ export function NumericResultIntervals({ results, min: baseMin, max: baseMax, lo
         [inclusiveKey]: true,
       },
     } : result));
+  };
+  const toggleRangeInclusivity = (id: string) => {
+    const current = results.find(result => result.id === id);
+    if (!current) return;
+    const inclusive = current.range?.minInclusive !== false && current.range?.maxInclusive !== false;
+    onChange(results.map(result => result.id === id ? { ...result, range: { ...result.range, minInclusive: !inclusive, maxInclusive: !inclusive } } : result));
   };
   const setEditableBound = (id: string, bound: Bound, value: number) => {
     if (!Number.isSafeInteger(value)) return;
@@ -170,16 +177,26 @@ export function NumericResultIntervals({ results, min: baseMin, max: baseMax, lo
         const unboundedMax = allowUnbounded && index === preview.length - 1 && result.range?.max === undefined;
         const rangeLabel = boundaryText(effectiveMin, effectiveMax, minInclusive, maxInclusive, unboundedMin, unboundedMax);
         const intervalWidth = visible ? (visibleEnd - visibleStart + 1) / size * trackWidth : 0;
+        const intervalLeft = visible ? (visibleStart - min) / size * trackWidth : 0;
         const isNarrow = trackWidth > 0 && intervalWidth < 124;
         const editing = settingsResultId === result.id;
+        const settingsLeftSpace = intervalLeft - 16;
+        const settingsRightSpace = trackWidth - intervalLeft - intervalWidth - 76;
+        const settingsOnRight = settingsRightSpace >= settingsLeftSpace;
+        const settingsAvailable = Math.max(settingsRightSpace, settingsLeftSpace);
+        const settingsBelow = settingsAvailable < 264;
+        const settingsStyle = {
+          '--settings-left': `${settingsBelow ? 8 : settingsOnRight ? intervalLeft + intervalWidth + 8 : 8}px`,
+          '--settings-width': settingsBelow ? 'calc(100% - 16px)' : `${Math.max(0, settingsAvailable)}px`,
+        } as CSSProperties;
         const letter = index < 26 ? String.fromCharCode(65 + index) : String(index + 1);
         const boundInput = (bound: Bound) => {
           const isOuter = bound === 'min' ? index === 0 : index === preview.length - 1;
           const unbounded = bound === 'min' ? unboundedMin : unboundedMax;
           const currentValue = result.range?.[bound];
           const inputKey = `${result.id}:${bound}`;
-          return <label className={`dice-flow-setting-bound${unbounded ? ' is-infinite' : ''}`} key={bound}>
-            <span>{es ? bound === 'min' ? 'Desde' : 'Hasta' : bound === 'min' ? 'From' : 'To'}</span>
+          return <div className={`dice-flow-setting-bound${unbounded ? ' is-infinite' : ''}`} key={bound}>
+            <span className="dice-flow-setting-bound-label">{es ? bound === 'min' ? 'Desde' : 'Hasta' : bound === 'min' ? 'From' : 'To'}</span>
             <div>
               <input type="number" step="1" value={boundDrafts[inputKey] ?? (currentValue === undefined && isOuter ? '' : String(currentValue ?? (bound === 'min' ? min : max)))} placeholder={unbounded ? bound === 'min' ? '−∞' : '+∞' : undefined} disabled={unbounded} aria-label={`${bound === 'min' ? es ? 'Límite inferior' : 'Lower bound' : es ? 'Límite superior' : 'Upper bound'} · ${result.name}`} onChange={event => {
                 const raw = event.target.value;
@@ -188,11 +205,11 @@ export function NumericResultIntervals({ results, min: baseMin, max: baseMax, lo
               }} onBlur={() => setBoundDrafts(drafts => { const next = { ...drafts }; delete next[inputKey]; return next; })} />
               {allowUnbounded && isOuter ? <button type="button" className={unbounded ? 'selected' : ''} aria-label={unbounded ? es ? 'Usar límite fijo' : 'Use a fixed bound' : es ? `Extender hasta ${bound === 'min' ? 'menos' : 'más'} infinito` : `Extend to ${bound === 'min' ? 'negative' : 'positive'} infinity`} onClick={() => { setBoundDrafts(drafts => { const next = { ...drafts }; delete next[inputKey]; return next; }); toggleUnbounded(result.id, bound); }}>{unbounded ? bound === 'min' ? '−∞' : '+∞' : es ? '∞' : '∞'}</button> : null}
             </div>
-          </label>;
+          </div>;
         };
         return <div key={result.id} className={`dice-flow-lane${active ? ' selected' : ''}`}>
           <div className="dice-flow-track" style={{ '--interval-left': `${visible ? (visibleStart - min) / size * 100 : 0}%`, '--interval-width': `${visible ? (visibleEnd - visibleStart + 1) / size * 100 : 0}%` } as CSSProperties}>
-            <button type="button" className={`dice-flow-interval${visible ? '' : ' invalid'}${isNarrow ? ' is-narrow' : ''}`} aria-pressed={active} title={`${letter} · ${result.name} · ${rangeLabel}`} onClick={() => { select(result.id); setSettingsResultId(current => current === result.id ? undefined : result.id); }}><span className="dice-flow-result-letter">{letter}</span><span>{result.name}</span><small>{rangeLabel}</small></button>
+          <button type="button" className={`dice-flow-interval${visible ? '' : ' invalid'}${isNarrow ? ' is-narrow' : ''}`} aria-pressed={active} title={`${letter} · ${result.name} · ${rangeLabel} · ${es ? 'Pulsa para editar nombre y límites' : 'Click to edit name and bounds'}`} onClick={() => { select(result.id); setSettingsResultId(current => current === result.id ? undefined : result.id); }}><span className="dice-flow-result-letter">{letter}</span><span>{result.name}</span><small>{rangeLabel}</small></button>
             {visible && active && (['min', 'max'] as const).filter(shouldShow).filter(bound => !allowUnbounded || result.range?.[bound] !== undefined).map(bound => {
               const value = bound === 'min' ? effectiveMin : effectiveMax;
               const low = bound === 'min' ? min : visibleStart, high = bound === 'max' ? max : visibleEnd;
@@ -201,21 +218,24 @@ export function NumericResultIntervals({ results, min: baseMin, max: baseMax, lo
             })}
             {visible && active && unboundedMin ? <button type="button" className="dice-flow-infinity-marker min" aria-label={es ? `Hacer finito el límite inferior de ${result.name}` : `Make ${result.name} lower bound finite`} title={es ? 'Convertir −∞ en un límite fijo' : 'Change −∞ to a fixed bound'} onClick={() => toggleUnbounded(result.id, 'min')}>← −∞</button> : null}
             {visible && active && unboundedMax ? <button type="button" className="dice-flow-infinity-marker max" aria-label={es ? `Hacer finito el límite superior de ${result.name}` : `Make ${result.name} upper bound finite`} title={es ? 'Convertir +∞ en un límite fijo' : 'Change +∞ to a fixed bound'} onClick={() => toggleUnbounded(result.id, 'max')}>+∞ →</button> : null}
-            {editing ? <div className="dice-flow-interval-settings" role="group" aria-label={es ? `Editar resultado ${result.name}` : `Edit ${result.name} result`}>
+            {editing ? <div className={`dice-flow-interval-settings${settingsBelow ? ' is-below' : ''}`} style={settingsStyle} role="group" aria-label={es ? `Editar resultado ${result.name}` : `Edit ${result.name} result`}>
               <button type="button" className="dice-flow-settings-close" aria-label={es ? 'Cerrar edición' : 'Close editor'} onClick={() => setSettingsResultId(undefined)}><X size={15} /></button>
               <label className="dice-flow-setting-name"><span>{es ? 'Nombre' : 'Name'}</span><input type="text" value={result.name} onChange={event => onRename?.(result.id, event.target.value)} /></label>
-              <div className="dice-flow-setting-bounds">{boundInput('min')}{boundInput('max')}</div>
+              <div className="dice-flow-setting-bounds">{boundInput('min')}<button type="button" className="interaction-flow-bound-operator" aria-label={`${es ? 'Inclusión de los límites' : 'Bound inclusion'} · ${result.name}`} title={result.range?.minInclusive !== false && result.range?.maxInclusive !== false ? es ? 'Excluir ambos límites' : 'Exclude both bounds' : es ? 'Incluir ambos límites' : 'Include both bounds'} aria-pressed={result.range?.minInclusive !== false && result.range?.maxInclusive !== false} onClick={() => toggleRangeInclusivity(result.id)}>{result.range?.minInclusive !== false && result.range?.maxInclusive !== false ? '≤' : '<'}</button>{boundInput('max')}</div>
             </div> : null}
+            <div className="dice-flow-lane-actions">
+              {onInsertBefore && index === 0 ? <button type="button" className="dice-flow-insert-before" aria-label={es ? `Añadir resultado antes de ${result.name}` : `Add result before ${result.name}`} title={es ? 'Añadir antes' : 'Add before'} onClick={onInsertBefore}><Plus size={14} /></button> : null}
+              {onInsertAfter ? <button type="button" className="dice-flow-insert-after" aria-label={es ? `Añadir resultado después de ${result.name}` : `Add result after ${result.name}`} title={es ? 'Añadir después' : 'Add after'} onClick={() => onInsertAfter(result.id)}><Plus size={14} /></button> : null}
+              {onDelete ? <button type="button" className="dice-flow-delete" aria-label={es ? `Eliminar resultado ${result.name}` : `Delete result ${result.name}`} title={es ? 'Eliminar resultado' : 'Delete result'} disabled={results.length <= 1} onClick={() => onDelete(result.id)}><Trash2 size={13} /></button> : null}
+            </div>
           </div>
           {allowUnbounded && active && (index === 0 && !unboundedMin || index === preview.length - 1 && !unboundedMax) ? <div className="dice-flow-infinity-actions" aria-label={es ? `Extremos de ${result.name}` : `${result.name} endpoints`}>
             {index === 0 && !unboundedMin ? <button type="button" aria-label={es ? `Extender ${result.name} por el límite inferior hasta menos infinito` : `Extend ${result.name} at the lower bound to negative infinity`} title={es ? 'Extender hasta −∞' : 'Extend to −∞'} onClick={() => toggleUnbounded(result.id, 'min')}>← −∞</button> : null}
             {index === preview.length - 1 && !unboundedMax ? <button type="button" aria-label={es ? `Extender ${result.name} por el límite superior hasta más infinito` : `Extend ${result.name} at the upper bound to positive infinity`} title={es ? 'Extender hasta +∞' : 'Extend to +∞'} onClick={() => toggleUnbounded(result.id, 'max')}>+∞ →</button> : null}
           </div> : null}
-          {onInsertAfter && index < results.length - 1 ? <button type="button" className="dice-flow-insert-after" aria-label={es ? `Añadir resultado después de ${result.name}` : `Add result after ${result.name}`} title={es ? 'Añadir resultado después' : 'Add result after'} onClick={() => onInsertAfter(result.id)}><Plus size={16} /></button> : null}
-          {onDelete ? <button type="button" className="dice-flow-delete" aria-label={es ? `Eliminar resultado ${result.name}` : `Delete result ${result.name}`} title={es ? 'Eliminar resultado' : 'Delete result'} disabled={results.length <= 1} onClick={() => onDelete(result.id)}><Trash2 size={15} /></button> : null}
         </div>;
       })}
     </div>
-    {gaps.length || overlaps.length ? <div className="dice-flow-diagnostics" role="status">{gaps.length ? <p>{es ? 'Sin resultado' : 'Unassigned'}: {gaps.map(band => label(band.min, band.max)).join(', ')}</p> : null}{overlaps.length ? <p>{es ? 'Intervalos solapados' : 'Overlapping intervals'}: {overlaps.map(band => label(band.min, band.max)).join(', ')}</p> : null}</div> : <p className="dice-flow-complete">{es ? 'Todos los valores del dominio tienen un resultado.' : 'Every value in the domain has a result.'}</p>}
+    {gaps.length || overlaps.length ? <div className="dice-flow-diagnostics" role="status">{gaps.length ? <p>{es ? 'Sin resultado' : 'Unassigned'}: {gaps.map(band => label(band.min, band.max)).join(', ')}</p> : null}{overlaps.length ? <p>{es ? 'Intervalos solapados' : 'Overlapping intervals'}: {overlaps.map(band => label(band.min, band.max)).join(', ')}</p> : null}</div> : null}
   </div>;
 }

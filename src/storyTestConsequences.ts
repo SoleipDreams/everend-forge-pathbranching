@@ -72,11 +72,18 @@ export function storyTestConsequenceSummary(project: BranchingProject, trace: Au
   for (const id of keys(before.grantableProperties, after.grantableProperties)) {
     if (same(before.entityStates?.[id]?.properties, after.entityStates?.[id]?.properties)) properties(entityName(id), id, before.grantableProperties?.[id], after.grantableProperties?.[id]);
   }
-  const ownerName = (owner: EntityOwner | undefined, state: PlayerSimulationState): string => !owner ? es ? 'Sin propietario' : 'No owner'
-    : owner.kind === 'entity' ? entityName(owner.entityId)
-    : owner.kind === 'instance' ? state.entityInstances?.find(copy => copy.id === owner.instanceId)?.name ?? (es ? 'Contenedor' : 'Container')
-    : owner.kind === 'profile' ? project.playerProfiles?.find(profile => profile.id === owner.profileId)?.name ?? (es ? 'Perfil actual' : 'Current profile')
-    : owner.role === 'actor' ? 'Actor' : owner.role === 'target' ? es ? 'Destinatario' : 'Recipient' : es ? 'Origen' : 'Source';
+  const ownerName = (owner: EntityOwner | undefined, state: PlayerSimulationState): string => {
+    if (!owner) return es ? 'Sin propietario' : 'No owner';
+    if (owner.kind === 'entity') {
+      const name = entityName(owner.entityId);
+      const ref = owner.variantId && owner.variantId !== 'base' ? project.canonRefs.find(item => item.id === owner.entityId) : undefined;
+      const variant = ref ? canonVariantsForRef(ref).find(item => item.id === owner.variantId) : undefined;
+      return `${name}${owner.variantId && owner.variantId !== 'base' ? ` · ${variant?.label ?? owner.variantId}` : ''}`;
+    }
+    if (owner.kind === 'instance') return state.entityInstances?.find(copy => copy.id === owner.instanceId)?.name ?? (es ? 'Contenedor' : 'Container');
+    if (owner.kind === 'profile') return project.playerProfiles?.find(profile => profile.id === owner.profileId)?.name ?? (es ? 'Perfil actual' : 'Current profile');
+    return owner.role === 'actor' ? 'Actor' : owner.role === 'target' ? es ? 'Destinatario' : 'Recipient' : es ? 'Origen' : 'Source';
+  };
   for (const copy of after.entityInstances ?? []) {
     const old = before.entityInstances?.find(item => item.id === copy.id);
     const name = copy.name ?? entityName(copy.entityId);

@@ -8,6 +8,7 @@ import { conditionFieldIssues, conditionFieldLabel, conditionOperatorLabel, cond
 import { logicFieldOptions, logicOperatorsFor, logicSubjectKey, resolveLogicField, type LogicFieldOption } from '../logicCapabilities.js';
 import { conditionEditorTree, editConditionNode, emptyConditionGroup, invertConditionNode, findConditionNode, canMoveConditionNode, moveConditionNodeToGroup, moveConditionNode, pendingConditionNode, removeConditionNode, serializeConditionTree, type ConditionEditorNode } from '../conditionTreeEditing.js';
 import { entityCapabilities, entityDefinition } from '../authoringEntities.js';
+import { characterInventoryOwnerOptions, defaultPlayerProfileId } from '../characterSheets.js';
 import { ConditionReferencePicker } from './ConditionReferencePicker.js';
 import { ConversationLineMenu } from './ConversationLineMenu.js';
 import { useConditionReferenceCreation } from './ConditionReferenceCreationContext.js';
@@ -25,8 +26,8 @@ function conditionHasValue(condition: Condition): boolean {
 }
 const isKind = (value: string): value is ConditionKind => kinds.includes(value as ConditionKind);
 const emptySubject = (kind: ConditionKind): LogicSubject => kind === 'value' ? { kind: 'variable', variableId: '' } : kind === 'visited' ? { kind: 'progress', targetType: 'event', targetId: '' } : kind === 'external' ? { kind: 'external', functionId: '' } : { kind: 'entity', entityId: '' };
-function freshCondition(kind: ConditionKind): Condition {
-  if (kind === 'instanceQuery') return { type: kind, quantifier: 'some', owner: { kind: 'context', role: 'actor' } };
+function freshCondition(kind: ConditionKind, project: BranchingProject): Condition {
+  if (kind === 'instanceQuery') return { type: kind, quantifier: 'some', owner: { kind: 'profile', profileId: defaultPlayerProfileId(project) } };
   const subject = emptySubject(kind);
   return { type: kind, subject, operator: kind === 'state' || kind === 'visited' || kind === 'external' ? 'has' : '==', ...(kind === 'state' ? { stateId: '' } : kind === 'property' ? { propertyId: '' } : {}) } as LogicPredicate;
 }
@@ -45,7 +46,7 @@ function preserveOperands(project: BranchingProject, old: Condition, next: Logic
   return { ...next, operator, ...(!['has', 'missing', 'exists'].includes(operator) && 'value' in old && conditionValueMatchesType(old.value, type) ? { value: old.value } : {}) } as LogicPredicate;
 }
 function retarget(project: BranchingProject, condition: Condition, kind: ConditionKind, subject: LogicSubject): Condition {
-  let next = { ...freshCondition(kind), subject } as LogicPredicate;
+  let next = { ...freshCondition(kind, project), subject } as LogicPredicate;
   if (kind === 'state' || kind === 'property') {
     const fields = logicFieldOptions(project, subject, 'condition').filter(field => field.kind === kind);
     const previousKey = kind === 'state' ? (condition as { stateId?: string }).stateId : (condition as { propertyId?: string }).propertyId;
@@ -96,15 +97,20 @@ function ConditionValue({ project, condition, field, locale, category, context, 
 
 function CopyDetails({ project, query, context, locale, onChange, draftId }: { project: BranchingProject; query: InstanceQuery; context?: ConditionAuthoringContext; locale: 'es' | 'en'; onChange: (query: InstanceQuery) => void; draftId: string }) {
   const es = locale === 'es';
-  const choices: { id: string; label: string; detail?: string; icon?: string; owner?: EntityOwner; group?: 'context' | 'all' }[] = [
+  const characterOwners = characterInventoryOwnerOptions(project, locale, context);
+  const characterIds = new Set(characterOwners.map(option => option.entityId));
+  const protagonistId = defaultPlayerProfileId(project);
+  const profiles = project.playerProfiles ?? [];
+  const choices: { id: string; label: string; detail?: string; icon?: string; owner?: EntityOwner; group?: 'context' | 'nearby' | 'all' }[] = [
     { id: 'any', label: es ? 'Todos los inventarios y contenedores' : 'All inventories and containers', icon: 'PackageSearch' },
     ...(['actor', 'self', 'target'] as const).map(role => ({ id: `context:${role}`, label: es ? { actor: 'Actor', self: 'Esta entidad / copia', target: 'Destinatario' }[role] : role, owner: { kind: 'context' as const, role }, group: 'context' as const, icon: 'UserRound' })),
-    ...(project.playerProfiles?.some(profile => profile.id === 'default') ? [] : [{ id: 'profile:default', label: es ? 'Protagonista' : 'Protagonist', owner: { kind: 'profile' as const, profileId: 'default' }, icon: 'UserRound' }]),
-    ...(project.playerProfiles ?? []).map(profile => ({ id: `profile:${profile.id}`, label: profile.name, owner: { kind: 'profile' as const, profileId: profile.id }, icon: 'UserRound' })),
-    ...[...project.canonRefs.map(item => item.id), ...(project.localExplorerEntities ?? []).map(item => item.id)].filter(id => entityCapabilities(project, id).container).map(id => ({ id: `entity:${id}`, label: entityDefinition(project, id)?.name ?? id, owner: { kind: 'entity' as const, entityId: id }, icon: 'Box' })),
+    ...(profiles.some(profile => profile.id === protagonistId) ? [] : [{ id: `profile:${protagonistId}`, label: es ? 'Protagonista' : 'Protagonist', owner: { kind: 'profile' as const, profileId: protagonistId }, group: 'context' as const, icon: 'UserRound' }]),
+    ...profiles.map(profile => ({ id: `profile:${profile.id}`, label: profile.id === protagonistId ? es ? 'Protagonista' : 'Protagonist' : profile.name, detail: profile.id === protagonistId ? profile.name : undefined, owner: { kind: 'profile' as const, profileId: profile.id }, group: profile.id === protagonistId ? 'context' as const : 'all' as const, icon: 'UserRound' })),
+    ...characterOwners.map(option => ({ id: `entity:${option.entityId}${option.variantId !== 'base' ? `:variant:${option.variantId}` : ''}`, label: option.label, detail: option.contextual ? option.context.join(' · ') || (es ? 'Personaje presente aquí' : 'Character present here') : undefined, owner: option.owner, group: option.contextual ? 'context' as const : 'all' as const, icon: 'UserRound' })),
+    ...[...project.canonRefs.map(item => item.id), ...(project.localExplorerEntities ?? []).map(item => item.id)].filter(id => entityCapabilities(project, id).container && !characterIds.has(id)).map(id => ({ id: `entity:${id}`, label: entityDefinition(project, id)?.name ?? id, owner: { kind: 'entity' as const, entityId: id }, icon: 'Box' })),
     ...(project.entityInstances ?? []).filter(item => entityCapabilities(project, item.entityId).container).map(item => ({ id: `instance:${item.id}`, label: item.name ?? entityDefinition(project, item.entityId)?.name ?? item.id, detail: es ? 'Copia' : 'Copy', owner: { kind: 'instance' as const, instanceId: item.id }, icon: 'Box' })),
   ];
-  const ownerId = query.owner ? query.owner.kind === 'context' ? `context:${query.owner.role}` : query.owner.kind === 'profile' ? `profile:${query.owner.profileId}` : query.owner.kind === 'entity' ? `entity:${query.owner.entityId}` : `instance:${query.owner.instanceId}` : 'any';
+  const ownerId = query.owner ? query.owner.kind === 'context' ? `context:${query.owner.role}` : query.owner.kind === 'profile' ? `profile:${query.owner.profileId}` : query.owner.kind === 'entity' ? `entity:${query.owner.entityId}${query.owner.variantId && query.owner.variantId !== 'base' ? `:variant:${query.owner.variantId}` : ''}` : `instance:${query.owner.instanceId}` : 'any';
   return <div className="condition-copy-details">
     <div className="condition-copy-owner"><span>{es ? 'Dentro de' : 'Inside'}</span><ConditionReferencePicker label={es ? 'Inventario o contenedor' : 'Inventory or container'} projectId={project.projectId} category="owner" value={ownerId} candidates={choices} locale={locale} onChoose={id => onChange({ ...query, owner: choices.find(item => item.id === id)?.owner })} /></div>
     <h5>{es ? 'Filtros de la misma copia' : 'Filters on the same copy'}</h5>
@@ -138,7 +144,7 @@ function ConditionRow({ node, project, context, locale, copyFilter, onChange, on
     if (nextKind === kind) return;
     const nextCandidates = buildConditionCandidates(project, nextKind, { context, locale, copyFilter });
     const compatible = nextCandidates.find(item => item.id === reference);
-    onChange(compatible?.subject ? retarget(project, condition, nextKind, compatible.subject) : freshCondition(nextKind));
+    onChange(compatible?.subject ? retarget(project, condition, nextKind, compatible.subject) : freshCondition(nextKind, project));
   };
   const changeReference = (id: string) => {
     const candidate = candidates.find(item => item.id === id);
@@ -148,7 +154,7 @@ function ConditionRow({ node, project, context, locale, copyFilter, onChange, on
   const changeField = (id: string) => {
     const selected = fields.find(item => item.key === id);
     if (!selected || !generic) return;
-    const next = { ...freshCondition(kind!), subject: predicate.subject, ...(kind === 'state' ? { stateId: id } : { propertyId: id }) } as LogicPredicate;
+    const next = { ...freshCondition(kind!, project), subject: predicate.subject, ...(kind === 'state' ? { stateId: id } : { propertyId: id }) } as LogicPredicate;
     onChange(preserveOperands(project, condition, next));
   };
   const changeOperator = (id: string) => {

@@ -1,10 +1,10 @@
-import type { BranchingProject, ConditionInput, InteractionDice, InteractionMechanic, InteractionMechanicPreset, InteractionModifierRule, InteractionParticipant, InteractionResult, InteractionValueSource, LogicSubject } from '../domain.js';
-import { useState, type ReactNode } from 'react';
+import type { BranchingProject, ConditionInput, InteractionDice, InteractionMechanic, InteractionMechanicPreset, InteractionModifierRule, InteractionParticipant, InteractionResult, InteractionValueSource, LogicPredicate, LogicSubject } from '../domain.js';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { ConditionAuthoringContext } from '../conditionAuthoring.js';
 import { buildConditionCandidates } from '../conditionAuthoring.js';
 import { characterNumericFields, characterPropertyDescriptor, propertyValueAtPath, resolveCharacterProperty } from '../characterStats.js';
 import { flattenLocalExplorerPropertyTree } from '../explorerSchema.js';
-import { logicSubjectKey } from '../logicCapabilities.js';
+import { logicFieldOptions, logicSubjectKey } from '../logicCapabilities.js';
 import { resolveCanonVariantFrontmatter } from '../worldnotionVariants.js';
 import { ConditionPickerIcon, ConditionReferencePicker } from './ConditionReferencePicker.js';
 import { AuthoringTextField } from './AuthoringTextField.js';
@@ -14,9 +14,10 @@ import { diceBounds, diceFaceLabel, diceFormula, diceGroups, dicePoolFromPreset,
 import { ConditionRowsEditor } from './ConditionRowsEditor.js';
 import { readConditionRecents, writeConditionRecent } from '../conditionAuthoring.js';
 import { resolveUniverseAssetUrl } from '../utils/assetUrl.js';
-import { Target, UserRound } from 'lucide-react';
+import { ArrowLeft, Pencil, Plus, SlidersHorizontal, Sparkles, Target, Trash2, UserRound } from 'lucide-react';
 import { previewDifficultyRoll } from '../interactionDifficulty.js';
 import { InteractionDifficultyGuide } from './InteractionDifficultyGuide.js';
+import { conditionTreeSummary } from '../conditionPresentation.js';
 
 export type DiceContextSelectorOptions = { onOpenChange: (open: boolean) => void };
 type Props = { project: BranchingProject; mechanic: InteractionMechanic; identity: string; locale: 'es' | 'en'; context?: ConditionAuthoringContext; dicePresets?: InteractionMechanicPreset[]; diceSetOnly?: boolean; mechanicSelector?: (options: DiceContextSelectorOptions) => ReactNode; onChange: (mechanic: InteractionMechanic) => void };
@@ -91,16 +92,65 @@ function DicePoolPicker({ project, identity, dice, presetId, presets = [], local
   </section>;
 }
 
-function ModifierRulesFields({ project, identity, rules = [], locale, context, onChange }: { project: BranchingProject; identity: string; rules?: InteractionModifierRule[]; locale: 'es' | 'en'; context?: ConditionAuthoringContext; onChange: (rules: InteractionModifierRule[]) => void }) {
+type QuickModifierPredicate = Extract<LogicPredicate, { type: 'property' }>;
+type QuickModifierOperator = QuickModifierPredicate['operator'];
+function quickModifierPredicate(conditions: ConditionInput | undefined, subject: LogicSubject): QuickModifierPredicate | undefined {
+  const candidate = Array.isArray(conditions) ? conditions.length === 1 ? conditions[0] : undefined : conditions;
+  if (!candidate || typeof candidate !== 'object' || !('type' in candidate) || candidate.type !== 'property' || !('subject' in candidate)) return undefined;
+  const predicate = candidate as QuickModifierPredicate;
+  return logicSubjectKey(predicate.subject) === logicSubjectKey(subject) ? predicate : undefined;
+}
+function ModifierRuleCard({ project, identity, rule, index, actorSubject, locale, context, onChange, onDelete }: { project: BranchingProject; identity: string; rule: InteractionModifierRule; index: number; actorSubject: LogicSubject; locale: 'es' | 'en'; context?: ConditionAuthoringContext; onChange: (patch: Partial<InteractionModifierRule>) => void; onDelete: () => void }) {
+  const es = locale === 'es', properties = numericFields(project, actorSubject).filter(property => logicFieldOptions(project, actorSubject, 'condition').some(field => field.kind === 'property' && field.key === property.id && ['number', 'integer', 'float'].includes(field.valueType ?? property.valueType))), parsedPredicate = quickModifierPredicate(rule.conditions, actorSubject);
+  const predicate = parsedPredicate && properties.some(property => property.id === parsedPredicate.propertyId) && typeof parsedPredicate.value === 'number' ? parsedPredicate : undefined;
+  const [advancedOpen, setAdvancedOpen] = useState(() => Boolean(rule.conditions && !predicate));
+  const summary = rule.conditions ? conditionTreeSummary(project, rule.conditions, locale).text : es ? 'Sin condición' : 'No condition';
+  const updateQuickCondition = (propertyId: string | undefined, operator: QuickModifierOperator = predicate?.operator ?? '>=', value: unknown = predicate?.value ?? 0) => {
+    onChange({ conditions: propertyId ? [{ type: 'property', subject: actorSubject, propertyId, operator, value }] : undefined });
+  };
+  const operatorCandidates = [
+    { id: '>=', label: '≥', detail: es ? 'Igualar o superar el valor' : 'Meet or exceed the value' },
+    { id: '>', label: '>', detail: es ? 'Superar el valor' : 'Exceed the value' },
+    { id: '<=', label: '≤', detail: es ? 'Igualar o quedar por debajo' : 'Meet or fall below the value' },
+    { id: '<', label: '<', detail: es ? 'Quedar por debajo del valor' : 'Fall below the value' },
+    { id: '==', label: '=', detail: es ? 'Igualar el valor' : 'Equal the value' },
+    { id: '!=', label: '≠', detail: es ? 'Ser distinto del valor' : 'Differ from the value' },
+  ];
+  return <article className="interaction-modifier-rule">
+    <header className="interaction-modifier-rule-header">
+      <span className={`interaction-modifier-sign${rule.modifier < 0 ? ' is-penalty' : ' is-bonus'}`}>{rule.modifier > 0 ? '+' : rule.modifier < 0 ? '−' : ''}{Math.abs(rule.modifier)}</span>
+      <div><strong>{rule.name || `${es ? 'Regla' : 'Rule'} ${index + 1}`}</strong><small>{summary}</small></div>
+      <button type="button" className="interaction-modifier-delete" aria-label={es ? `Eliminar ${rule.name || 'regla'}` : `Delete ${rule.name || 'rule'}`} title={es ? 'Eliminar regla' : 'Delete rule'} onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></button>
+    </header>
+    <div className="interaction-modifier-rule-fields">
+      <AuthoringTextField projectId={project.projectId} elementId={rule.id} field="modifier-rule:name" label={es ? 'Nombre' : 'Name'} value={rule.name} onCommit={name => onChange({ name })} />
+      <NumberField project={project} identity={rule.id} field="modifier-rule:value" label={es ? 'Modificador' : 'Modifier'} value={rule.modifier} onChange={modifier => onChange({ modifier })} />
+    </div>
+    {predicate || !rule.conditions ? <div className="interaction-modifier-quick-condition">
+      <div className="interaction-modifier-quick-heading"><strong>{es ? 'Condición sencilla' : 'Simple condition'}</strong><small>{es ? 'Compara un atributo numérico del personaje asociado a esta tirada.' : 'Compare a numeric attribute of the character in this roll.'}</small></div>
+      {properties.length ? <div className="interaction-modifier-quick-fields">
+        <label><span>{es ? 'Atributo' : 'Attribute'}</span><ConditionReferencePicker label={es ? 'Atributo de la condición' : 'Condition attribute'} projectId={project.projectId} category="modifier-rule-attribute" locale={locale} value={predicate?.propertyId} placeholder={es ? 'Elegir atributo…' : 'Choose attribute…'} candidates={properties.map(item => ({ id: item.id, label: item.label, detail: [...(item.groupPath ?? []), es ? 'Personaje de esta regla' : 'Character in this rule'].join(' · '), icon: 'SlidersHorizontal' }))} onChoose={id => updateQuickCondition(id)} /></label>
+        {predicate ? <>
+          <label><span>{es ? 'Comparación' : 'Comparison'}</span><ConditionReferencePicker label={es ? 'Comparación del atributo' : 'Attribute comparison'} projectId={project.projectId} category="modifier-rule-comparison" locale={locale} searchable={false} value={predicate.operator} candidates={operatorCandidates} onChoose={id => updateQuickCondition(predicate.propertyId, id as QuickModifierOperator)} /></label>
+          <NumberField project={project} identity={rule.id} field="modifier-rule-condition:value" label={es ? 'Valor' : 'Value'} value={typeof predicate.value === 'number' ? predicate.value : 0} onChange={value => updateQuickCondition(predicate.propertyId, predicate.operator, value)} />
+          <button type="button" className="interaction-modifier-clear-condition" aria-label={es ? 'Quitar condición sencilla' : 'Remove simple condition'} title={es ? 'Quitar condición' : 'Remove condition'} onClick={() => updateQuickCondition(undefined)}>{es ? 'Quitar' : 'Clear'}</button>
+        </> : null}
+      </div> : <p className="interaction-modifier-no-properties">{es ? 'No hay atributos numéricos disponibles para este personaje.' : 'No numeric attributes are available for this character.'}</p>}
+    </div> : <p className="interaction-modifier-complex-note">{es ? 'Esta regla usa varias condiciones. Puedes revisarlas en el editor avanzado.' : 'This rule uses multiple conditions. Review them in the advanced editor.'}</p>}
+    <details className="interaction-modifier-advanced" open={advancedOpen} onToggle={event => setAdvancedOpen(event.currentTarget.open)}>
+      <summary><SlidersHorizontal size={14} aria-hidden="true" /><span>{es ? 'Editor avanzado de condiciones' : 'Advanced condition editor'}</span></summary>
+      <ConditionRowsEditor project={project} value={rule.conditions} onChange={(conditions: ConditionInput | undefined) => onChange({ conditions })} context={context} locale={locale} label={es ? 'Aplicar cuando' : 'Apply when'} draftId={`${identity}:modifier:${rule.id}`} />
+    </details>
+  </article>;
+}
+function ModifierRulesFields({ project, identity, rules = [], locale, context, actorSubject, onChange }: { project: BranchingProject; identity: string; rules?: InteractionModifierRule[]; locale: 'es' | 'en'; context?: ConditionAuthoringContext; actorSubject?: LogicSubject; onChange: (rules: InteractionModifierRule[]) => void }) {
   const es = locale === 'es';
+  const subject = actorSubject ?? { kind: 'context', role: 'actor' } as LogicSubject;
   const update = (id: string, patch: Partial<InteractionModifierRule>) => onChange(rules.map(rule => rule.id === id ? { ...rule, ...patch } : rule));
   return <section className="interaction-modifier-rules" aria-label={es ? 'Bonificaciones condicionales' : 'Conditional modifiers'}>
-    <header><h4>{es ? 'Bonificaciones y penalizaciones' : 'Bonuses and penalties'}</h4><small>{es ? 'Se suman una vez al iniciar la tirada.' : 'Added once when the roll starts.'}</small></header>
-    {rules.map((rule, index) => <fieldset key={rule.id} className="interaction-modifier-rule"><legend>{rule.name || `${es ? 'Regla' : 'Rule'} ${index + 1}`}</legend>
-      <div className="interaction-fields-row"><AuthoringTextField projectId={project.projectId} elementId={rule.id} field="modifier-rule:name" label={es ? 'Nombre' : 'Name'} value={rule.name} onCommit={name => update(rule.id, { name })} /><NumberField project={project} identity={rule.id} field="modifier-rule:value" label={es ? 'Bonificación / penalización' : 'Bonus / penalty'} value={rule.modifier} onChange={modifier => update(rule.id, { modifier })} /><button type="button" aria-label={es ? `Eliminar ${rule.name || 'regla'}` : `Delete ${rule.name || 'rule'}`} onClick={() => onChange(rules.filter(item => item.id !== rule.id))}>×</button></div>
-      <ConditionRowsEditor project={project} value={rule.conditions} onChange={(conditions: ConditionInput | undefined) => update(rule.id, { conditions })} context={context} locale={locale} label={es ? 'Aplicar cuando' : 'Apply when'} draftId={`${identity}:modifier:${rule.id}`} />
-    </fieldset>)}
-    <button type="button" onClick={() => onChange([...rules, { id: `modifier-${crypto.randomUUID()}`, name: es ? 'Nueva regla' : 'New rule', modifier: 1 }])}>{es ? 'Añadir regla de modificador' : 'Add modifier rule'}</button>
+    <header className="interaction-modifier-rules-heading"><Sparkles size={16} aria-hidden="true" /><div><strong>{es ? 'Bonificaciones y penalizaciones' : 'Bonuses and penalties'}</strong><small>{es ? 'Se aplican cuando se cumple la condición.' : 'Applied when the condition is met.'}</small></div><span className="interaction-modifier-count">{rules.length}</span></header>
+    {rules.length ? <div className="interaction-modifier-rule-list">{rules.map((rule, index) => <ModifierRuleCard key={rule.id} project={project} identity={identity} rule={rule} index={index} actorSubject={subject} locale={locale} context={context} onChange={patch => update(rule.id, patch)} onDelete={() => onChange(rules.filter(item => item.id !== rule.id))} />)}</div> : <p className="interaction-modifier-empty">{es ? 'Añade una regla cuando el contexto o un atributo del personaje deba cambiar la tirada.' : 'Add a rule when context or a character attribute should change the roll.'}</p>}
+    <button type="button" className="interaction-modifier-add" onClick={() => onChange([...rules, { id: `modifier-${crypto.randomUUID()}`, name: es ? 'Nueva regla' : 'New rule', modifier: 1 }])}><Plus size={15} aria-hidden="true" />{es ? 'Añadir bonificación o penalización' : 'Add bonus or penalty'}</button>
   </section>;
 }
 
@@ -269,8 +319,7 @@ function ParticipantFields({ project, participant, identity, locale, context, pr
       {showSkill ? <SkillFields project={project} skill={effectiveParticipant.skill} subject={effectiveParticipant.subject} locale={locale} context={context} optional onChange={skill=>onChange({...effectiveParticipant,skill})}/> : null}
     </div> : null}
     {showDice ? <DicePoolPicker project={project} identity={identity} dice={effectiveParticipant.dice} presetId={effectiveParticipant.dicePresetId} presets={presets} locale={locale} allowCommon common={!effectiveParticipant.dice} onChange={(dice,dicePresetId)=>onChange({...effectiveParticipant,dice,dicePresetId})}/> : null}
-    <div className="interaction-fields-row"><NumberField project={project} identity={identity} field="modifier" label={es?'Modificador':'Modifier'} value={effectiveParticipant.modifier} onChange={modifier=>onChange({...effectiveParticipant,modifier})}/></div>
-    <ModifierRulesFields project={project} identity={identity} rules={effectiveParticipant.modifierRules} locale={locale} context={context} onChange={modifierRules=>onChange({...effectiveParticipant,modifierRules})}/>
+    <ModifierRulesFields project={project} identity={identity} rules={effectiveParticipant.modifierRules} locale={locale} context={context} actorSubject={effectiveParticipant.subject} onChange={modifierRules=>onChange({...effectiveParticipant,modifierRules})}/>
   </div>;
 }
 
@@ -281,7 +330,11 @@ function dicePoolOf(mechanic: Extract<InteractionMechanic, { kind: 'dice' | 'ski
 }
 function DiceContextFields({ project, mechanic, identity, locale, context, dicePresets, mechanicSelector, onChange }: Props & { mechanic: Extract<InteractionMechanic, { kind: 'dice' | 'skillcheck' | 'opposedcheck' }> }) {
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [editingRivalId, setEditingRivalId] = useState<string>();
   const es = locale === 'es', mode = diceContextMode(mechanic);
+  useEffect(() => {
+    if (mode !== 'characters' || mechanic.kind !== 'opposedcheck' || !mechanic.rivals.some(rival => rival.id === editingRivalId)) setEditingRivalId(undefined);
+  }, [mode, mechanic, editingRivalId]);
   const changeContext = (nextMode: DiceContextMode) => {
     if (nextMode === mode) return;
     const defaultActor = defaultInteractionActor(project, context);
@@ -393,12 +446,12 @@ function DiceContextFields({ project, mechanic, identity, locale, context, diceP
 
   return <section className="interaction-dice-context" aria-label={es ? 'Contexto de la tirada' : 'Roll context'}>
     <div className={`interaction-dice-context-grid${selectorOpen ? ' is-selector-open' : ''}`}>
-      <fieldset className="interaction-dice-actor-card">
-        <legend>{es ? 'Personaje que actúa' : 'Acting character'}</legend>
+      <section className="interaction-dice-actor-card" aria-label={es ? 'Personaje que actúa' : 'Acting character'}>
+        <header><UserRound size={16} aria-hidden="true" /><strong>{es ? 'Personaje que actúa' : 'Acting character'}</strong></header>
         <ActorSubjectPicker project={project} subject={actorSubject} locale={locale} context={context} onChange={actorUpdate} />
         <ActorAttributePicker project={project} subject={actorSubject} skill={actorSkill} locale={locale} context={context} onChange={updateSkill} />
-        {mechanic.kind === 'opposedcheck' ? <ParticipantFields project={project} participant={mechanic.actor} identity={`${identity}:actor`} actor locale={locale} context={context} presets={dicePresets} commonDice={commonDice} showSubject={false} showSkill={false} showDice={false} onChange={updateActorParticipant} /> : actorSubject ? <><NumberField project={project} identity={identity} field="modifier" label={es ? 'Modificador fijo' : 'Fixed modifier'} value={actorModifier} onChange={updateModifier} /><ModifierRulesFields project={project} identity={identity} rules={actorRules} locale={locale} context={context} onChange={updateRules} /></> : null}
-      </fieldset>
+        {mechanic.kind === 'opposedcheck' ? <ParticipantFields project={project} participant={mechanic.actor} identity={`${identity}:actor`} actor locale={locale} context={context} presets={dicePresets} commonDice={commonDice} showSubject={false} showSkill={false} showDice={false} onChange={updateActorParticipant} /> : actorSubject ? <><NumberField project={project} identity={identity} field="modifier" label={es ? 'Modificador fijo' : 'Fixed modifier'} value={actorModifier} onChange={updateModifier} /><ModifierRulesFields project={project} identity={identity} rules={actorRules} locale={locale} context={context} actorSubject={actorSubject} onChange={updateRules} /></> : null}
+      </section>
       <div className={`interaction-dice-versus${mode === 'solo' ? ' is-solo' : ''}`}>
         {mode !== 'solo' || !mechanicSelector ? <b aria-hidden="true">{mode === 'world' ? (es ? 'CONTRA' : 'VS') : mode === 'characters' ? 'VS' : <ConditionPickerIcon name="D20" size={25} />}</b> : null}
         {selectorView}
@@ -414,9 +467,41 @@ function DiceContextFields({ project, mechanic, identity, locale, context, diceP
           <section className="interaction-difficulty-threshold" aria-label={es ? 'Umbral de dificultad' : 'Difficulty threshold'}><header><Target size={16} aria-hidden="true" /><strong>{es ? 'Umbral de dificultad' : 'Difficulty threshold'}</strong></header><div className="interaction-fields-row"><label><span>{es ? 'Comparación' : 'Comparison'}</span><ConditionReferencePicker label={es ? 'Operador de dificultad' : 'Difficulty operator'} projectId={project.projectId} category="difficulty-operator" locale={locale} searchable={false} value={operator} candidates={[{ id: '>=', label: '≥', detail: es ? 'Igualar o superar la dificultad' : 'Meet or exceed the difficulty' }, { id: '>', label: '>', detail: es ? 'Superar la dificultad' : 'Exceed the difficulty' }]} onChoose={setOperator} /></label><NumberField project={project} identity={identity} field="difficulty" label={es ? 'Dificultad' : 'Difficulty'} value={difficulty} onChange={setDifficulty} /></div></section>
           <InteractionDifficultyGuide dice={mechanic.dice} difficulty={difficulty} operator={operator} roll={difficultyRoll} locale={locale} onChoose={setDifficulty} />
         </div> : null}
-        {mode === 'characters' && mechanic.kind === 'opposedcheck' ? <div className="interaction-dice-rivals"><header><div><strong>{es ? 'Personajes rivales' : 'Opposing characters'}</strong><small>{es ? 'Cada rival puede usar el dado común o una excepción.' : 'Each rival can use the common dice or an exception.'}</small></div><label><span>{es ? 'Resultado' : 'Outcome'}</span><ConditionReferencePicker label={es ? 'Regla de victoria' : 'Victory rule'} projectId={project.projectId} category="opposed-aggregation" locale={locale} searchable={false} value={mechanic.aggregation} candidates={[{ id: 'all', label: es ? 'Vencer a todos' : 'Beat all' }, { id: 'any', label: es ? 'Vencer a cualquiera' : 'Beat any' }]} onChoose={changeAggregation} /></label></header>
-          {mechanic.rivals.map((rival, index) => <fieldset className="interaction-opposed-rival-card" key={rival.id}><legend>{es ? `Rival ${index + 1}` : `Rival ${index + 1}`}</legend><CharacterOverview project={project} subject={rival.subject.kind === 'context' ? undefined : rival.subject} locale={locale} context={context} /><ParticipantFields project={project} participant={rival} identity={`${identity}:${rival.id}`} locale={locale} context={context} presets={dicePresets} commonDice={mechanic.commonDice} onChange={next => updateRival(rival.id, next)} /><button type="button" onClick={() => removeRival(rival.id)}>{es ? 'Quitar rival' : 'Remove rival'}</button></fieldset>)}
-          <div className="interaction-dice-rival-actions"><button type="button" onClick={() => addRival({ kind: 'context', role: 'target' })}>{es ? 'Heredar objetivo del contexto' : 'Inherit context target'}</button><button type="button" onClick={() => addRival({ kind: 'entity', entityId: '' })}>{es ? 'Añadir personaje rival' : 'Add rival character'}</button></div>
+        {mode === 'characters' && mechanic.kind === 'opposedcheck' ? <div className="interaction-dice-rivals"><header><div><strong>{es ? 'Personajes rivales' : 'Opposing characters'}</strong><small>{es ? 'Usan el dado común; las reglas ajustan cada tirada.' : 'They use the common dice; rules adjust each roll.'}</small></div><label><span>{es ? 'Resultado' : 'Outcome'}</span><ConditionReferencePicker label={es ? 'Regla de victoria' : 'Victory rule'} projectId={project.projectId} category="opposed-aggregation" locale={locale} searchable={false} value={mechanic.aggregation} candidates={[{ id: 'all', label: es ? 'Vencer a todos' : 'Beat all' }, { id: 'any', label: es ? 'Vencer a cualquiera' : 'Beat any' }]} onChoose={changeAggregation} /></label></header>
+          {editingRivalId ? (() => {
+            const rival = mechanic.rivals.find(item => item.id === editingRivalId);
+            if (!rival) return null;
+            const overview = characterOverview(project, rival.subject.kind === 'context' ? undefined : rival.subject, locale, context);
+            const skill = rival.skill;
+            const attribute = skill?.kind === 'variable' ? project.logicVariables?.find(item => item.id === skill.variableId)?.name : skill?.kind === 'property' ? characterPropertyDescriptor(project, skill.propertyId)?.label ?? skill.propertyId : es ? 'Sin atributo' : 'No attribute';
+            const rules = rival.modifierRules ?? [];
+            const legacyNotes = [rival.dice || rival.dicePresetId ? es ? 'Dados personalizados anteriores conservados' : 'Previous custom dice retained' : '', rival.modifier ? `${es ? 'Modificador anterior' : 'Previous modifier'} ${rival.modifier > 0 ? '+' : '−'}${Math.abs(rival.modifier)}` : ''].filter(Boolean);
+            return <section className="interaction-rival-editor" aria-label={es ? `Editar rival${overview ? ` ${overview.name}` : ''}` : `Edit opponent${overview ? ` ${overview.name}` : ''}`}>
+              <button type="button" className="interaction-rival-back" onClick={() => setEditingRivalId(undefined)}><ArrowLeft size={15} aria-hidden="true" />{es ? 'Volver a tarjetas' : 'Back to cards'}</button>
+              {overview ? <div className="interaction-rival-editor-heading"><CharacterOverview project={project} subject={rival.subject.kind === 'context' ? undefined : rival.subject} locale={locale} context={context} /><span>{attribute}</span></div> : null}
+              <ParticipantFields project={project} participant={rival} identity={`${identity}:${rival.id}`} locale={locale} context={context} presets={dicePresets} commonDice={mechanic.commonDice} showDice={false} onChange={next => updateRival(rival.id, next)} />
+              {rules.length ? <div className="interaction-rival-rules-summary"><strong>{es ? 'Bonificaciones y penalizaciones' : 'Bonuses and penalties'}</strong><ul>{rules.map((rule, index) => <li key={rule.id}><span>{rule.modifier > 0 ? '+' : rule.modifier < 0 ? '−' : ''}{Math.abs(rule.modifier)}</span>{rule.name || `${es ? 'Regla' : 'Rule'} ${index + 1}`}<small>{rule.conditions ? conditionTreeSummary(project, rule.conditions, locale, 90).text : es ? 'Sin condición' : 'No condition'}</small></li>)}</ul></div> : null}
+              {legacyNotes.length ? <p className="interaction-rival-legacy-note" role="note">{legacyNotes.join(' · ')}</p> : null}
+              <button type="button" className="interaction-rival-remove" onClick={() => { removeRival(rival.id); setEditingRivalId(undefined); }}>{es ? 'Quitar rival' : 'Remove rival'}</button>
+            </section>;
+          })() : <div className="interaction-rival-cards" aria-label={es ? 'Tarjetas de rivales' : 'Opponent cards'}>
+            {mechanic.rivals.map((rival, index) => {
+              const overview = characterOverview(project, rival.subject.kind === 'context' ? undefined : rival.subject, locale, context);
+              const skill = rival.skill;
+              const attribute = skill?.kind === 'variable' ? project.logicVariables?.find(item => item.id === skill.variableId)?.name : skill?.kind === 'property' ? characterPropertyDescriptor(project, skill.propertyId)?.label ?? skill.propertyId : es ? 'Sin atributo' : 'No attribute';
+              const rules = rival.modifierRules ?? [];
+              const legacy = [rival.dice || rival.dicePresetId ? es ? 'Dados anteriores' : 'Legacy dice' : '', rival.modifier ? `${es ? 'Modificador anterior' : 'Legacy modifier'} ${rival.modifier > 0 ? '+' : '−'}${Math.abs(rival.modifier)}` : ''].filter(Boolean);
+              return <article className="interaction-rival-card" key={rival.id}>
+                <button type="button" className="interaction-rival-card-main" onClick={() => setEditingRivalId(rival.id)} aria-label={es ? `Editar rival ${index + 1}${overview ? `: ${overview.name}` : ''}` : `Edit opponent ${index + 1}${overview ? `: ${overview.name}` : ''}`}>
+                  <span className="interaction-rival-card-identity"><span className="interaction-rival-card-avatar">{overview?.portrait ? <img src={overview.portrait} alt="" /> : <UserRound size={23} aria-hidden="true" />}</span><span><strong>{overview?.name ?? `${es ? 'Rival' : 'Opponent'} ${index + 1}`}</strong><small>{overview?.variant ?? (es ? 'Sin personaje' : 'No character')}</small></span></span>
+                  <span className="interaction-rival-card-summary"><small>{es ? 'Atributo' : 'Attribute'} · {attribute}</small><small>{rules.length ? `${rules.length} ${es ? 'reglas de bonificación' : 'bonus rules'} · ${rules.slice(0, 2).map(rule => `${rule.modifier > 0 ? '+' : rule.modifier < 0 ? '−' : ''}${Math.abs(rule.modifier)} ${rule.name}`).join(' · ')}` : es ? 'Sin bonificaciones ni penalizaciones' : 'No bonuses or penalties'}</small>{legacy.length ? <small className="interaction-rival-legacy-note">{legacy.join(' · ')} · {es ? 'conservados' : 'retained'}</small> : null}</span>
+                  <span className="interaction-rival-card-edit"><Pencil size={14} aria-hidden="true" />{es ? 'Editar' : 'Edit'}</span>
+                </button>
+                <button type="button" className="interaction-rival-card-remove" aria-label={es ? `Quitar rival ${index + 1}` : `Remove opponent ${index + 1}`} onClick={() => removeRival(rival.id)}><Trash2 size={14} aria-hidden="true" /></button>
+              </article>;
+            })}
+            <div className="interaction-dice-rival-actions"><button type="button" onClick={() => addRival({ kind: 'context', role: 'target' })}>{es ? 'Heredar objetivo del contexto' : 'Inherit context target'}</button><button type="button" onClick={() => addRival({ kind: 'entity', entityId: '' })}>{es ? 'Añadir personaje rival' : 'Add rival character'}</button></div>
+          </div>}
         </div> : null}
       </section>
     </div>
@@ -433,11 +518,11 @@ function MechanicFields({ project, mechanic: m, identity, locale, context, diceP
   const es = locale === 'es';
   if (m.kind === 'dice') {
     const actor = m.actor, subject = m.skill?.kind === 'property' ? m.skill.subject : actor ?? { kind: 'context', role: 'actor' } as LogicSubject;
-    return <><DicePoolPicker project={project} identity={identity} dice={m} presetId={m.dicePresetId} presets={dicePresets} locale={locale} onChange={(dice,dicePresetId)=>{if(dice)onChange({...m,...dice,minimum:dice.minimum,groups:dice.groups,dicePresetId});}} /><div className="interaction-participant-line interaction-world-line"><SubjectFields project={project} subject={actor} locale={locale} context={context} optional onChange={next=>onChange({...m,actor:next,skill:m.skill?.kind==='property'&&next?{...m.skill,subject:next}:m.skill?.kind==='property'?undefined:m.skill})}/><SkillFields project={project} skill={m.skill} subject={subject} locale={locale} context={context} optional onChange={skill=>onChange({...m,skill,actor:skill?.kind==='property'?skill.subject:actor})}/><NumberField project={project} identity={identity} field="modifier" label={es ? 'Modificador fijo' : 'Fixed modifier'} value={m.modifier} onChange={modifier => onChange({ ...m, modifier })} /></div><ModifierRulesFields project={project} identity={identity} rules={m.modifierRules} locale={locale} context={context} onChange={modifierRules=>onChange({...m,modifierRules})}/></>;
+    return <><DicePoolPicker project={project} identity={identity} dice={m} presetId={m.dicePresetId} presets={dicePresets} locale={locale} onChange={(dice,dicePresetId)=>{if(dice)onChange({...m,...dice,minimum:dice.minimum,groups:dice.groups,dicePresetId});}} /><div className="interaction-participant-line interaction-world-line"><SubjectFields project={project} subject={actor} locale={locale} context={context} optional onChange={next=>onChange({...m,actor:next,skill:m.skill?.kind==='property'&&next?{...m.skill,subject:next}:m.skill?.kind==='property'?undefined:m.skill})}/><SkillFields project={project} skill={m.skill} subject={subject} locale={locale} context={context} optional onChange={skill=>onChange({...m,skill,actor:skill?.kind==='property'?skill.subject:actor})}/><NumberField project={project} identity={identity} field="modifier" label={es ? 'Modificador fijo' : 'Fixed modifier'} value={m.modifier} onChange={modifier => onChange({ ...m, modifier })} /></div><ModifierRulesFields project={project} identity={identity} rules={m.modifierRules} locale={locale} context={context} actorSubject={subject} onChange={modifierRules=>onChange({...m,modifierRules})}/></>;
   }
   if (m.kind === 'skillcheck') {
     const subject:LogicSubject=m.skill?.kind==='property'?m.skill.subject:m.actor??{kind:'context',role:'actor'};
-    return <><div className="interaction-participant-line interaction-world-line"><SubjectFields project={project} subject={m.actor} locale={locale} context={context} optional onChange={actor=>onChange({...m,actor,skill:m.skill?.kind==='property'&&actor?{...m.skill,subject:actor}:m.skill?.kind==='property'?undefined:m.skill})}/><SkillFields project={project} skill={m.skill} subject={subject} locale={locale} context={context} optional onChange={skill=>onChange({...m,skill,actor:skill?.kind==='property'?skill.subject:m.actor})}/><DicePoolPicker project={project} identity={identity} dice={m.dice} presetId={m.dicePresetId} presets={dicePresets} locale={locale} onChange={(dice,dicePresetId)=>onChange({...m,dice,dicePresetId})}/><NumberField project={project} identity={identity} field="modifier" label={es?'Modificador fijo':'Fixed modifier'} value={m.modifier} onChange={modifier=>onChange({...m,modifier})}/><label><span>{es?'Comparación':'Comparison'}</span><ConditionReferencePicker label={es?'Operador de dificultad':'Difficulty operator'} projectId={project.projectId} category="difficulty-operator" locale={locale} searchable={false} value={m.difficultyOperator??'>='} candidates={[{id:'>=',label:'≥',detail:es?'El total iguala o supera la dificultad':'Total equals or exceeds the difficulty'},{id:'>',label:'>',detail:es?'El total debe superar la dificultad':'Total must exceed the difficulty'}]} onChoose={operator=>onChange({...m,difficultyOperator:operator as '>='|'>'})}/></label><NumberField project={project} identity={identity} field="difficulty" label={es?'Dificultad':'Difficulty'} value={m.difficulty} onChange={difficulty=>onChange({...m,difficulty})}/></div><ModifierRulesFields project={project} identity={identity} rules={m.modifierRules} locale={locale} context={context} onChange={modifierRules=>onChange({...m,modifierRules})}/></>;
+    return <><div className="interaction-participant-line interaction-world-line"><SubjectFields project={project} subject={m.actor} locale={locale} context={context} optional onChange={actor=>onChange({...m,actor,skill:m.skill?.kind==='property'&&actor?{...m.skill,subject:actor}:m.skill?.kind==='property'?undefined:m.skill})}/><SkillFields project={project} skill={m.skill} subject={subject} locale={locale} context={context} optional onChange={skill=>onChange({...m,skill,actor:skill?.kind==='property'?skill.subject:m.actor})}/><DicePoolPicker project={project} identity={identity} dice={m.dice} presetId={m.dicePresetId} presets={dicePresets} locale={locale} onChange={(dice,dicePresetId)=>onChange({...m,dice,dicePresetId})}/><NumberField project={project} identity={identity} field="modifier" label={es?'Modificador fijo':'Fixed modifier'} value={m.modifier} onChange={modifier=>onChange({...m,modifier})}/><label><span>{es?'Comparación':'Comparison'}</span><ConditionReferencePicker label={es?'Operador de dificultad':'Difficulty operator'} projectId={project.projectId} category="difficulty-operator" locale={locale} searchable={false} value={m.difficultyOperator??'>='} candidates={[{id:'>=',label:'≥',detail:es?'El total iguala o supera la dificultad':'Total equals or exceeds the difficulty'},{id:'>',label:'>',detail:es?'El total debe superar la dificultad':'Total must exceed the difficulty'}]} onChoose={operator=>onChange({...m,difficultyOperator:operator as '>='|'>'})}/></label><NumberField project={project} identity={identity} field="difficulty" label={es?'Dificultad':'Difficulty'} value={m.difficulty} onChange={difficulty=>onChange({...m,difficulty})}/></div><ModifierRulesFields project={project} identity={identity} rules={m.modifierRules} locale={locale} context={context} actorSubject={subject} onChange={modifierRules=>onChange({...m,modifierRules})}/></>;
   }
   if (m.kind === 'opposedcheck') return <><section className="interaction-common-dice"><h4>{es?'Dado común':'Common dice'}</h4><DicePoolPicker project={project} identity={`${identity}:common-dice`} dice={m.commonDice} presetId={m.commonDicePresetId} presets={dicePresets} locale={locale} onChange={(commonDice,commonDicePresetId)=>onChange({...m,commonDice,commonDicePresetId})}/></section><div className="interaction-opposed-layout"><fieldset className="interaction-opposed-actor-card"><legend>{es?'Actor':'Actor'}</legend><ParticipantFields project={project} participant={m.actor} actor identity={`${identity}:actor`} locale={locale} context={context} presets={dicePresets} commonDice={m.commonDice} onChange={actor => onChange({ ...m, actor })} /></fieldset><section className="interaction-opposed-rivals"><header><h4>{es?'Rivales':'Rivals'}</h4><label><span>{es ? 'Resultado global' : 'Overall result'}</span><ConditionReferencePicker label={es ? 'Comparar rivales' : 'Compare rivals'} projectId={project.projectId} category="opposed-aggregation" locale={locale} searchable={false} value={m.aggregation} candidates={[{ id: 'all', label: es ? 'Vencer a todos' : 'Beat all rivals' }, { id: 'any', label: es ? 'Vencer a cualquiera' : 'Beat any rival' }]} onChoose={aggregation => onChange({ ...m, aggregation: aggregation as 'all' | 'any' })} /></label></header><div className="interaction-opposed-rivals-grid">{m.rivals.map((rival, index) => <fieldset className="interaction-opposed-rival-card" key={rival.id}><legend>{es ? 'Rival' : 'Rival'} {index + 1}</legend><ParticipantFields project={project} participant={rival} identity={`${identity}:${rival.id}`} locale={locale} context={context} presets={dicePresets} commonDice={m.commonDice} onChange={next => onChange({ ...m, rivals: m.rivals.map(item => item.id === rival.id ? next : item) })} /><button type="button" onClick={() => onChange({ ...m, rivals: m.rivals.filter(item => item.id !== rival.id) })}>{es ? 'Quitar rival' : 'Remove rival'}</button></fieldset>)}</div><button type="button" className="interaction-add-rival" onClick={() => onChange({ ...m, rivals: [...m.rivals, { id: `rival-${crypto.randomUUID()}`, subject: { kind: 'entity', entityId: '' }, modifier: 0 }] })}>{es ? 'Añadir rival' : 'Add rival'}</button></section></div></>;
   if (m.kind === 'qte') return <div className="interaction-fields-row"><AuthoringTextField projectId={project.projectId} elementId={identity} field="qte:key" label={es ? 'Tecla' : 'Key'} value={m.key} onCommit={key => onChange({ ...m, key })} /><NumberField project={project} identity={identity} field="qte:duration" label={es ? 'Duración (ms)' : 'Duration (ms)'} value={m.durationMs} min={1} onChange={durationMs => onChange({ ...m, durationMs })} /></div>;

@@ -114,7 +114,7 @@ for (const [moment, independent] of [['before', false], ['before', true], ['afte
   thresholdOnly.results.find(result => result.key === 'failure').range = { min: 10, max: 20 };
   const thresholdRoll = resolveInteraction(p, {}, thresholdOnly, {}, { ...environment, random: () => 0.2 });
   assert.equal(thresholdRoll.total, 5);
-  assert.equal(thresholdRoll.result.key, 'failure', 'two threshold outcomes remain open-ended around the difficulty, regardless of prior finite ranges');
+  assert.equal(thresholdRoll.result.key, 'success', 'configured ranges override the difficulty threshold for a two-outcome skillcheck');
   const missingDice = structuredClone(d); missingDice.mechanic.dice = undefined;
   assert.ok(interactionDefinitionIssues(missingDice).some(message => message.includes('dice pool')));
   assert.throws(() => resolveInteraction(p, {}, missingDice, {}, environment), /dice pool/);

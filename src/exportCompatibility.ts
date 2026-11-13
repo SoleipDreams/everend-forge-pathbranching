@@ -29,6 +29,7 @@ export function modularExportDiagnostics(project: BranchingProject): ModularExpo
 
   for (const action of project.narrativeActions ?? []) add("narrative-actions", action.id, "Narrative actions and their call/return or jump behavior");
   for (const rule of project.narrativeRules ?? []) add("narrative-rules", rule.id, "Triggered narrative rules and their priorities");
+  for (const sequence of project.sequences) if (sequence.initialInventory?.length || sequence.inheritInventoryFromSequenceId) add("sequence-inventories", sequence.id, "Sequence-specific starting inventories and their inheritance");
   for (const copy of project.entityInstances ?? []) add("entity-instances", copy.id, "Individual copies, their values and ownership");
   for (const override of project.entityOverrides ?? []) {
     if (override.inventoryModifiers?.length) add('inventory-modifiers', override.entityId, 'Current property values derived from carried or equipped items');

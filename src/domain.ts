@@ -397,7 +397,7 @@ export type PlayerSimulationState = {
 };
 
 export type EntityOwner =
-  | { kind: "entity"; entityId: string }
+  | { kind: "entity"; entityId: string; variantId?: string }
   | { kind: "instance"; instanceId: string }
   | { kind: "profile"; profileId: string }
   | { kind: "context"; role: "actor" | "self" | "target" };
@@ -489,6 +489,8 @@ export type AuthoringScenario = {
   profileId?: string;
   startNodeId?: string;
   state?: PlayerSimulationState;
+  /** Legacy scenario inventory is bound to one sequence instead of following a changed entry point. */
+  inventorySequenceId?: string;
 };
 
 export type PlayerProfile = {
@@ -668,6 +670,10 @@ export type Sequence = {
   logic?: LogicMoment;
   availability?: ConditionInput;
   consequences?: Consequence[];
+  /** Initial item copies owned by characters, variants, profiles or containers in this sequence. */
+  initialInventory?: EntityInstance[];
+  /** Explicitly share another sequence's initial inventory when this sequence starts. */
+  inheritInventoryFromSequenceId?: string;
   legacyUnity?: Record<string, unknown>;
 };
 

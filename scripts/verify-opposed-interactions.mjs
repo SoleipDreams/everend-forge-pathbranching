@@ -7,6 +7,7 @@ const core = process.env.OPPOSED_INTERACTIONS_CORE
   ? pathToFileURL(`${resolve(process.env.OPPOSED_INTERACTIONS_CORE)}/`).href
   : new URL('../lib/', import.meta.url).href;
 const { resolveInteraction, freezeInteractionParticipants, interactionDefinitionIssues, hasInteractions, hasOpposedInteractions } = await import(new URL('interactions.js', core));
+const { normalizeProject, serializeProject } = await import(new URL('projectSerialization.js', core));
 const { createAuthoringSession, authoringCommand } = await import(new URL('authoringEngine.js', core));
 const { validateInteractions } = await import(new URL('interactionValidation.js', core));
 const { exportRuntimePackage } = await import(new URL('exportRuntime.js', core));
@@ -37,6 +38,19 @@ function fixture(moment = 'before', aggregation = 'all') {
       transitions: [{ id: 'entry', from: 'boundary:event:input:entry', to: 'beat:event:a' }, { id: 'next', from: 'beat:event:a', to: moment === 'during' ? 'barrier:event:wait' : 'beat:event:b' }, ...(moment === 'during' ? [{ id: 'wait-next', from: 'barrier:event:wait', to: 'beat:event:b' }] : [])] }],
   };
 }
+
+test('legacy rival dice presets and fixed modifiers survive save and remain active at runtime', () => {
+  const p = fixture(), definition = p.events[0].interactionDefinitions[0];
+  Object.assign(definition.mechanic.rivals[0], { dice: { count: 2, sides: 8 }, dicePresetId: 'retired-rival-preset', modifier: 3 });
+  const reopened = normalizeProject(JSON.parse(serializeProject(p)));
+  const rival = reopened.events[0].interactionDefinitions[0].mechanic.rivals[0];
+  assert.deepEqual(rival.dice, { count: 2, sides: 8 });
+  assert.equal(rival.dicePresetId, 'retired-rival-preset');
+  assert.equal(rival.modifier, 3);
+  const participant = freezeInteractionParticipants(reopened, reopened.playerSimulation, reopened.events[0].interactionDefinitions[0])[1];
+  assert.deepEqual(participant.dice, { count: 2, sides: 8 });
+  assert.equal(participant.modifier, 3);
+});
 
 function rolls(values) {
   let calls = 0;

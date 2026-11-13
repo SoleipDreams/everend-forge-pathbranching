@@ -663,7 +663,10 @@ export function normalizeWorkspaceSession(
       ? Object.fromEntries(Object.entries(session.inspectorSections).filter(([, value]) => typeof value === "string")) : {},
     inspectorStackOrder: uniqueSessionStringIds(session.inspectorStackOrder),
     inspectorSize: session.inspectorSize && Number.isFinite(session.inspectorSize.width)
-      ? { width: Math.max(360, Math.min(1100, session.inspectorSize.width)), height: Number.isFinite(session.inspectorSize.height) ? Math.max(260, Math.min(1800, session.inspectorSize.height!)) : undefined } : { width: 420 },
+      ? session.inspectorSize.width === 420 && session.inspectorSize.height === undefined
+        ? { width: 640 }
+        : { width: Math.max(360, Math.min(1100, session.inspectorSize.width)), height: Number.isFinite(session.inspectorSize.height) ? Math.max(260, Math.min(1800, session.inspectorSize.height!)) : undefined }
+      : { width: 640 },
     canonOpen:
       typeof session.canonOpen === "boolean" ? session.canonOpen : undefined,
     filesOpen:

@@ -4838,13 +4838,13 @@ function EventAuthoringDock({
   };
   const availableInspectorHeight = useCallback(() => {
     const measuredHeight = dockHeight || dockRef.current?.getBoundingClientRect().height;
-    if (!measuredHeight) return 440;
+    if (!measuredHeight) return 480;
     if (fullscreen) return measuredHeight;
-    return inspectorStackCardHeight(measuredHeight, openEvents.length + inspectorTabs.length, 440, true);
+    return inspectorStackCardHeight(measuredHeight, openEvents.length + inspectorTabs.length, 480, true);
   }, [dockHeight, inspectorMaximized, inspectorTabs.length, openEvents.length, fullscreen]);
   const inspectorCardHeight = useCallback(
     (tabId: string) => {
-      const requested = inspectorMaximized || fullscreen ? availableInspectorHeight() : inspectorSize.height ?? 440;
+      const requested = inspectorMaximized || fullscreen ? availableInspectorHeight() : inspectorSize.height ?? 480;
       const available = availableInspectorHeight();
       return Number.isFinite(available) ? Math.min(requested, available) : requested;
     },
@@ -5273,8 +5273,8 @@ function EventAuthoringDock({
             </div>
           ) : null}
           <div className="unified-inspector-width-resize" onPointerDown={event=>{event.preventDefault();const x=event.clientX,width=dockRef.current?.getBoundingClientRect().width??inspectorSize.width;const move=(next:PointerEvent)=>onInspectorResize({...inspectorSize,width:Math.min(1100,Math.max(360,width+x-next.clientX))});const end=()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",end);};window.addEventListener("pointermove",move);window.addEventListener("pointerup",end,{once:true});}} />
-          {hasInspectorTabs && !fullscreen && !hasExpandedInspector ? renderInspectorWindowTools() : null}
-          {hasInspectorTabs && !fullscreen && hasExpandedInspector && toolbarHost ? createPortal(renderInspectorWindowTools(), toolbarHost) : null}
+          {hasInspectorTabs && !fullscreen && !(inspectorMaximized && hasExpandedInspector) ? renderInspectorWindowTools() : null}
+          {hasInspectorTabs && !fullscreen && inspectorMaximized && hasExpandedInspector && toolbarHost ? createPortal(renderInspectorWindowTools(), toolbarHost) : null}
           {hasInspectorTabs && fullscreen ? renderInspectorWindowTools() : null}
           <div className="event-inspector-cards" role="list">
           {stack.map((target, index) => {
@@ -9843,7 +9843,7 @@ function StoryCanvas({
     : selection ?? (activeScope ? { type: "node", id: activeScope.id } : undefined);
   return (
     <main
-      style={{"--inspector-width": `${inspectorSize.width}px`, "--inspector-height": `${(inspectorSize.height ?? 440) + 44}px`, "--canvas-toolbar-bottom": `${52 + canvasToolRowHeight + 8}px`} as CSSProperties}
+      style={{"--inspector-width": `${inspectorSize.width}px`, "--inspector-height": `${(inspectorSize.height ?? 480) + 44}px`, "--canvas-toolbar-bottom": `${52 + canvasToolRowHeight + 8}px`} as CSSProperties}
       className={`canvas-shell pb-canvas-layout${contextVisible ? " context-visible" : ""}${eventInspector.open ? " has-unified-inspector" : ""}${contextTab === "test" ? " inspector-show-test" : ""}${inspectorMaximized ? " inspector-enlarged" : ""}${contextFocus ? " context-focus" : ""} context-floating canvas-layer-${canvasLayerMode} ${activeScope?.kind === "event" || activeScope?.kind === "dialogue" ? "nested-scope" : ""} ${draggingEvent ? "dragging-event" : ""}`}
       ref={shellRef}
       tabIndex={-1}
@@ -10734,7 +10734,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }>();
   const [inspectorRequest, setInspectorRequest] = useState<InspectorRequest>();
   const [inspectorSections, setInspectorSections] = useState<Record<string,string>>({});
-  const [inspectorSize, setInspectorSize] = useState<InspectorSize>({ width:420 });
+  const [inspectorSize, setInspectorSize] = useState<InspectorSize>({ width:640 });
   const [inspectorStackOrder, setInspectorStackOrder] = useState<string[]>([]);
   const openInspectorRef = useRef<(target:Selection,section?:string,focusId?:string)=>void>(()=>undefined);
   const stopStoryTestRef = useRef<() => void>(() => undefined);
@@ -11127,7 +11127,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setExpandedInspectorTabId(savedSession.inspectorExpandedTabId);
       setInspectorMaximized(savedSession.inspectorMaximized ?? false);
       setInspectorSections(savedSession.inspectorSections ?? {});
-      setInspectorSize(savedSession.inspectorSize ?? {width:420});
+      setInspectorSize(savedSession.inspectorSize ?? {width:640});
       setInspectorStackOrder(savedSession.inspectorStackOrder ?? []);
       setInspectorRequest(undefined);
       setStoryOutlineTab(savedSession.storyOutlineTab ?? "sequence");
@@ -18327,7 +18327,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             expandedInspectorTabId={expandedInspectorTabId}
             inspectorMaximized={inspectorMaximized}
             canvasBackground={settings.canvasBackground}
-            storyTestControls={<StoryTestControls compact snapshot={storyTest} dispatch={dispatchStoryTest} onOpenPlay={openStoryPlay} />}
+            storyTestControls={<StoryTestControls compact snapshot={storyTest} dispatch={dispatchStoryTest} onOpenPlay={openStoryPlay} showScenarioManager />}
             testingActive={storyTest.active}
             storyTestWorkspace={storyTestWindows.detached.preview ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "La prueba está en otra ventana" : "Testing is in another window"}</strong><p>{uiLocale === "es" ? "El recorrido y sus valores se mantienen en este documento." : "The run and its values remain in this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver a acoplar" : "Redock"}</button></div> : <StoryTestPlayback snapshot={storyTest} dispatch={dispatchStoryTest} locale={uiLocale} />}
             storyTestPlayTab={<>

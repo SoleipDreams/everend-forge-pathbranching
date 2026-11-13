@@ -1,7 +1,7 @@
 import { diceFormula, diceGroups, diceFaceLabel, diceGroupFormula } from '../interactionDice.js';
 import { useEffect, useId, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useApplicationEffect } from "./useApplicationActivity.js";
-import { Bug, ChevronDown, Crosshair, ExternalLink, Fullscreen, Gift, GripHorizontal, LockKeyhole, Maximize2, MoveDiagonal2, PanelRightClose, PanelRightOpen, Pause, Play, RotateCcw, Shrink, Square, UserRound, X } from "lucide-react";
+import { Bug, ChevronDown, ClipboardList, Crosshair, ExternalLink, Fullscreen, Gift, GripHorizontal, LockKeyhole, Maximize2, MoveDiagonal2, PanelRightClose, PanelRightOpen, Pause, Play, RotateCcw, Shrink, Square, UserRound, X } from "lucide-react";
 import type { Locale } from "../i18n.js";
 import { storyTestFieldText, storyTestSubjectValue, type StoryTestCopy, type StoryTestField, type StoryTestSnapshot, type StoryTestUiCommand } from "../storyTestController.js";
 import type { ConditionEvaluationResult } from "../conditionEvaluation.js";
@@ -44,14 +44,31 @@ function CopyFields({ copy, scope, snapshot, dispatch, locale = snapshot.locale,
   </details>;
 }
 
-function ScenarioInventoryFields({ snapshot, dispatch, locale = snapshot.locale }: StoryTestViewProps) {
+function SequenceInventoriesFields({ snapshot, dispatch, locale = snapshot.locale }: StoryTestViewProps) {
   const es = locale === "es";
-  const copies = snapshot.scenarioCopies.filter(copy => copy.inventoryItem);
   const items = snapshot.entities.filter(entity => entity.inventoryItem);
-  return <section className="story-test-initial-state-group"><h3 className="inspector-group-title">{es ? "Inventario del escenario" : "Scenario inventory"}</h3>
-    <p className="story-test-empty-setting">{es ? "Prepara los ítems y quién los lleva al comenzar. El estado Equipado activa los bonos que lo requieren." : "Set up items and their holder at the start. Equipped activates modifiers that require it."}</p>
-    {copies.length ? copies.map(copy => <CopyFields key={copy.id} copy={copy} scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />) : <p className="story-test-empty-setting">{es ? "No hay ítems en el inventario inicial." : "No items in the starting inventory."}</p>}
-    <div className="story-test-initial-state-card"><label className="field-label inspector-field">{es ? "Añadir ítem" : "Add item"}<select value="" onChange={event => { if (event.target.value) dispatch({ type: "scenarioInventoryCopy", id: event.target.value }); }}><option value="">{items.length ? es ? "Elegir ítem de inventario" : "Choose inventory item" : es ? "No hay ítems habilitados" : "No inventory items enabled"}</option>{items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
+  return <section className="story-test-initial-state-group story-test-sequence-inventories"><h3 className="inspector-group-title">{es ? "Inventarios iniciales por secuencia" : "Sequence starting inventories"}</h3>
+    <p className="story-test-empty-setting">{es ? "Cada secuencia comienza con sus propias copias. Puedes heredar el inventario de otra secuencia de forma explícita." : "Each sequence starts with its own copies. You can explicitly inherit another sequence's inventory."}</p>
+    {snapshot.sequenceInventories.map(sequence => {
+      const inherited = Boolean(sequence.inheritInventoryFromSequenceId);
+      return <details className="story-test-sequence-inventory" key={sequence.sequenceId}>
+        <summary>{sequence.name} · {sequence.copies.length} {es ? "ítems" : "items"}{inherited ? ` · ${es ? "heredado" : "inherited"}` : ""}</summary>
+        <label className="field-label inspector-field">{es ? "Inventario" : "Inventory"}<select value={sequence.inheritInventoryFromSequenceId ?? ""} onChange={event => dispatch({ type: "sequenceInventorySource", sequenceId: sequence.sequenceId, sourceSequenceId: event.target.value || undefined })}>
+          <option value="">{es ? "Propio de esta secuencia" : "Independent for this sequence"}</option>
+          {snapshot.sequenceInventories.filter(other => other.sequenceId !== sequence.sequenceId).map(other => <option key={other.sequenceId} value={other.sequenceId}>{es ? "Heredar de" : "Inherit from"} · {other.name}</option>)}
+        </select></label>
+        {inherited ? <p className="story-test-empty-setting">{es ? "Este inventario sigue la secuencia seleccionada. Cambia a inventario propio para conservar una copia independiente." : "This inventory follows the selected sequence. Switch to an independent inventory to keep a separate copy."}</p> : null}
+        {sequence.copies.length ? sequence.copies.map(copy => <details className="story-test-initial-state-card" key={copy.id}>
+          <summary>{copy.name}</summary>
+          <label className="field-label inspector-field">{es ? "Personaje y variante" : "Character and variant"}<select disabled={inherited} value={storyTestFieldText(copy.owner)} onChange={event => dispatch({ type: "sequenceCopyOwner", sequenceId: sequence.sequenceId, copyId: copy.id, owner: event.target.value ? JSON.parse(event.target.value) : undefined })}>
+            <option value="">{es ? "Sin poseedor" : "No owner"}</option>{copy.owner.options?.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select></label>
+          {copy.states.some(field => field.id === "equipped") ? <label className="field-label inspector-field">{es ? "Equipado" : "Equipped"}<select disabled={inherited} value={String(Boolean(copy.states.find(field => field.id === "equipped")?.value))} onChange={event => dispatch({ type: "sequenceCopyEquipped", sequenceId: sequence.sequenceId, copyId: copy.id, equipped: event.target.value === "true" })}><option value="false">{es ? "No" : "No"}</option><option value="true">{es ? "Sí" : "Yes"}</option></select></label> : null}
+          <button type="button" disabled={inherited} onClick={() => dispatch({ type: "sequenceCopy", operation: "remove", sequenceId: sequence.sequenceId, id: copy.id })}>{es ? "Retirar de la secuencia" : "Remove from sequence"}</button>
+        </details>) : <p className="story-test-empty-setting">{es ? "No hay ítems en esta secuencia." : "No items in this sequence."}</p>}
+        <label className="field-label inspector-field">{es ? "Añadir ítem" : "Add item"}<select disabled={inherited} value="" onChange={event => { if (event.target.value) dispatch({ type: "sequenceInventoryCopy", sequenceId: sequence.sequenceId, id: event.target.value }); }}><option value="">{items.length ? es ? "Elegir ítem de inventario" : "Choose inventory item" : es ? "No hay ítems habilitados" : "No inventory items enabled"}</option>{items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      </details>;
+    })}
   </section>;
 }
 
@@ -90,13 +107,14 @@ export function StoryTestPlaybackSettings({ snapshot, dispatch, locale = snapsho
       <DraftField field={{ key: "scenario:start", id: "start", label: es ? "Punto inicial" : "Starting point", type: "select", value: snapshot.drafts["scenario:start"] ?? snapshot.scenario.startNodeId ?? "", options: (snapshot.startNodes ?? []).map(node => ({ value: node.id, label: node.label })) }} snapshot={snapshot} dispatch={dispatch} locale={locale} />
       <details className="story-test-initial-state"><summary className="inspector-panel-title">{es ? "Estado inicial" : "Initial state"}</summary>
         <div className="story-test-initial-state-content">
+          {snapshot.scenario.inventorySequenceId ? <section className="story-test-initial-state-group"><p className="story-test-empty-setting">{es ? "Este escenario conserva un inventario guardado anteriormente para su secuencia inicial." : "This scenario keeps an inventory saved earlier for its starting sequence."}</p><button type="button" onClick={() => dispatch({ type: "scenarioUseSequenceInventory" })}>{es ? "Usar inventario de la secuencia" : "Use sequence inventory"}</button></section> : null}
           <section className="story-test-initial-state-group"><h3 className="inspector-group-title">{es ? "Variables iniciales" : "Initial variables"}</h3>{snapshot.scenarioVariables.length ? snapshot.scenarioVariables.map(field => <div className="story-test-initial-state-card" key={field.key}><DraftField field={field} snapshot={snapshot} dispatch={dispatch} locale={locale} /></div>) : <p className="story-test-empty-setting">{es ? "No hay variables iniciales." : "No initial variables."}</p>}</section>
-          <ScenarioInventoryFields snapshot={snapshot} dispatch={dispatch} locale={locale} />
           <section className="story-test-initial-state-group"><OtherScenarioCopiesFields snapshot={snapshot} dispatch={dispatch} locale={locale} /></section>
         </div>
       </details>
       <div className="story-test-scenario-actions"><button type="button" className="story-test-scenario-button primary" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "applyScenarioDrafts" })}>{es ? "Aplicar escenario" : "Apply scenario"}</button><button type="button" className="story-test-scenario-button" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "discardDrafts", scope: "scenario" })}>{es ? "Descartar" : "Discard"}</button><button type="button" className="story-test-scenario-button danger" onClick={() => dispatch({ type: "deleteScenario" })}>{es ? "Eliminar escenario" : "Delete scenario"}</button></div>
-    </> : <p>{es ? "Crea un escenario para preparar actor, copias y valores iniciales." : "Create a scenario to prepare actor, copies and initial values."}</p>}
+    </> : <p>{es ? "Crea un escenario para preparar actor, punto de inicio y variables." : "Create a scenario to prepare actor, starting point and variables."}</p>}
+    <SequenceInventoriesFields snapshot={snapshot} dispatch={dispatch} locale={locale} />
   </div>;
 }
 
@@ -130,7 +148,7 @@ export function StoryTestDebug({ snapshot, dispatch, locale = snapshot.locale, i
         <DraftField field={{ key: "scenario:actor", id: "actor", label: "Actor", type: "select", value: storyTestSubjectValue(snapshot.scenario.actor), options: snapshot.scenarioSubjects }} snapshot={snapshot} dispatch={dispatch} locale={locale} />
         <DraftField field={{ key: "scenario:start", id: "start", label: es ? "Punto inicial" : "Starting point", type: "select", value: snapshot.scenario.startNodeId ?? "", options: snapshot.startNodes.map(node => ({ value: node.id, label: node.label })) }} snapshot={snapshot} dispatch={dispatch} locale={locale} />
         {snapshot.scenarioVariables.map(field => <DraftField key={field.key} field={field} snapshot={snapshot} dispatch={dispatch} locale={locale} />)}
-        <details><summary>{es ? "Estado inicial" : "Initial state"}</summary><ScenarioInventoryFields snapshot={snapshot} dispatch={dispatch} locale={locale} /><OtherScenarioCopiesFields snapshot={snapshot} dispatch={dispatch} locale={locale} /></details>
+        <details><summary>{es ? "Otras copias iniciales" : "Other initial copies"}</summary><OtherScenarioCopiesFields snapshot={snapshot} dispatch={dispatch} locale={locale} /></details>
         <RawStateDraft scope="scenario" snapshot={snapshot} dispatch={dispatch} locale={locale} />
         <div className="story-test-row"><button type="button" className="story-test-primary" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "applyScenarioDrafts" })}>{es ? "Aplicar escenario" : "Apply scenario"}</button><button type="button" disabled={!scenarioDrafts} onClick={() => dispatch({ type: "discardDrafts", scope: "scenario" })}>{es ? "Descartar borradores" : "Discard drafts"}</button></div>
         <p><button type="button" className="danger" onClick={() => dispatch({ type: "deleteScenario" })}>{es ? "Eliminar escenario" : "Remove scenario"}</button></p>
@@ -376,26 +394,28 @@ export function StoryTestGeneralView({ snapshot, dispatch, locale = snapshot.loc
 }
 
 /** Toolbar buttons intentionally have no layer/tab semantics. */
-export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale, compact = false, onOpenPlay, showOptions = true }: StoryTestViewProps & { compact?: boolean; onOpenPlay?: () => void; showOptions?: boolean }) {
+export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale, compact = false, onOpenPlay, showOptions = true, showScenarioManager = false }: StoryTestViewProps & { compact?: boolean; onOpenPlay?: () => void; showOptions?: boolean; showScenarioManager?: boolean }) {
   const es = locale === "es";
   const [revealed, setRevealed] = useState(false);
   const expanded = !compact || revealed || snapshot.active || snapshot.debugOpen;
   useEffect(() => { if (!snapshot.active && !snapshot.debugOpen) setRevealed(false); }, [snapshot.active, snapshot.debugOpen]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [scenarioManagerOpen, setScenarioManagerOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const controls = useRef<HTMLDivElement>(null);
   const menuId = useId();
   useApplicationEffect(() => {
-    if (!menuOpen) return;
-    controls.current?.querySelector<HTMLSelectElement>("select")?.focus();
-    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !controls.current?.contains(event.target)) setMenuOpen(false); };
+    if (!menuOpen && !scenarioManagerOpen) return;
+    if (menuOpen) controls.current?.querySelector<HTMLSelectElement>("select")?.focus();
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !controls.current?.contains(event.target)) { setMenuOpen(false); setScenarioManagerOpen(false); } };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [menuOpen]);
+  }, [menuOpen, scenarioManagerOpen]);
   const playbackLabel = !snapshot.active ? storyTestPlayTitle(snapshot, locale) : snapshot.paused ? es ? "Reanudar recorrido" : "Resume run" : es ? "Pausar recorrido" : "Pause run";
   const closeMenu = () => { setMenuOpen(false); menuButton.current?.focus(); };
-  return <div ref={controls} className={`story-test-controls nodrag nopan${compact ? " compact" : ""}${expanded ? " expanded" : ""}`} role="group" aria-label={es ? "Controles de Play Mode" : "Play Mode controls"} onPointerDown={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape" && menuOpen) { event.preventDefault(); event.stopPropagation(); closeMenu(); } }}>
+  return <div ref={controls} className={`story-test-controls nodrag nopan${compact ? " compact" : ""}${expanded ? " expanded" : ""}`} role="group" aria-label={es ? "Controles de Play Mode" : "Play Mode controls"} onPointerDown={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape" && (menuOpen || scenarioManagerOpen)) { event.preventDefault(); event.stopPropagation(); closeMenu(); setScenarioManagerOpen(false); } }}>
     <button type="button" className="story-test-icon story-test-play-trigger" aria-label={playbackLabel} title={playbackLabel} aria-expanded={compact ? expanded : undefined} disabled={snapshot.changed || snapshot.status === "ended"} onClick={() => { setRevealed(true); if (!snapshot.active || snapshot.paused) onOpenPlay?.(); dispatch({ type: snapshot.active && !snapshot.paused ? "pause" : "play" }); }}>{snapshot.active && !snapshot.paused ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}</button>
+    {showScenarioManager ? <button type="button" className="story-test-icon story-test-scenario-manager-trigger" aria-label={es ? "Gestionar escenarios" : "Manage scenarios"} title={es ? "Gestionar escenarios" : "Manage scenarios"} aria-expanded={scenarioManagerOpen} onClick={() => { setMenuOpen(false); setScenarioManagerOpen(open => !open); }}><ClipboardList size={15} aria-hidden="true" /></button> : null}
     <span className="story-test-extra-controls" inert={!expanded} aria-hidden={!expanded}>
     <button type="button" className="story-test-icon" aria-label={es ? "Detener y cerrar recorrido" : "Stop and close run"} title={es ? "Detener y cerrar recorrido" : "Stop and close run"} disabled={!snapshot.active && !snapshot.debugOpen} onClick={() => { setRevealed(false); setMenuOpen(false); dispatch({ type: "stop" }); }}><Square size={14} aria-hidden="true" /></button>
     {showOptions ? <button ref={menuButton} type="button" className="story-test-icon" aria-label={es ? "Opciones de Play Mode" : "Play Mode options"} title={es ? "Opciones de Play Mode" : "Play Mode options"} aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen(open => !open)}><ChevronDown size={13} aria-hidden="true" /></button> : null}
@@ -407,6 +427,10 @@ export function StoryTestControls({ snapshot, dispatch, locale = snapshot.locale
       <p><button type="button" onClick={() => { dispatch({ type: "debug", open: true }); closeMenu(); }}><Bug size={13} aria-hidden="true" /> {es ? "Debug y escenarios" : "Debug and scenarios"}</button></p>
       <small>{es ? "El recorrido avanza con Continuar, respuestas y acciones." : "Advance using Continue, responses and actions."}</small>
     </div> : null}
+    {showScenarioManager && scenarioManagerOpen ? <section className="story-test-scenario-manager" role="dialog" aria-modal="false" aria-label={es ? "Gestionar escenarios" : "Manage scenarios"}>
+      <header><strong>{es ? "Gestionar escenarios" : "Manage scenarios"}</strong><button type="button" className="story-test-icon" aria-label={es ? "Cerrar gestión de escenarios" : "Close scenario manager"} onClick={() => setScenarioManagerOpen(false)}><X size={14} aria-hidden="true" /></button></header>
+      <div className="story-test-scenario-manager-content"><StoryTestPlaybackSettings snapshot={snapshot} dispatch={dispatch} locale={locale} /></div>
+    </section> : null}
   </div>;
 }
 

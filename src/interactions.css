@@ -36,6 +36,33 @@
 .interaction-opposed-rivals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: start; gap: 10px; min-width: 0; }
 .interaction-opposed-rival-card { min-width: 0; padding: 10px; border: 1px solid var(--wn-border, #30333f); border-radius: 8px; }
 .interaction-add-rival { justify-self: start; }
+.interaction-rival-cards { display: grid; gap: 8px; min-width: 0; }
+.interaction-rival-card { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 5px; min-width: 0; padding: 8px; border: 1px solid var(--wn-border, #30333f); border-radius: 9px; background: color-mix(in srgb, var(--wn-panel-2, #191c25) 70%, transparent); }
+.interactions-editor .interaction-rival-card button.interaction-rival-card-main { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; padding: 4px; border: 0; background: transparent; text-align: start; }
+.interaction-rival-card-main:hover .interaction-rival-card-edit { color: var(--wn-accent, #f6c66a); }
+.interaction-rival-card-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.interaction-rival-card-identity > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.interaction-rival-card-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interaction-rival-card-identity small,.interaction-rival-card-summary small,.interaction-rival-legacy-note { color: var(--wn-muted, #a4a7b2); }
+.interaction-rival-card-avatar { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; overflow: hidden; border: 1px solid var(--wn-border, #30333f); border-radius: 50%; background: var(--wn-panel, #12141b); color: var(--wn-accent, #f6c66a); }
+.interaction-rival-card-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.interaction-rival-card-summary { display: grid; gap: 3px; min-width: 0; }
+.interaction-rival-card-summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.interaction-rival-card-summary .interaction-rival-legacy-note { color: var(--wn-accent, #f6c66a); }
+.interactions-editor button.interaction-rival-card-edit,.interactions-editor button.interaction-rival-card-remove { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px; border-color: transparent; background: transparent; color: var(--wn-muted, #a4a7b2); }
+.interaction-rival-card-edit { justify-self: start; }
+.interaction-rival-editor { display: grid; gap: 10px; min-width: 0; padding: 10px; border: 1px solid var(--wn-border, #30333f); border-radius: 9px; background: color-mix(in srgb, var(--wn-panel-2, #191c25) 58%, transparent); }
+.interactions-editor button.interaction-rival-back { display: inline-flex; align-items: center; justify-self: start; gap: 6px; padding-inline: 8px; }
+.interaction-rival-editor-heading { display: grid; gap: 7px; padding-bottom: 9px; border-bottom: 1px solid var(--wn-border, #30333f); }
+.interaction-rival-editor-heading > span { color: var(--wn-muted, #a4a7b2); font-size: 12px; }
+.interaction-rival-rules-summary { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--wn-border, #30333f); border-radius: 8px; background: var(--wn-panel, #12141b); }
+.interaction-rival-rules-summary > strong { font-size: 12px; }
+.interaction-rival-rules-summary ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.interaction-rival-rules-summary li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; }
+.interaction-rival-rules-summary li > span { color: var(--wn-accent, #f6c66a); font-weight: 700; font-variant-numeric: tabular-nums; }
+.interaction-rival-rules-summary li > small { grid-column: 2; overflow: hidden; color: var(--wn-muted, #a4a7b2); text-overflow: ellipsis; white-space: nowrap; }
+.interaction-rival-legacy-note { margin: 0; font-size: 11px; }
+.interactions-editor button.interaction-rival-remove { justify-self: start; border-color: color-mix(in srgb, var(--wn-danger, #c45a51) 55%, var(--wn-border, #30333f)); color: var(--wn-danger, #c45a51); }
 .interaction-participant-fields { min-width: 0; }
 @media (max-width: 760px) {
   .interaction-opposed-layout { grid-template-columns: minmax(0, 1fr); }

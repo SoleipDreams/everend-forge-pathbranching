@@ -1,7 +1,8 @@
 import type { AuthoringScenario, BranchingProject, EntityInstance, EntityOwner, LogicSubject, PlayerSimulationState } from './domain.js';
 import { authoringCommand, createAuthoringSession, type AuthoringSession, type AuthoringView, type AuthoringTrace } from './authoringEngine.js';
 import { conditionValueMatchesType, evaluateConditionDetailed, type ConditionEvaluationResult } from './conditionEvaluation.js';
-import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, resolveContextSubject } from './authoringEntities.js';
+import { canOwnInventory, entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, resolveContextSubject, sequenceForStartingPoint } from './authoringEntities.js';
+import { characterInventoryOwnerOptions } from './characterSheets.js';
 import { authoringNodeOptions } from './authoringMutations.js';
 import { conditionDiagnosticMessage, conditionTreeSummary } from './conditionPresentation.js';
 import { findLocalExplorerPropertyByReference, flattenLocalExplorerPropertyTree, locationEntities, propertyIsEntityPresentable } from './explorerSchema.js';
@@ -11,6 +12,7 @@ export type StoryTestKind = 'preview' | 'debug';
 export type StoryTestField = { key: string; id: string; label: string; type: string; value: unknown; options?: { value: string; label: string; group?: string }[] };
 export type StoryTestCopy = { id: string; entityId: string; name: string; inventoryItem: boolean; owner: StoryTestField; properties: StoryTestField[]; states: StoryTestField[]; availableProperties: { id: string; label: string; type: string }[] };
 export type StoryTestTrace = Pick<AuthoringTrace, 'kind' | 'nodeId' | 'id' | 'evaluation'> & { message: string; priority?: number; changes: { label: string; before: unknown; after: unknown }[]; consequences?: string[] };
+export type StoryTestSequenceInventory = { sequenceId: string; name: string; inheritInventoryFromSequenceId?: string; copies: StoryTestCopy[] };
 export type StoryTestSnapshot = {
   version: 1; sessionId: string; sequence: number; projectId?: string; storyName: string; locale: 'en' | 'es'; theme: string;
   active: boolean; paused: boolean; changed: boolean; debugOpen: boolean; debugAttached: boolean; debugFocusRevision: number; status?: AuthoringSession['status'];
@@ -21,6 +23,7 @@ export type StoryTestSnapshot = {
   state: PlayerSimulationState; variables: StoryTestField[]; copies: StoryTestCopy[]; trace: StoryTestTrace[];
   scenarioId: string; scenarios: { id: string; name: string }[]; scenario?: AuthoringScenario;
   scenarioState: PlayerSimulationState; scenarioVariables: StoryTestField[]; scenarioCopies: StoryTestCopy[];
+  sequenceInventories: StoryTestSequenceInventory[];
   nodes: { id: string; label: string }[]; startNodes: { id: string; label: string }[]; entities: { id: string; name: string; inventoryItem: boolean }[];
   selectedNodeId?: string; drafts: Record<string, string>; draftErrors: Record<string, string>; draftEpochs: { run: number; scenario: number };
 };
@@ -191,11 +194,17 @@ export type StoryTestUiCommand =
   | { type: 'debugAttachment'; attached: boolean }
   | { type: 'scenario'; id: string }
   | { type: 'createScenario'; fromRun?: boolean }
+  | { type: 'scenarioUseSequenceInventory' }
   | { type: 'updateScenario'; patch: Partial<AuthoringScenario> }
   | { type: 'editDraft'; key: string; value: string; draftEpoch?: number }
   | { type: 'discardDrafts'; scope: 'run' | 'scenario' }
   | { type: 'scenarioInventoryCopy'; id: string }
   | { type: 'scenarioCopy'; operation: 'add' | 'remove'; id: string }
+  | { type: 'sequenceInventorySource'; sequenceId: string; sourceSequenceId?: string }
+  | { type: 'sequenceInventoryCopy'; sequenceId: string; id: string }
+  | { type: 'sequenceCopy'; sequenceId: string; operation: 'remove'; id: string }
+  | { type: 'sequenceCopyOwner'; sequenceId: string; copyId: string; owner?: EntityOwner }
+  | { type: 'sequenceCopyEquipped'; sequenceId: string; copyId: string; equipped: boolean }
   | { type: 'copyProperty'; scope: 'run' | 'scenario'; copyId: string; propertyId: string; inherit?: boolean }
   | { type: 'locate'; nodeId?: string };
 export type StoryTestRequest = { version: 1; sessionId: string; expectedSequence: number; commandId: string; command: StoryTestUiCommand };
@@ -295,6 +304,14 @@ export class StoryTestController {
       else if (command.type === 'actionContext') { if (command.source !== undefined) this.source = command.source; if (command.target !== undefined) this.target = command.target; }
       else if (command.type === 'pause') this.paused = Boolean(this.session);
       else if (command.type === 'scenario') { this.scenarioId = command.id; this.discard('scenario'); }
+      else if (command.type === 'scenarioUseSequenceInventory') {
+        if (!project) throw new Error(this.es ? 'Abre una historia para probarla.' : 'Open a story to test it.');
+        if (!this.scenario) throw new Error(this.es ? 'Elige un escenario.' : 'Choose a scenario.');
+        const state = structuredClone(this.scenario.state ?? {});
+        state.entityInstances = (state.entityInstances ?? []).filter(copy => !entityCapabilities(project, copy.entityId).inventoryItem);
+        state.inventory = [];
+        this.updateScenario({ state, inventorySequenceId: undefined });
+      }
       else if (!project) throw new Error(this.es ? 'Abre una historia para probarla.' : 'Open a story to test it.');
       else if (command.type === 'play') {
         if (!this.session) this.start(false);
@@ -304,9 +321,11 @@ export class StoryTestController {
       else if (command.type === 'back') { if (this.session) this.session = authoringCommand(this.runProject!, this.session, { type: 'back' }); }
       else if (command.type === 'createScenario') {
         const id = `scenario:${crypto.randomUUID()}`;
-        const state = structuredClone(command.fromRun && this.session ? this.session.state : initialAuthoringState(project));
+        const fromRun = Boolean(command.fromRun && this.session);
+        const state = structuredClone(fromRun ? this.session!.state : initialAuthoringState(project));
+        if (!fromRun) state.entityInstances = (state.entityInstances ?? []).filter(copy => !entityCapabilities(project, copy.entityId).inventoryItem);
         delete state.interactionResults;
-        const scenario: AuthoringScenario = { id, name: `${this.es ? 'Escenario' : 'Scenario'} ${(project.authoringScenarios?.length ?? 0) + 1}`, actor: command.fromRun ? state.context?.actor : this.scenario?.actor, profileId: command.fromRun ? state.context?.profileId : this.scenario?.profileId, state };
+        const scenario: AuthoringScenario = { id, name: `${this.es ? 'Escenario' : 'Scenario'} ${(project.authoringScenarios?.length ?? 0) + 1}`, actor: fromRun ? state.context?.actor : this.scenario?.actor, profileId: fromRun ? state.context?.profileId : this.scenario?.profileId, ...(fromRun ? { inventorySequenceId: sequenceForStartingPoint(project, this.session?.startNodeId) } : {}), state };
         this.commit({ ...project, authoringScenarios: [...(project.authoringScenarios ?? []), scenario] }); this.scenarioId = id; this.debugOpen = true; this.discard('scenario');
       } else if (command.type === 'deleteScenario') { this.commit({ ...project, authoringScenarios: project.authoringScenarios?.filter(s => s.id !== this.scenarioId) }); this.scenarioId = ''; this.discard('scenario'); }
       else if (command.type === 'updateScenario') this.updateScenario(command.patch);
@@ -315,22 +334,31 @@ export class StoryTestController {
         const state = initialAuthoringState(project, this.scenario);
         if (!entityCapabilities(project, command.id).inventoryItem) throw new Error(this.es ? 'La entidad no está habilitada como ítem de inventario.' : 'This entity is not enabled as an inventory item.');
         const actor = this.scenario?.actor ?? state.context?.actor;
-        const actorOwner = actor?.kind === 'entity' && entityCapabilities(project, actor.entityId).container
-          ? { kind: 'entity' as const, entityId: actor.entityId }
+        const actorOwner = actor?.kind === 'entity' && canOwnInventory(project, actor.entityId, actor.variantId ?? 'base')
+          ? { kind: 'entity' as const, entityId: actor.entityId, ...(actor.variantId && actor.variantId !== 'base' ? { variantId: actor.variantId } : {}) }
           : actor?.kind === 'instance' && state.entityInstances?.some(copy => copy.id === actor.instanceId && entityCapabilities(project, copy.entityId).container)
             ? { kind: 'instance' as const, instanceId: actor.instanceId }
             : undefined;
         const profileCandidates = [this.scenario?.profileId, project.activePlayerProfileId, project.playerProfiles?.[0]?.id, 'default'];
         const profileId = profileCandidates.find(id => id === 'default' || project.playerProfiles?.some(profile => profile.id === id)) ?? 'default';
         state.entityInstances = [...(state.entityInstances ?? []), { id: `instance:${crypto.randomUUID()}`, entityId: command.id, properties: {}, states: { equipped: false }, owner: actorOwner ?? { kind: 'profile', profileId } }];
-        this.validateState(state); this.updateScenario({ state });
+        this.validateState(state); this.updateScenario({ state, inventorySequenceId: this.scenarioInventorySequenceId(project) ?? sequenceForStartingPoint(project, this.scenario?.startNodeId) });
       }
       else if (command.type === 'scenarioCopy') {
         const state = initialAuthoringState(project, this.scenario);
         if (command.operation === 'add') { if (!entityDefinition(project, command.id)) throw new Error('Missing entity'); state.entityInstances = [...(state.entityInstances ?? []), { id: `instance:${crypto.randomUUID()}`, entityId: command.id, properties: {}, states: {} }]; }
         else state.entityInstances = state.entityInstances?.filter(c => c.id !== command.id);
-        this.validateState(state); this.updateScenario({ state });
-      } else if (command.type === 'copyProperty') {
+        const nonInventory = (state.entityInstances ?? []).filter(copy => !entityCapabilities(project, copy.entityId).inventoryItem);
+        const inventorySequenceId = this.scenarioInventorySequenceId(project);
+        const legacyInventory = inventorySequenceId ? (state.entityInstances ?? []).filter(copy => entityCapabilities(project, copy.entityId).inventoryItem) : [];
+        state.entityInstances = [...nonInventory, ...legacyInventory];
+        this.validateState(state); this.updateScenario({ state, ...(inventorySequenceId ? { inventorySequenceId } : {}) });
+      } else if (command.type === 'sequenceInventorySource') this.updateSequenceInventorySource(project, command.sequenceId, command.sourceSequenceId);
+      else if (command.type === 'sequenceInventoryCopy') this.addSequenceInventoryCopy(project, command.sequenceId, command.id);
+      else if (command.type === 'sequenceCopy') this.removeSequenceInventoryCopy(project, command.sequenceId, command.id);
+      else if (command.type === 'sequenceCopyOwner') this.updateSequenceInventoryCopy(project, command.sequenceId, command.copyId, { owner: command.owner });
+      else if (command.type === 'sequenceCopyEquipped') this.updateSequenceInventoryCopy(project, command.sequenceId, command.copyId, { equipped: command.equipped });
+      else if (command.type === 'copyProperty') {
         if (command.scope === 'run') this.assertCurrent();
         const definitionProject = command.scope === 'run' ? this.runProject! : project;
         const state = command.scope === 'run' ? this.session?.state : initialAuthoringState(project, this.scenario);
@@ -362,6 +390,12 @@ export class StoryTestController {
   };
   private get es() { return this.options.locale === 'es'; }
   private get scenario() { return this.project?.authoringScenarios?.find(s => s.id === this.scenarioId); }
+  private scenarioInventorySequenceId(project = this.project!) {
+    if (!this.scenario) return undefined;
+    if (this.scenario.inventorySequenceId) return this.scenario.inventorySequenceId;
+    const hasLegacyInventory = Boolean(this.scenario.state?.inventory?.length || (this.scenario.state?.entityInstances ?? []).some(copy => entityCapabilities(project, copy.entityId).inventoryItem));
+    return hasLegacyInventory ? sequenceForStartingPoint(project, this.scenario.startNodeId) : undefined;
+  }
   private isChanged() { return Boolean(this.session && this.runRevision !== this.documentRevision); }
   private self(): LogicSubject | undefined { return this.source ? JSON.parse(this.source) : this.session?.state.context?.actor; }
   private assertCurrent() { if (!this.session) throw new Error(this.es ? 'Inicia un recorrido.' : 'Start a run.'); if (this.isChanged()) throw new Error(this.es ? 'La historia cambió. Reinicia para probar la nueva revisión.' : 'The story changed. Restart to test the new revision.'); }
@@ -385,6 +419,69 @@ export class StoryTestController {
     if (next.actor) this.validateSubject(next.actor, state);
     if (patch.startNodeId && !authoringNodeOptions(this.project!).some(n => n.id === patch.startNodeId) && !this.project!.sequences.some(sequence => `start:${sequence.id}` === patch.startNodeId)) throw new Error(this.es ? 'El punto inicial ya no existe.' : 'The starting point no longer exists.');
     this.commit({ ...this.project!, authoringScenarios: this.project!.authoringScenarios?.map(s => s.id === this.scenarioId ? next : s) });
+  }
+  private sequenceInventoryInstances(project: BranchingProject, sequenceId: string) {
+    return (initialAuthoringState(project, undefined, sequenceId).entityInstances ?? []).filter(copy => entityCapabilities(project, copy.entityId).inventoryItem);
+  }
+  private updateSequenceInventorySource(project: BranchingProject, sequenceId: string, sourceSequenceId?: string) {
+    const sequence = project.sequences.find(item => item.id === sequenceId);
+    if (!sequence) throw new Error(this.es ? 'La secuencia ya no existe.' : 'The sequence no longer exists.');
+    if (sourceSequenceId) {
+      if (sourceSequenceId === sequenceId || !project.sequences.some(item => item.id === sourceSequenceId)) throw new Error(this.es ? 'La secuencia de origen no es válida.' : 'The source sequence is invalid.');
+      let current = project.sequences.find(item => item.id === sourceSequenceId);
+      const seen = new Set([sequenceId]);
+      while (current) {
+        if (seen.has(current.id)) throw new Error(this.es ? 'La herencia del inventario formaría un ciclo.' : 'Inventory inheritance would form a cycle.');
+        seen.add(current.id);
+        current = current.inheritInventoryFromSequenceId ? project.sequences.find(item => item.id === current!.inheritInventoryFromSequenceId) : undefined;
+      }
+      this.commit({ ...project, sequences: project.sequences.map(item => item.id === sequenceId ? { ...item, inheritInventoryFromSequenceId: sourceSequenceId, initialInventory: [] } : item) });
+      return;
+    }
+    const inherited = sequence.inheritInventoryFromSequenceId ? this.sequenceInventoryInstances(project, sequenceId) : sequence.initialInventory ?? [];
+    const copyIds = new Map(inherited.map(copy => [copy.id, `instance:${crypto.randomUUID()}`]));
+    const independent = inherited.map(copy => ({
+      ...structuredClone(copy),
+      id: copyIds.get(copy.id)!,
+      ...(copy.owner?.kind === 'instance' && copyIds.has(copy.owner.instanceId) ? { owner: { kind: 'instance' as const, instanceId: copyIds.get(copy.owner.instanceId)! } } : {}),
+    }));
+    this.commit({ ...project, sequences: project.sequences.map(item => item.id === sequenceId ? { ...item, inheritInventoryFromSequenceId: undefined, initialInventory: independent } : item) });
+  }
+  private addSequenceInventoryCopy(project: BranchingProject, sequenceId: string, entityId: string) {
+    const sequence = project.sequences.find(item => item.id === sequenceId);
+    if (!sequence) throw new Error(this.es ? 'La secuencia ya no existe.' : 'The sequence no longer exists.');
+    if (sequence.inheritInventoryFromSequenceId) throw new Error(this.es ? 'Quita la herencia para editar este inventario.' : 'Remove inheritance to edit this inventory.');
+    if (!entityCapabilities(project, entityId).inventoryItem) throw new Error(this.es ? 'La entidad no está habilitada como ítem de inventario.' : 'This entity is not enabled as an inventory item.');
+    const state = initialAuthoringState(project, undefined, sequenceId);
+    const actor = state.context?.actor;
+    const owner = actor?.kind === 'entity' && canOwnInventory(project, actor.entityId, actor.variantId ?? 'base')
+      ? { kind: 'entity' as const, entityId: actor.entityId, ...(actor.variantId && actor.variantId !== 'base' ? { variantId: actor.variantId } : {}) }
+      : actor?.kind === 'instance' && state.entityInstances?.some(copy => copy.id === actor.instanceId && entityCapabilities(project, copy.entityId).container)
+        ? { kind: 'instance' as const, instanceId: actor.instanceId }
+        : { kind: 'profile' as const, profileId: actor?.kind === 'context' ? state.context?.profileId ?? 'default' : state.context?.profileId ?? project.activePlayerProfileId ?? 'default' };
+    const instances = [...this.sequenceInventoryInstances(project, sequenceId), { id: `instance:${crypto.randomUUID()}`, entityId, properties: {}, states: { equipped: false }, owner }];
+    this.validateState({ entityInstances: instances }, project);
+    this.commit({ ...project, sequences: project.sequences.map(item => item.id === sequenceId ? { ...item, initialInventory: instances } : item) });
+  }
+  private removeSequenceInventoryCopy(project: BranchingProject, sequenceId: string, copyId: string) {
+    const sequence = project.sequences.find(item => item.id === sequenceId);
+    if (!sequence) throw new Error(this.es ? 'La secuencia ya no existe.' : 'The sequence no longer exists.');
+    if (sequence.inheritInventoryFromSequenceId) throw new Error(this.es ? 'Quita la herencia para editar este inventario.' : 'Remove inheritance to edit this inventory.');
+    const instances = this.sequenceInventoryInstances(project, sequenceId).filter(copy => copy.id !== copyId);
+    this.commit({ ...project, sequences: project.sequences.map(item => item.id === sequenceId ? { ...item, initialInventory: instances } : item) });
+  }
+  private updateSequenceInventoryCopy(project: BranchingProject, sequenceId: string, copyId: string, patch: { owner?: EntityOwner; equipped?: boolean }) {
+    const sequence = project.sequences.find(item => item.id === sequenceId);
+    if (!sequence) throw new Error(this.es ? 'La secuencia ya no existe.' : 'The sequence no longer exists.');
+    if (sequence.inheritInventoryFromSequenceId) throw new Error(this.es ? 'Quita la herencia para editar este inventario.' : 'Remove inheritance to edit this inventory.');
+    const instances = this.sequenceInventoryInstances(project, sequenceId).map(copy => copy.id !== copyId ? copy : {
+      ...copy,
+      ...(Object.prototype.hasOwnProperty.call(patch, 'owner') ? { owner: patch.owner } : {}),
+      ...(patch.equipped !== undefined ? { states: { ...copy.states, equipped: patch.equipped } } : {}),
+    });
+    if (!instances.some(copy => copy.id === copyId)) throw new Error(this.es ? 'La copia ya no existe.' : 'The copy no longer exists.');
+    this.validateState({ entityInstances: instances }, project);
+    this.commit({ ...project, sequences: project.sequences.map(item => item.id === sequenceId ? { ...item, initialInventory: instances } : item) });
   }
   private validateSubject(subject: LogicSubject, state: PlayerSimulationState, project = this.project!) {
     if (!subject || typeof subject !== 'object' || Array.isArray(subject)) throw new Error('Invalid subject');
@@ -485,9 +582,13 @@ export class StoryTestController {
     this.validateState(state,project);
     if (scope === 'run') this.session = authoringCommand(project, this.session!, { type: 'setState', state });
     else {
+      const nonInventory = (state.entityInstances ?? []).filter(copy => !entityCapabilities(project, copy.entityId).inventoryItem);
+      const inventorySequenceId = this.scenarioInventorySequenceId(project);
+      const legacyInventory = inventorySequenceId ? (state.entityInstances ?? []).filter(copy => entityCapabilities(project, copy.entityId).inventoryItem) : [];
+      state.entityInstances = [...nonInventory, ...legacyInventory];
       const name = this.drafts['scenario:name'] ?? this.scenario?.name;
       const actor = this.drafts['scenario:actor']; const startNodeId = this.drafts['scenario:start'];
-      const patch: Partial<AuthoringScenario> = { state, ...(name !== undefined ? { name } : {}), ...(actor !== undefined ? { actor: actor ? JSON.parse(actor) : undefined } : {}), ...(startNodeId !== undefined ? { startNodeId: startNodeId || undefined } : {}) };
+      const patch: Partial<AuthoringScenario> = { state, ...(inventorySequenceId ? { inventorySequenceId } : {}), ...(name !== undefined ? { name } : {}), ...(actor !== undefined ? { actor: actor ? JSON.parse(actor) : undefined } : {}), ...(startNodeId !== undefined ? { startNodeId: startNodeId || undefined } : {}) };
       this.updateScenario(patch);
     }
     this.discard(scope);
@@ -496,7 +597,9 @@ export class StoryTestController {
   private copyFields(state: PlayerSimulationState, scope: string, project = this.project): StoryTestCopy[] {
     if (!project) return [];
     const entityIds = [...project.canonRefs.map(e => e.id), ...(project.localExplorerEntities ?? []).map(e => e.id)];
-    const owners = [{ value: JSON.stringify({ kind:'profile',profileId:'default' }),label:this.es?'Protagonista':'Protagonist' }, ...(project.playerProfiles ?? []).filter(p=>p.id!=='default').map(p=>({value:JSON.stringify({kind:'profile',profileId:p.id}),label:p.name})), ...entityIds.filter(id=>entityCapabilities(project,id).container).map(id=>({value:JSON.stringify({kind:'entity',entityId:id}),label:entityDefinition(project,id)?.name ?? id})), ...(state.entityInstances ?? []).filter(c=>entityCapabilities(project,c.entityId).container).map(c=>({value:JSON.stringify({kind:'instance',instanceId:c.id}),label:c.name ?? entityDefinition(project,c.entityId)?.name ?? c.id}))];
+    const characterOwners = characterInventoryOwnerOptions(project, this.es ? 'es' : 'en');
+    const characterIds = new Set(characterOwners.map(option => option.entityId));
+    const owners = [{ value: JSON.stringify({ kind:'profile',profileId:'default' }),label:this.es?'Protagonista':'Protagonist' }, ...(project.playerProfiles ?? []).filter(p=>p.id!=='default').map(p=>({value:JSON.stringify({kind:'profile',profileId:p.id}),label:p.name})), ...characterOwners.map(option=>({value:JSON.stringify(option.owner),label:option.label})), ...entityIds.filter(id=>entityCapabilities(project,id).container&&!characterIds.has(id)).map(id=>({value:JSON.stringify({kind:'entity',entityId:id}),label:entityDefinition(project,id)?.name ?? id})), ...(state.entityInstances ?? []).filter(c=>entityCapabilities(project,c.entityId).container).map(c=>({value:JSON.stringify({kind:'instance',instanceId:c.id}),label:c.name ?? entityDefinition(project,c.entityId)?.name ?? c.id}))];
     return (state.entityInstances ?? []).map(copy => {
       const definition=entityDefinition(project,copy.entityId); const prefix=`${scope}:copy:${copy.id}`;
       const keys=new Set([...Object.keys(definition?.properties ?? {}).filter(k=>!['id','name','type','kind','aliases','tags','status'].includes(k)),...Object.keys(copy.properties ?? {})]);
@@ -554,6 +657,11 @@ export class StoryTestController {
     const locale = this.options.locale ?? 'en';
     const scenarioStartId = this.drafts['scenario:start'] ?? this.scenario?.startNodeId;
     const scenarioSubjects = editingProject ? scenarioActorOptions(editingProject, scenarioStartId, locale) : [];
+    const sequenceInventories: StoryTestSequenceInventory[] = editingProject ? editingProject.sequences.map(sequence => {
+      const sequenceState = initialAuthoringState(editingProject, undefined, sequence.id);
+      return { sequenceId: sequence.id, name: sequence.name, inheritInventoryFromSequenceId: sequence.inheritInventoryFromSequenceId,
+        copies: this.copyFields(sequenceState, `sequence:${sequence.id}`, editingProject).filter(copy => copy.inventoryItem) };
+    }) : [];
     const speakerRef = this.session?.view.speakerRef;
     let speakerPresentation: ReturnType<NonNullable<StoryTestControllerOptions['resolveSpeakerPresentation']>>;
     try {
@@ -581,6 +689,7 @@ export class StoryTestController {
       scenarioId: this.scenarioId, scenarios: (editingProject?.authoringScenarios ?? []).map(s => ({ id: s.id, name: s.name })),
       scenario: this.scenario ? structuredClone(this.scenario) : undefined,
       scenarioState, scenarioVariables: this.variableFields(scenarioState, 'scenario'), scenarioCopies: this.copyFields(scenarioState, 'scenario'),
+      sequenceInventories,
       nodes: (editingProject ? authoringNodeOptions(editingProject) : []).map(n => ({ id: n.id, label: n.label })),
       startNodes: editingProject ? scenarioStartOptions(editingProject, locale) : [], entities,
       selectedNodeId: this.options.selectedNodeId, drafts: { ...this.drafts }, draftErrors: { ...this.draftErrors }, draftEpochs: { ...this.draftEpochs },

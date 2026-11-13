@@ -147,6 +147,11 @@ Verificación (dentro de `npm run verify:core`, o solo con `npm run verify:evpat
 propuestas de canon, galerías, catálogo de traducciones, perfiles/simulación,
 overrides de entidades, copias individuales, acciones, reglas y escenarios.
 Secuencias, eventos, ramas, canvas y YAML de integración siguen separados.
+Cada `sequence.json` puede guardar las copias de inventario inicial de esa
+secuencia. `inheritInventoryFromSequenceId` comparte explícitamente las copias
+iniciales de otra secuencia; sin esa referencia, una secuencia no las recibe.
+Los documentos antiguos mantienen el inventario en su secuencia de entrada y
+los inventarios antiguos de escenarios quedan ligados a su punto de inicio.
 Las sesiones de recorrido, trazas y borradores de interfaz no se serializan.
 Los lectores aceptan 0.2, 0.3 y 0.4; la siguiente escritura segura utiliza 0.5.
 
