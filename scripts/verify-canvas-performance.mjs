@@ -134,6 +134,34 @@ narrativeValidation({ ...project, events: project.events.map(event => ({ ...even
 assert.equal(narrativeCalls, 3, "narrative and connection edits invalidate");
 narrativeValidation({ ...project, variables: { changed: true } });
 assert.equal(narrativeCalls, 4, "logic edits invalidate");
+if (typeof globalThis.gc === "function") {
+  function makeWeaklyCachedSnapshot() {
+    const cache = createNarrativeValidationCache(() => []);
+    let snapshot = { ...project, events: [{ ...project.events[0], text: { format: "plain", content: "x".repeat(2_000_000) } }] };
+    cache(snapshot);
+    const snapshotRef = new WeakRef(snapshot);
+    snapshot = undefined;
+    return { cache, snapshotRef };
+  }
+  const weaklyCachedSnapshot = makeWeaklyCachedSnapshot();
+  weaklyCachedSnapshot.cache(project);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    globalThis.gc();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  assert.equal(weaklyCachedSnapshot.snapshotRef.deref(), undefined, "the validation cache must not retain a previous full event payload snapshot");
+}
+const previousWindow = globalThis.window;
+try {
+  globalThis.window = { __PATHBRANCHING_PERF_CAPTURE__: true };
+  createNarrativeValidationCache(() => [{ code: "fixture" }])(project);
+  const validationSpan = globalThis.window.__PATHBRANCHING_PERF_METRICS__?.spans.find(span => span.name === "narrative.validation");
+  assert.equal(validationSpan?.details?.events, project.events.length, "opt-in validation metrics include the resident event count");
+  assert.equal(validationSpan?.details?.findings, 1, "opt-in validation metrics include the finding count");
+} finally {
+  if (previousWindow === undefined) delete globalThis.window;
+  else globalThis.window = previousWindow;
+}
 let validations = 0;
 const validation = createCanvasValidationCache((nodes, edges) => { validations++; return edges.filter(edge => !nodes.some(node => node.id === edge.target)); });
 const findings = validation(model.nodes, model.edges);
