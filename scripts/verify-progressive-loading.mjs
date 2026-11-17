@@ -240,5 +240,31 @@ await pausedBackgroundLoad;
 assert.equal(new Set(pausedReadCalls.flat()).size, events.length * 2, "resuming should finish all queued background event files");
 pausedLoader.cancel();
 
+let streamedEventCount = 0;
+let streamedPathResolutions = 0;
+const streamedReads = [];
+const iterableEventIds = {
+  *[Symbol.iterator]() {
+    for (const eventId of allEventIds) {
+      streamedEventCount += 1;
+      yield eventId;
+    }
+  },
+};
+const streamingLoader = new ProgressiveStoryEventLoader((eventId) => {
+  streamedPathResolutions += 1;
+  return pathMap.get(eventId);
+}, async (relativePaths) => {
+  streamedReads.push({ enumeratedEvents: streamedEventCount, resolvedPaths: streamedPathResolutions, pathCount: relativePaths.length });
+  return { files: completeFiles.filter((file) => relativePaths.includes(file.relativePath)), errors: [] };
+}, 4, 4);
+assert.equal(streamedPathResolutions, 0, "the path resolver should not create event sidecar paths before an event is requested");
+await streamingLoader.loadRemaining(iterableEventIds);
+assert.equal(streamedEventCount, allEventIds.length, "complete loading should consume an iterable through to the end");
+assert(streamedReads.every((read, index) => read.enumeratedEvents <= (Math.floor(index / 2) + 1) * 8), "complete loading should not enumerate the next queue window until the prior window finishes");
+assert(streamedReads.every((read) => read.resolvedPaths === read.enumeratedEvents), "the path resolver should only build paths for the active request window");
+assert(streamedReads.every((read) => read.pathCount <= 8), "complete loading must keep each file-read batch within its event batch limit");
+streamingLoader.cancel();
+
 assert(sequencePath(storyId, sequenceId).endsWith(`/sequences/sequence-progressive/sequence.json`));
-console.log("Progressive loading: indexed open, viewport windowing, priority batches, pause/resume, hydration order, bounded event eviction, stable-ID reload, and partial-save sidecar safety passed.");
+console.log("Progressive loading: indexed open, viewport windowing, priority batches, pause/resume, bounded complete-load queue windows, hydration order, bounded event eviction, stable-ID reload, and partial-save sidecar safety passed.");

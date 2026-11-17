@@ -577,54 +577,93 @@ fn read_universe_paths(root: PathBuf, relative_paths: Vec<String>) -> Result<Uni
     let _universe_guard = story_storage::lock_universe(&root)?;
     story_storage::recover_locked(&root)?;
     let canonical_root = fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    // Viewport reads contain many small sidecars. A small fixed worker count
+    // overlaps their filesystem latency without creating one thread per file.
+    const MAX_CONCURRENT_UNIVERSE_READS: usize = 4;
     let mut files = Vec::new();
     let mut errors = Vec::new();
-    for relative in relative_paths {
-        let normalized = match normalize_relative_path(&relative) {
-            Ok(path) => path,
-            Err(error) => {
-                errors.push(UniverseReadError { relative_path: relative, message: error });
-                continue;
+    if !relative_paths.is_empty() {
+        let worker_count = MAX_CONCURRENT_UNIVERSE_READS.min(relative_paths.len());
+        let chunk_size = (relative_paths.len() + worker_count - 1) / worker_count;
+        let (mut worker_files, mut worker_errors) = std::thread::scope(|scope| {
+            let workers = relative_paths.chunks(chunk_size).map(|chunk| {
+                let paths = chunk.to_vec();
+                let worker_paths = paths.clone();
+                let root = &root;
+                let canonical_root = &canonical_root;
+                (paths, scope.spawn(move || {
+                    let mut files = Vec::new();
+                    let mut errors = Vec::new();
+                    for relative in worker_paths {
+                        match read_universe_path(root, canonical_root, &relative) {
+                            Ok(file) => files.push(file),
+                            Err(error) => errors.push(error),
+                        }
+                    }
+                    (files, errors)
+                }))
+            }).collect::<Vec<_>>();
+
+            let mut files = Vec::new();
+            let mut errors = Vec::new();
+            for (paths, worker) in workers {
+                match worker.join() {
+                    Ok((mut worker_files, mut worker_errors)) => {
+                        files.append(&mut worker_files);
+                        errors.append(&mut worker_errors);
+                    }
+                    Err(_) => errors.extend(paths.into_iter().map(|relative_path| UniverseReadError {
+                        relative_path,
+                        message: "A worker failed while reading universe files.".to_string(),
+                    })),
+                }
             }
-        };
-        let path = root.join(normalized);
-        if !should_read_universe_file(&path) {
-            errors.push(UniverseReadError {
-                relative_path: relative,
-                message: "Universe path is not a supported text file.".to_string(),
-            });
-            continue;
-        }
-        let canonical_path = match fs::canonicalize(&path) {
-            Ok(path) => path,
-            Err(error) => {
-                errors.push(UniverseReadError { relative_path: relative, message: error.to_string() });
-                continue;
-            }
-        };
-        if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
-            errors.push(UniverseReadError {
-                relative_path: relative,
-                message: "Universe file is outside the selected folder or is not a file.".to_string(),
-            });
-            continue;
-        }
-        match fs::read_to_string(&canonical_path) {
-            Ok(content) => files.push(UniverseFilePayload {
-                relative_path: relative,
-                absolute_path: canonical_path.to_string_lossy().to_string(),
-                content,
-                modified_ms: modified_ms(&canonical_path),
-            }),
-            Err(error) => errors.push(UniverseReadError { relative_path: relative, message: error.to_string() }),
-        }
+            (files, errors)
+        });
+        files.append(&mut worker_files);
+        errors.append(&mut worker_errors);
     }
     files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    errors.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(UniverseReadResult {
         root_path: root.to_string_lossy().to_string(),
         files,
         directories: Vec::new(),
         errors,
+    })
+}
+
+fn read_universe_path(root: &Path, canonical_root: &Path, relative: &str) -> Result<UniverseFilePayload, UniverseReadError> {
+    let normalized = normalize_relative_path(relative).map_err(|message| UniverseReadError {
+        relative_path: relative.to_string(),
+        message,
+    })?;
+    let path = root.join(normalized);
+    if !should_read_universe_file(&path) {
+        return Err(UniverseReadError {
+            relative_path: relative.to_string(),
+            message: "Universe path is not a supported text file.".to_string(),
+        });
+    }
+    let canonical_path = fs::canonicalize(&path).map_err(|error| UniverseReadError {
+        relative_path: relative.to_string(),
+        message: error.to_string(),
+    })?;
+    if !canonical_path.starts_with(canonical_root) || !canonical_path.is_file() {
+        return Err(UniverseReadError {
+            relative_path: relative.to_string(),
+            message: "Universe file is outside the selected folder or is not a file.".to_string(),
+        });
+    }
+    let content = fs::read_to_string(&canonical_path).map_err(|error| UniverseReadError {
+        relative_path: relative.to_string(),
+        message: error.to_string(),
+    })?;
+    Ok(UniverseFilePayload {
+        relative_path: relative.to_string(),
+        absolute_path: canonical_path.to_string_lossy().to_string(),
+        content,
+        modified_ms: modified_ms(&canonical_path),
     })
 }
 

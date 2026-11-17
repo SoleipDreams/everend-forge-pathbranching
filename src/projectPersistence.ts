@@ -32,6 +32,7 @@ import {
 } from "./utils/browserUniverse.js";
 import { createDemoBrowserUniverse } from "./utils/demoBrowserUniverse.js";
 import { ProgressiveStoryEventLoader, type StoryEventFileBatch, type StoryEventFileReadError } from "./progressiveStoryLoader.js";
+import { measureProgressivePerformance, measureProgressivePerformanceAsync } from "./progressivePerformance.js";
 
 export { normalizeProject, parseProject, projectFileName, serializeProject } from "./projectSerialization.js";
 
@@ -156,13 +157,13 @@ export function mergeProgressiveEventBatch(
   options: { mode?: "viewport" | "complete" } = {},
 ): { workspace: PathBranchingWorkspace; project: BranchingProject } {
   if (!workspace.activeStory) return { workspace, project: workspace.activeProject };
-  const hydrated = hydratePathBranchingEvents(
+  const hydrated = measureProgressivePerformance("event.batch.hydrate", () => hydratePathBranchingEvents(
     workspace.activeProject,
-    workspace.activeStory,
+    workspace.activeStory!,
     workspace.storageVersion,
     batch.files,
     batch.eventIds,
-  );
+  ), (result) => ({ requestedEvents: batch.eventIds.length, loadedEvents: result.loadedEventIds.length }));
   const readWarnings = batch.errors.map((error) => `Incomplete story: could not read ${error.relativePath}: ${error.message}`);
   const addedWarnings = [...hydrated.warnings, ...readWarnings];
   const loadWarnings = [...(workspace.loadWarnings ?? []), ...addedWarnings];
@@ -288,22 +289,26 @@ function omitEventSidecars(index: UniverseIndexResult): UniverseIndexResult {
 }
 
 async function readUniverseIndex(path: string, includeEventSidecars = false): Promise<UniverseIndexResult> {
-  const browserUniverse = currentBrowserUniverse(path);
-  if (browserUniverse) {
-    const index = await indexBrowserUniverse(browserUniverse);
+  return measureProgressivePerformanceAsync("universe.index.read", async () => {
+    const browserUniverse = currentBrowserUniverse(path);
+    if (browserUniverse) {
+      const index = await indexBrowserUniverse(browserUniverse);
+      return includeEventSidecars ? index : omitEventSidecars(index);
+    }
+    assertDesktopRuntime("Indexing a universe");
+    const index = await invoke<UniverseIndexResult>("read_universe_index", { path, includeEventSidecars });
     return includeEventSidecars ? index : omitEventSidecars(index);
-  }
-  assertDesktopRuntime("Indexing a universe");
-  const index = await invoke<UniverseIndexResult>("read_universe_index", { path, includeEventSidecars });
-  return includeEventSidecars ? index : omitEventSidecars(index);
+  }, (index) => ({ indexedFiles: index.files.length, indexedDirectories: index.directories.length, errors: index.errors.length }));
 }
 
 async function readUniverseFileBatch(path: string, relativePaths: readonly string[]): Promise<{ files: UniverseReadResult["files"]; errors: StoryEventFileReadError[] }> {
-  const browserUniverse = currentBrowserUniverse(path);
-  if (browserUniverse) return readBrowserUniverseFiles(browserUniverse, relativePaths);
-  assertDesktopRuntime("Reading universe files");
-  const result = await invoke<UniverseReadResult>("read_universe_files", { path, relativePaths: [...relativePaths] });
-  return { files: result.files, errors: result.errors };
+  return measureProgressivePerformanceAsync("universe.files.read", async () => {
+    const browserUniverse = currentBrowserUniverse(path);
+    if (browserUniverse) return readBrowserUniverseFiles(browserUniverse, relativePaths);
+    assertDesktopRuntime("Reading universe files");
+    const result = await invoke<UniverseReadResult>("read_universe_files", { path, relativePaths: [...relativePaths] });
+    return { files: result.files, errors: result.errors };
+  }, (result) => ({ requestedFiles: relativePaths.length, loadedFiles: result.files.length, errors: result.errors.length }));
 }
 
 async function openIndexedUniverse(
@@ -311,23 +316,36 @@ async function openIndexedUniverse(
   index: UniverseIndexResult,
   activeStoryId?: string,
 ): Promise<OpenedUniverse> {
-  const basePaths = index.files.filter((file) => !isEventSidecarPath(file.relativePath)).map((file) => file.relativePath);
-  const baseRead = await readUniverseFileBatch(path, basePaths);
+  const basePaths = measureProgressivePerformance("universe.baseFiles.plan", () =>
+    index.files.filter((file) => !isEventSidecarPath(file.relativePath)).map((file) => file.relativePath),
+  (result) => ({ requestedFiles: result.length }));
+  const baseRead = await measureProgressivePerformanceAsync("universe.baseFiles.read", () => readUniverseFileBatch(path, basePaths),
+    (result) => ({ requestedFiles: basePaths.length, loadedFiles: result.files.length, errors: result.errors.length }));
   const errors = [...index.errors, ...baseRead.errors];
-  const workspace = workspaceFromIndexedFiles(baseRead.files, index.files, errors, activeStoryId, true);
+  const workspace = measureProgressivePerformance("universe.workspace.parse", () =>
+    workspaceFromIndexedFiles(baseRead.files, index.files, errors, activeStoryId, true),
+  (result) => ({ indexedFiles: index.files.length, baseFiles: baseRead.files.length, events: result.eventLoad?.totalEvents ?? result.activeProject.events.length }));
   const activeStory = workspace.activeStory;
-  const filePathsByEventId = new Map<string, string[]>();
-  if (activeStory && !activeStory.path.endsWith(".pathbranching.json")) {
-    for (const sequence of workspace.activeProject.sequences) {
-      for (const eventId of sequence.eventIds) {
-        const paths = [eventPath(activeStory.id, sequence.id, eventId), eventEvpathPath(activeStory.id, sequence.id, eventId)];
-        if (workspace.eventLoad?.pendingEventIds.has(eventId)) filePathsByEventId.set(eventId, paths);
+  const sequenceIdByEventId = measureProgressivePerformance("universe.eventSequenceIds.index", () => {
+    const sequenceIds = new Map<string, string>();
+    if (activeStory && !activeStory.path.endsWith(".pathbranching.json")) {
+      for (const sequence of workspace.activeProject.sequences) {
+        for (const eventId of sequence.eventIds) {
+          if (!workspace.eventLoad?.pendingEventIds.has(eventId)) continue;
+          sequenceIds.set(eventId, sequence.id);
+        }
       }
     }
-  }
-  const eventLoader = filePathsByEventId.size
+    return sequenceIds;
+  }, (result) => ({ eventIds: result.size }));
+  const eventLoader = sequenceIdByEventId.size
     ? new ProgressiveStoryEventLoader(
-        filePathsByEventId,
+        (eventId) => {
+          const sequenceId = sequenceIdByEventId.get(eventId);
+          return activeStory && sequenceId
+            ? [eventPath(activeStory.id, sequenceId, eventId), eventEvpathPath(activeStory.id, sequenceId, eventId)]
+            : undefined;
+        },
         async (relativePaths) => {
           const result = await readUniverseFileBatch(path, relativePaths);
           return workspace.storageVersion === STORAGE_VERSION

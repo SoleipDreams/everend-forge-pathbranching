@@ -1,4 +1,5 @@
 import type { UniverseFile } from "./pathBranchingWorkspace.js";
+import { measureProgressivePerformanceAsync } from "./progressivePerformance.js";
 
 export type StoryEventFileReadError = {
   relativePath: string;
@@ -16,6 +17,9 @@ export type StoryEventFileLoadResult = {
   files: UniverseFile[];
   errors: StoryEventFileReadError[];
 };
+
+export type StoryEventFilePathResolver = ReadonlyMap<string, readonly string[]>
+  | ((eventId: string) => readonly string[] | undefined);
 
 type QueuedEvent = {
   eventId: string;
@@ -37,7 +41,7 @@ export class ProgressiveStoryEventLoader {
   private backgroundPaused = false;
 
   constructor(
-    private readonly filePathsByEventId: ReadonlyMap<string, readonly string[]>,
+    private readonly filePathsByEventId: StoryEventFilePathResolver,
     private readonly readFiles: (relativePaths: readonly string[]) => Promise<{ files: UniverseFile[]; errors: StoryEventFileReadError[] }>,
     private readonly batchSize = 32,
     private readonly backgroundBatchSize = batchSize,
@@ -63,9 +67,12 @@ export class ProgressiveStoryEventLoader {
 
       let resolve!: (result: StoryEventFileLoadResult) => void;
       const promise = new Promise<StoryEventFileLoadResult>((complete) => { resolve = complete; });
+      const relativePaths = typeof this.filePathsByEventId === "function"
+        ? this.filePathsByEventId(eventId)
+        : this.filePathsByEventId.get(eventId);
       const record: QueuedEvent = {
         eventId,
-        relativePaths: [...(this.filePathsByEventId.get(eventId) ?? [])],
+        relativePaths: [...(relativePaths ?? [])],
         state: "queued",
         priority,
         promise,
@@ -79,9 +86,24 @@ export class ProgressiveStoryEventLoader {
     return Promise.all(results);
   }
 
-  async loadRemaining(eventIds: readonly string[], options: { resumeBackground?: boolean } = {}): Promise<void> {
+  async loadRemaining(eventIds: Iterable<string>, options: { resumeBackground?: boolean } = {}): Promise<void> {
     if (options.resumeBackground) this.resumeBackground();
-    await this.request(eventIds, "background");
+    const queueWindowSize = Math.max(1, this.backgroundBatchSize * 2);
+    let queueWindow: string[] = [];
+    for (const eventId of eventIds) {
+      if (this.cancelled) return;
+      queueWindow.push(eventId);
+      if (queueWindow.length < queueWindowSize) continue;
+      const batch = queueWindow;
+      queueWindow = [];
+      await measureProgressivePerformanceAsync("events.complete.queueWindow", () => this.request(batch, "background"),
+        (results) => ({ queuedEvents: batch.length, completedEvents: results.length }));
+    }
+    if (queueWindow.length && !this.cancelled) {
+      const batch = queueWindow;
+      await measureProgressivePerformanceAsync("events.complete.queueWindow", () => this.request(batch, "background"),
+        (results) => ({ queuedEvents: batch.length, completedEvents: results.length }));
+    }
   }
 
   pauseBackground(): void {

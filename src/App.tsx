@@ -305,6 +305,7 @@ import {
 import { UNKNOWN_SPEAKER_REF, speakerLabel } from "./speakerRoles.js";
 import { automaticNarrativeName } from "./narrativeNaming.js";
 import * as mutations from "./projectMutations.js";
+import { measureProgressivePerformance, measureProgressivePerformanceAsync, recordProgressivePerformance } from "./progressivePerformance.js";
 import {
   exportRuntimeDialog,
   normalizeProject,
@@ -11174,6 +11175,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const activeLoadStoryIdRef = useRef<string | undefined>(undefined);
   const backgroundInteractionActiveRef = useRef(false);
   const canvasEventWindowRef = useRef<ReadonlySet<string> | undefined>(undefined);
+  const firstViewportRenderMeasuredRef = useRef(false);
   const eventRecencyRef = useRef<string[]>([]);
   const dirtyEventIdsRef = useRef<Set<string>>(new Set());
   const historyEventIdsRef = useRef<Set<string>>(new Set());
@@ -11400,7 +11402,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         residentEventIds,
       );
       const normalizedScope = activeCanvasScope(normalizedProject);
-      const model = buildStoryCanvasModel(normalizedProject, {
+      const model = measureProgressivePerformance("canvas.model.rebuild", () => buildStoryCanvasModel(normalizedProject, {
         nodeColors: settingsRef.current.nodeColors,
         scope: normalizedScope,
         gridSize: settingsRef.current.canvasBackground.gridSize,
@@ -11409,7 +11411,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         interfaceLocale: uiLocaleRef.current,
         eventWindowIds: canvasEventWindowRef.current,
         pendingEventIds: nextWorkspace?.eventLoad?.pendingEventIds,
-      });
+      }), (result) => ({ nodes: result.nodes.length, edges: result.edges.length, residentEvents: normalizedProject.events.length }));
+      const firstViewportRenderStartedAt = !firstViewportRenderMeasuredRef.current && model.nodes.some((node) => node.data.kind === "event")
+        ? performance.now()
+        : undefined;
+      if (firstViewportRenderStartedAt !== undefined) firstViewportRenderMeasuredRef.current = true;
       if (options.dirty || options.revision) {
         projectRevisionRef.current += 1;
       }
@@ -11437,6 +11443,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setNodes(model.nodes);
       setEdges(model.edges);
       setFiles(model.files);
+      if (firstViewportRenderStartedAt !== undefined) {
+        const renderDetails = { nodes: model.nodes.length, edges: model.edges.length, residentEvents: normalizedProject.events.length };
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() =>
+          recordProgressivePerformance("canvas.firstViewport.render", firstViewportRenderStartedAt, renderDetails),
+        ));
+      }
       setFileState((current) => {
         const nextState = {
           path: options.path ?? current.path,
@@ -11497,7 +11509,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     const eventLoad = currentWorkspace?.eventLoad;
     if (!currentWorkspace || !eventLoad) return;
     const pendingEventIds = eventLoad.pendingEventIds;
-    const requested = [...eventWindowIds].filter((id) => pendingEventIds.has(id));
+    const requested = measureProgressivePerformance("events.viewport.requestPlan", () =>
+      [...eventWindowIds].filter((id) => pendingEventIds.has(id)),
+    (result) => ({ viewportEvents: eventWindowIds.size, pendingEvents: pendingEventIds.size, requestedEvents: result.length }));
     if (requested.length) {
       const loadingWorkspace = {
         ...currentWorkspace,
@@ -11528,9 +11542,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     }
     if (eventLoad.pendingEventIds.size === 0) return true;
 
-    const pendingEventIds = [...eventLoad.pendingEventIds];
     const loader = eventLoaderRef.current;
-    if (pendingEventIds.length && loader) {
+    if (eventLoad.pendingEventIds.size && loader) {
       fullHydrationPinnedRef.current = true;
       const loadingWorkspace = {
         ...workspaceRef.current!,
@@ -11538,7 +11551,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       };
       workspaceRef.current = loadingWorkspace;
       setWorkspace(loadingWorkspace);
-      void loader.loadRemaining(pendingEventIds, { resumeBackground: true });
+      void measureProgressivePerformanceAsync("events.complete.loadRemaining", () =>
+        loader.loadRemaining(eventLoad.pendingEventIds, { resumeBackground: true }),
+        () => ({ totalEvents: eventLoad.totalEvents, pendingEvents: eventLoad.pendingEventIds.size }),
+      );
       setMessage(uiLocaleRef.current === "es"
         ? "Cargando los eventos restantes antes de completar la operación…"
         : "Loading the remaining events before completing this operation…");
@@ -11568,6 +11584,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       pendingEventFileCountRef.current = 0;
       activeLoadStoryIdRef.current = nextWorkspace.activeProject.storyId;
       eventRecencyRef.current = nextWorkspace.activeProject.events.map((event) => event.id);
+      firstViewportRenderMeasuredRef.current = false;
       dirtyEventIdsRef.current = new Set();
       historyEventIdsRef.current = new Set();
       inspectorEventIdsRef.current = new Set();
@@ -11580,19 +11597,19 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       const restoredLayerMode: CanvasLayerMode = savedSession.canvasLayerMode ??
         (settingsRef.current.authoringDisplay.logicMode ? "logic" : "visual");
       canvasLayerModeRef.current = restoredLayerMode;
-      const activeProject = normalizeProject({
+      const activeProject = measureProgressivePerformance("workspace.project.normalize.initial", () => normalizeProject({
         ...nextWorkspace.activeProject,
         canonPropertyDescriptors: canonicalPropertyDescriptors(nextWorkspace.canonIndex.propertiesConfig),
         universeRootPath: universePath,
       }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad && (
         nextWorkspace.eventLoad.pendingEventIds.size || nextWorkspace.eventLoad.status === "incomplete"
-      )) });
+      )) }), (result) => ({ events: result.events.length, sequences: result.sequences.length }));
       setPendingRecovery(readAuthoringRecovery(universePath, activeProject.storyId ?? ""));
       const restoredScope =
         savedSession.activeScope ??
         activeProject.canvas?.activeScope ??
         activeCanvasScope(activeProject);
-      const activeProjectWithScope = normalizeProject({
+      const activeProjectWithScope = measureProgressivePerformance("workspace.project.normalize.scope", () => normalizeProject({
         ...activeProject,
         canvas: {
           ...activeProject.canvas,
@@ -11604,9 +11621,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         },
       }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad && (
         nextWorkspace.eventLoad.pendingEventIds.size || nextWorkspace.eventLoad.status === "incomplete"
-      )) });
+      )) }), (result) => ({ events: result.events.length, sequences: result.sequences.length }));
       const normalizedScope = activeCanvasScope(activeProjectWithScope);
-      const model = buildStoryCanvasModel(activeProjectWithScope, {
+      const model = measureProgressivePerformance("canvas.model.initial", () => buildStoryCanvasModel(activeProjectWithScope, {
         nodeColors: settingsRef.current.nodeColors,
         scope: normalizedScope,
         gridSize: settingsRef.current.canvasBackground.gridSize,
@@ -11615,7 +11632,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         interfaceLocale: uiLocaleRef.current,
         eventWindowIds: canvasEventWindowRef.current,
         pendingEventIds: nextWorkspace.eventLoad?.pendingEventIds,
-      });
+      }), (result) => ({ nodes: result.nodes.length, edges: result.edges.length, residentEvents: activeProjectWithScope.events.length }));
       workspaceRef.current = nextWorkspace;
       projectRef.current = activeProjectWithScope;
       projectRevisionRef.current = 0;
@@ -11642,10 +11659,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             files: queuedBatches.flatMap((queued) => queued.files),
             errors: queuedBatches.flatMap((queued) => queued.errors),
           };
-          const merged = mergeProgressiveEventBatch({
+          const merged = measureProgressivePerformance("event.batch.merge", () => mergeProgressiveEventBatch({
             ...currentWorkspace,
             activeProject: currentProject ?? currentWorkspace.activeProject,
-          }, mergedBatch, { mode: fullHydrationPinnedRef.current ? "complete" : "viewport" });
+          }, mergedBatch, { mode: fullHydrationPinnedRef.current ? "complete" : "viewport" }),
+          (result) => ({ events: mergedBatch.eventIds.length, residentEvents: result.project.events.length, pendingEvents: result.workspace.eventLoad?.pendingEventIds.size ?? 0 }));
           const residentIds = new Set(merged.project.events.map((event) => event.id));
           eventRecencyRef.current = touchResidentEventIds(eventRecencyRef.current, mergedBatch.eventIds, residentIds);
           workspaceRef.current = merged.workspace;
