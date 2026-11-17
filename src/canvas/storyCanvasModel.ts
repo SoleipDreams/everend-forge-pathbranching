@@ -181,6 +181,65 @@ export type StoryCanvasModelOptions = {
 
 export type StoryCanvasBounds = { x: number; y: number; width: number; height: number };
 
+type SequenceEventSpatialEntry = { id: string; order: number; x: number; y: number; width: number; height: number };
+type SequenceEventSpatialIndex = { byY: SequenceEventSpatialEntry[] };
+type CanvasAuthoringNodeMap = NonNullable<BranchingProject["canvas"]>["nodes"];
+type CachedSequenceEventSpatialIndex = {
+  scopedNodes: CanvasAuthoringNodeMap;
+  globalNodes: CanvasAuthoringNodeMap;
+  index: SequenceEventSpatialIndex;
+};
+
+const sequenceEventSpatialIndexes = new WeakMap<readonly string[], CachedSequenceEventSpatialIndex[]>();
+
+function sequenceEventSpatialIndex(
+  project: BranchingProject,
+  sequence: BranchingProject["sequences"][number],
+  scope: CanvasScope | undefined,
+): SequenceEventSpatialIndex {
+  const scopedNodes = scope ? project.canvas?.scopes?.[canvasScopeKey(scope)]?.nodes : undefined;
+  const globalNodes = project.canvas?.nodes;
+  const cached = sequenceEventSpatialIndexes.get(sequence.eventIds)?.find((entry) =>
+    entry.scopedNodes === scopedNodes && entry.globalNodes === globalNodes,
+  );
+  if (cached) return cached.index;
+
+  const byY = sequence.eventIds.map((eventId, order): SequenceEventSpatialEntry => {
+    const sequenceEntry = sequence.entryEventId === eventId;
+    const fallback = sequenceEntry ? { x: 320, y: 270 } : { x: 360, y: 80 + order * 220 };
+    const position = scopedNodes?.[eventId]?.position ?? globalNodes?.[eventId]?.position ?? fallback;
+    return { id: eventId, order, x: position.x, y: position.y, width: 460, height: 220 };
+  }).sort((left, right) => left.y - right.y || left.order - right.order);
+  const index = { byY };
+  const entries = sequenceEventSpatialIndexes.get(sequence.eventIds) ?? [];
+  entries.push({ scopedNodes, globalNodes, index });
+  if (entries.length > 4) entries.shift();
+  sequenceEventSpatialIndexes.set(sequence.eventIds, entries);
+  return index;
+}
+
+function lowerBoundEventY(entries: readonly SequenceEventSpatialEntry[], y: number): number {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (entries[middle].y < y) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function upperBoundEventY(entries: readonly SequenceEventSpatialEntry[], y: number): number {
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (entries[middle].y <= y) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
 /** Returns sequence events intersecting a flow-coordinate viewport plus one viewport of prefetch. */
 export function sequenceEventIdsInBounds(
   project: BranchingProject,
@@ -193,21 +252,19 @@ export function sequenceEventIdsInBounds(
     ? project.sequences.find((candidate) => candidate.id === scope.id) ?? activeSequence(project)
     : activeSequence(project);
   if (!sequence) return [];
-  const scopeNodes = scope ? project.canvas?.scopes?.[canvasScopeKey(scope)]?.nodes : undefined;
   const marginX = Math.max(0, bounds.width * overscan);
   const marginY = Math.max(0, bounds.height * overscan);
   const left = bounds.x - marginX;
   const top = bounds.y - marginY;
   const right = bounds.x + bounds.width + marginX;
   const bottom = bounds.y + bounds.height + marginY;
-  return sequence.eventIds.filter((eventId, index) => {
-    const sequenceEntry = sequence.entryEventId === eventId;
-    const fallback = sequenceEntry ? { x: 320, y: 270 } : { x: 360, y: 80 + index * 220 };
-    const position = scopeNodes?.[eventId]?.position ?? project.canvas?.nodes?.[eventId]?.position ?? fallback;
-    const width = 460;
-    const height = 220;
-    return position.x <= right && position.x + width >= left && position.y <= bottom && position.y + height >= top;
-  });
+  const index = sequenceEventSpatialIndex(project, sequence, scope);
+  const start = lowerBoundEventY(index.byY, top - 220);
+  const end = upperBoundEventY(index.byY, bottom);
+  return index.byY.slice(start, end)
+    .filter((entry) => entry.x <= right && entry.x + entry.width >= left && entry.y + entry.height >= top)
+    .sort((left, right) => left.order - right.order)
+    .map((entry) => entry.id);
 }
 
 function hashString(value: string) {

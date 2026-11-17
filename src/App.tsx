@@ -313,6 +313,7 @@ import {
   openUniversePath,
   openUniverseStory,
   mergeProgressiveEventBatch,
+  evictProgressiveEventBatch,
   projectFileName,
   revealUniverseFolder,
   exportTextDialog,
@@ -327,6 +328,8 @@ import {
 import type { ProgressiveStoryEventLoader, StoryEventFileBatch } from "./progressiveStoryLoader.js";
 import { DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE } from "./projectSerialization.js";
 import {
+  eventEvpathPath,
+  eventPath,
   workingCopyPathForCanonRef,
   type PathBranchingWorkspace,
   type UniverseProfile,
@@ -9570,7 +9573,7 @@ function StoryCanvas({
     if (!hasFitNodes || (!scopeChanged && !nodesBecameAvailable)) {
       return;
     }
-    if (eventLoad && eventLoad.status !== "ready" && activeScope?.kind === "sequence") {
+    if (eventLoad && (eventLoad.status !== "ready" || eventLoad.pendingEventIds.size > 0) && activeScope?.kind === "sequence") {
       // Keep the persisted sequence viewport during progressive hydration.
       // Fitting the partial set would replace it as each batch changes the graph.
       fittedCanvasRef.current = {
@@ -9597,7 +9600,7 @@ function StoryCanvas({
         duration: 0,
       });
     });
-  }, [activeScope, canvasNodeIdSignature, canvasProjectKey, canvasScopeKeyValue, eventLoad?.status, graph.nodes, reactFlowInstance]);
+  }, [activeScope, canvasNodeIdSignature, canvasProjectKey, canvasScopeKeyValue, eventLoad?.pendingEventIds.size, eventLoad?.status, graph.nodes, reactFlowInstance]);
 
   const previousCanvasNodeIdsRef = useRef<{ scopeKey: string; ids: Set<string>; loadedEvents?: number } | undefined>(undefined);
   useEffect(() => {
@@ -10115,7 +10118,7 @@ function StoryCanvas({
       </div>
       <div className="pb-canvas-locale-tools">
       <div className="inspector-toolbar-host" ref={setInspectorToolbarHost} />
-      <CanvasFindingsButton findings={findings} project={project} complete={!eventLoad || eventLoad.status === "ready"} onEnsureComplete={onEnsureCompleteStoryEvents} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
+      <CanvasFindingsButton findings={findings} project={project} complete={!eventLoad || (eventLoad.status !== "incomplete" && eventLoad.pendingEventIds.size === 0)} onEnsureComplete={onEnsureCompleteStoryEvents} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
       <div className="canvas-locale-control">
         <button
           type="button"
@@ -10149,6 +10152,10 @@ function StoryCanvas({
       <ReactFlowProvider>
         <ReactFlow
           data-onboarding-target="pathbranching.canvas"
+          data-event-resident-count={project.events.length}
+          data-event-pending-count={eventLoad?.pendingEventIds.size ?? 0}
+          data-event-load-status={eventLoad?.status ?? "ready"}
+          data-event-load-mode={eventLoad?.mode ?? "complete"}
           nodes={graph.nodes}
           edges={graph.edges}
           onlyRenderVisibleElements={graph.nodes.length >= LARGE_CANVAS_NODE_THRESHOLD}
@@ -10275,15 +10282,19 @@ function StoryCanvas({
           {eventLoad && eventLoad.status !== "ready" ? (
             <Panel position="top-right" className={`pb-event-loading-progress${eventLoad.status === "incomplete" ? " incomplete" : ""}`}>
               <span role="status" aria-live="polite">
-                {eventLoad.pendingEventIds.size > 0
+                {eventLoad.status === "incomplete"
                   ? canvasUiLocale === "es"
-                    ? `Cargando eventos · ${eventLoad.loadedEvents.toLocaleString()} de ${eventLoad.totalEvents.toLocaleString()}`
-                    : `Loading events · ${eventLoad.loadedEvents.toLocaleString()} of ${eventLoad.totalEvents.toLocaleString()}`
-                  : canvasUiLocale === "es"
                     ? `Carga incompleta · ${eventLoad.failedEvents} eventos con errores`
-                    : `Incomplete load · ${eventLoad.failedEvents} event errors`}
+                    : `Incomplete load · ${eventLoad.failedEvents} event errors`
+                  : eventLoad.mode === "complete"
+                    ? canvasUiLocale === "es"
+                      ? `Cargando historia · ${eventLoad.loadedEvents.toLocaleString()} de ${eventLoad.totalEvents.toLocaleString()}`
+                      : `Loading story · ${eventLoad.loadedEvents.toLocaleString()} of ${eventLoad.totalEvents.toLocaleString()}`
+                    : canvasUiLocale === "es"
+                      ? "Preparando eventos visibles…"
+                      : "Preparing visible events…"}
               </span>
-              {eventLoad.pendingEventIds.size > 0 ? <progress max={Math.max(1, eventLoad.totalEvents)} value={eventLoad.loadedEvents} /> : null}
+              {eventLoad.status === "loading" && eventLoad.mode === "complete" && eventLoad.pendingEventIds.size > 0 ? <progress max={Math.max(1, eventLoad.totalEvents)} value={eventLoad.loadedEvents} /> : null}
             </Panel>
           ) : null}
           {minimapOpen && !testingActive ? (
@@ -10869,6 +10880,65 @@ function StoryCanvas({
 
 const STARTUP_LOADER_MIN_MS = 700;
 
+type ProjectHistorySnapshot = {
+  project: BranchingProject;
+  affectedEventIds: string[];
+};
+
+const OFFSCREEN_EVENT_CACHE_LIMIT = 128;
+
+function changedProjectEventIds(before: BranchingProject, after: BranchingProject): Set<string> {
+  const beforeById = new Map(before.events.map((event) => [event.id, event]));
+  const afterById = new Map(after.events.map((event) => [event.id, event]));
+  const changed = new Set<string>();
+  for (const [eventId, event] of beforeById) {
+    if (afterById.get(eventId) !== event) changed.add(eventId);
+  }
+  for (const [eventId, event] of afterById) {
+    if (beforeById.get(eventId) !== event) changed.add(eventId);
+  }
+  return changed;
+}
+
+function projectHistorySnapshot(project: BranchingProject, affectedEventIds: ReadonlySet<string>): ProjectHistorySnapshot {
+  return {
+    project: {
+      ...project,
+      events: project.events.filter((event) => affectedEventIds.has(event.id)),
+    },
+    affectedEventIds: [...affectedEventIds],
+  };
+}
+
+function restoreProjectHistorySnapshot(snapshot: ProjectHistorySnapshot, current: BranchingProject): BranchingProject {
+  const affectedEventIds = new Set(snapshot.affectedEventIds);
+  const eventsById = new Map(current.events
+    .filter((event) => !affectedEventIds.has(event.id))
+    .map((event) => [event.id, event]));
+  for (const event of snapshot.project.events) eventsById.set(event.id, event);
+  const order = new Map<string, number>();
+  for (const sequence of snapshot.project.sequences) {
+    for (const eventId of sequence.eventIds) if (!order.has(eventId)) order.set(eventId, order.size);
+  }
+  const events = [...eventsById.values()].sort((left, right) =>
+    (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+  return { ...snapshot.project, events };
+}
+
+function historyPinnedEventIds(...stacks: readonly ProjectHistorySnapshot[][]): Set<string> {
+  const pinned = new Set<string>();
+  for (const stack of stacks) for (const snapshot of stack) {
+    snapshot.affectedEventIds.forEach((eventId) => pinned.add(eventId));
+  }
+  return pinned;
+}
+
+function touchResidentEventIds(order: readonly string[], eventIds: readonly string[], residentIds: ReadonlySet<string>): string[] {
+  const touched = new Set(eventIds.filter((eventId) => residentIds.has(eventId)));
+  return [...order.filter((eventId) => residentIds.has(eventId) && !touched.has(eventId)), ...touched];
+}
+
 export function App({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   return <ApplicationActivity.Provider value={suiteChrome?.active ?? true}><NotificationProvider host={suiteChrome?.notifications} source="PathBranching" active={suiteChrome?.active ?? true}><div className="pathbranching-app" data-ambient-background={suiteChrome?.suiteSettings?.ambientBackground ?? loadSettings().ambientBackground !== false} data-background-scene={normalizeBackgroundScene(suiteChrome?.suiteSettings?.backgroundScene ?? loadSettings().backgroundScene)} data-window-chrome={!suiteChrome && isTauriRuntime() ? "true" : undefined} data-theme={suiteChrome?.suiteSettings?.style ?? loadSettings().theme}><PathBranchingApp suiteChrome={suiteChrome} /></div></NotificationProvider></ApplicationActivity.Provider>;
 }
@@ -11012,8 +11082,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     loadSettings().authoringDisplay.logicMode ? "logic" : "visual",
   );
   const [focusNodeId, setFocusNodeId] = useState<string>();
-  const [undoStack, setUndoStack] = useState<BranchingProject[]>([]);
-  const [redoStack, setRedoStack] = useState<BranchingProject[]>([]);
+  const [undoStack, setUndoStack] = useState<ProjectHistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<ProjectHistorySnapshot[]>([]);
   const [actionHistory, setActionHistory] = useState<string[]>([]);
   const [nameDialog, setNameDialog] = useState<
     | {
@@ -11102,9 +11172,13 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const pendingEventFileBatchesRef = useRef<StoryEventFileBatch[]>([]);
   const pendingEventFileCountRef = useRef(0);
   const activeLoadStoryIdRef = useRef<string | undefined>(undefined);
-  const backgroundEventLoadStartedRef = useRef(false);
   const backgroundInteractionActiveRef = useRef(false);
   const canvasEventWindowRef = useRef<ReadonlySet<string> | undefined>(undefined);
+  const eventRecencyRef = useRef<string[]>([]);
+  const dirtyEventIdsRef = useRef<Set<string>>(new Set());
+  const historyEventIdsRef = useRef<Set<string>>(new Set());
+  const inspectorEventIdsRef = useRef<Set<string>>(new Set());
+  const fullHydrationPinnedRef = useRef(false);
   const fileStateRef = useRef<ProjectFileState>({ dirty: false });
   const selectionRef = useRef<Selection | undefined>(undefined);
   const canvasClipboardRef = useRef<CanvasClipboard | undefined>(undefined);
@@ -11121,6 +11195,59 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     scopeKey: string;
     selection: Selection;
   } | undefined>(undefined);
+
+  useEffect(() => {
+    historyEventIdsRef.current = historyPinnedEventIds(undoStack, redoStack);
+  }, [redoStack, undoStack]);
+
+  useEffect(() => {
+    const currentProject = project;
+    if (!currentProject) {
+      inspectorEventIdsRef.current = new Set();
+      return;
+    }
+    const allEventIds = new Set(currentProject.sequences.flatMap((sequence) => sequence.eventIds));
+    const pinned = new Set<string>();
+    const addIfKnown = (eventId?: string) => { if (eventId && allEventIds.has(eventId)) pinned.add(eventId); };
+    addIfKnown(eventInspector.expandedEventId);
+    eventInspector.openEventIds.forEach(addIfKnown);
+    addIfKnown(eventDraft?.eventId);
+    if (activeScope?.kind === "event") addIfKnown(activeScope.id);
+    if (activeScope?.kind === "dialogue") addIfKnown(activeScope.eventId);
+    const selectedEventId = eventIdFromSelection(currentProject, nodes, selection);
+    addIfKnown(selectedEventId);
+    if (selection?.type === "node") addIfKnown(selection.id);
+    for (const tab of inspectorTabs) addIfKnown(eventIdFromSelection(currentProject, nodes, tab.selection));
+    inspectorEventIdsRef.current = pinned;
+  }, [activeScope, eventDraft?.eventId, eventInspector.expandedEventId, eventInspector.openEventIds, inspectorTabs, nodes, project, selection]);
+
+  const trimProgressiveEventCache = useCallback((
+    targetWorkspace: PathBranchingWorkspace,
+    targetProject: BranchingProject,
+  ) => {
+    if (!targetWorkspace.eventLoad || fullHydrationPinnedRef.current) {
+      return { workspace: targetWorkspace, project: targetProject };
+    }
+    const protectedIds = new Set<string>([
+      ...(canvasEventWindowRef.current ?? []),
+      ...dirtyEventIdsRef.current,
+      ...historyEventIdsRef.current,
+      ...inspectorEventIdsRef.current,
+    ]);
+    const offscreen = targetProject.events.filter((event) => !protectedIds.has(event.id));
+    if (offscreen.length <= OFFSCREEN_EVENT_CACHE_LIMIT) {
+      return { workspace: targetWorkspace, project: targetProject };
+    }
+    const recency = new Map(eventRecencyRef.current.map((eventId, index) => [eventId, index]));
+    offscreen.sort((left, right) => (recency.get(left.id) ?? -1) - (recency.get(right.id) ?? -1));
+    const evictedIds = offscreen
+      .slice(0, offscreen.length - OFFSCREEN_EVENT_CACHE_LIMIT)
+      .map((event) => event.id);
+    const evicted = evictProgressiveEventBatch(targetWorkspace, targetProject, evictedIds);
+    const evictedSet = new Set(evictedIds);
+    eventRecencyRef.current = eventRecencyRef.current.filter((eventId) => !evictedSet.has(eventId));
+    return evicted;
+  }, []);
 
   useEffect(() => () => {
     eventLoaderUnsubscribeRef.current?.();
@@ -11234,12 +11361,44 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       } = {},
     ) => {
       const currentProject = projectRef.current;
-      const normalizedProject = options.normalized
+      let normalizedProject = options.normalized
         ? nextProject
         : currentProject && narrativeContentUnchanged(currentProject, nextProject)
         ? nextProject : normalizeProject(nextProject, {
-            preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad && workspaceRef.current.eventLoad.status !== "ready"),
+            preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad && (
+              workspaceRef.current.eventLoad.pendingEventIds.size || workspaceRef.current.eventLoad.status === "incomplete"
+            )),
           });
+      if (currentProject && (options.dirty || options.revision)) {
+        for (const eventId of changedProjectEventIds(currentProject, normalizedProject)) dirtyEventIdsRef.current.add(eventId);
+      }
+      let nextWorkspace = workspaceRef.current;
+      if (nextWorkspace?.eventLoad) {
+        const allEventIds = new Set(normalizedProject.sequences.flatMap((sequence) => sequence.eventIds));
+        const residentEventIds = new Set(normalizedProject.events.map((event) => event.id));
+        const pendingEventIds = nextWorkspace.eventLoad.status === "incomplete"
+          ? new Set([...nextWorkspace.eventLoad.pendingEventIds].filter((eventId) => allEventIds.has(eventId)))
+          : new Set([...allEventIds].filter((eventId) => !residentEventIds.has(eventId)));
+        nextWorkspace = {
+          ...nextWorkspace,
+          activeProject: normalizedProject,
+          eventLoad: {
+            ...nextWorkspace.eventLoad,
+            totalEvents: allEventIds.size,
+            loadedEvents: residentEventIds.size,
+            pendingEventIds,
+          },
+        };
+        const trimmed = trimProgressiveEventCache(nextWorkspace, normalizedProject);
+        nextWorkspace = trimmed.workspace;
+        normalizedProject = trimmed.project;
+      }
+      const residentEventIds = new Set(normalizedProject.events.map((event) => event.id));
+      eventRecencyRef.current = touchResidentEventIds(
+        eventRecencyRef.current,
+        canvasEventWindowRef.current ? [...canvasEventWindowRef.current] : normalizedProject.events.map((event) => event.id),
+        residentEventIds,
+      );
       const normalizedScope = activeCanvasScope(normalizedProject);
       const model = buildStoryCanvasModel(normalizedProject, {
         nodeColors: settingsRef.current.nodeColors,
@@ -11249,7 +11408,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         canvasLayerMode: canvasLayerModeRef.current,
         interfaceLocale: uiLocaleRef.current,
         eventWindowIds: canvasEventWindowRef.current,
-        pendingEventIds: workspaceRef.current?.eventLoad?.pendingEventIds,
+        pendingEventIds: nextWorkspace?.eventLoad?.pendingEventIds,
       });
       if (options.dirty || options.revision) {
         projectRevisionRef.current += 1;
@@ -11258,12 +11417,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if ((options.dirty || options.revision) && fileStateRef.current.universePath && normalizedProject.storyId) {
         storeAuthoringRecovery(fileStateRef.current.universePath, normalizedProject.storyId, { project: normalizedProject, modifiedMs: fileStateRef.current.modifiedMs, savedAt: Date.now() });
       }
-      workspaceRef.current = workspaceRef.current
-        ? {
-            ...workspaceRef.current,
-            activeProject: normalizedProject,
-          }
-        : workspaceRef.current;
+      workspaceRef.current = nextWorkspace
+        ? { ...nextWorkspace, activeProject: normalizedProject }
+        : nextWorkspace;
       setProject(normalizedProject);
       // Structural undo/redo also restores the event shown by a clean inspector.
       // Keep unapplied text drafts intact; their changes merge when applied.
@@ -11295,18 +11451,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         fileStateRef.current = nextState;
         return nextState;
       });
-      if (options.dirty) {
-        setWorkspace((current) =>
-          current
-            ? {
-                ...current,
-                activeProject: normalizedProject,
-              }
-            : current,
-        );
-      }
+      if (workspaceRef.current) setWorkspace(workspaceRef.current);
     },
-    [],
+    [trimProgressiveEventCache],
   );
 
   const updateCanvasEventWindow = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
@@ -11320,10 +11467,20 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ? [scope.eventId]
         : sequenceEventIdsInBounds(currentProject, bounds, scope, 1);
     const eventWindowIds = new Set(visibleIds);
+    const sequence = scope?.kind === "sequence"
+      ? currentProject.sequences.find((candidate) => candidate.id === scope.id)
+      : currentProject.sequences.find((candidate) => candidate.id === currentProject.canvas?.activeSequenceId)
+        ?? currentProject.sequences.find((candidate) => candidate.id === currentProject.entrySequenceId)
+        ?? currentProject.sequences[0];
+    const sequenceEventIds = new Set(sequence?.eventIds ?? []);
+    let addedTransitionNeighbors = 0;
     const visibleLoadedEvents = currentProject.events.filter((event) => eventWindowIds.has(event.id));
     for (const event of visibleLoadedEvents) {
       for (const transition of event.transitions ?? []) {
-        if (currentProject.sequences.some((sequence) => sequence.eventIds.includes(transition.to))) eventWindowIds.add(transition.to);
+        if (sequenceEventIds.has(transition.to) && !eventWindowIds.has(transition.to) && addedTransitionNeighbors < 64) {
+          eventWindowIds.add(transition.to);
+          addedTransitionNeighbors += 1;
+        }
       }
     }
     const previousWindow = canvasEventWindowRef.current;
@@ -11331,25 +11488,56 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (changed) {
       canvasEventWindowRef.current = eventWindowIds;
       setCanvasWindowRevision((revision) => revision + 1);
+      if (fullHydrationPinnedRef.current && workspaceRef.current?.eventLoad?.pendingEventIds.size === 0) {
+        fullHydrationPinnedRef.current = false;
+      }
     }
 
-    const pendingEventIds = workspaceRef.current?.eventLoad?.pendingEventIds;
-    if (!pendingEventIds) return;
+    const currentWorkspace = workspaceRef.current;
+    const eventLoad = currentWorkspace?.eventLoad;
+    if (!currentWorkspace || !eventLoad) return;
+    const pendingEventIds = eventLoad.pendingEventIds;
     const requested = [...eventWindowIds].filter((id) => pendingEventIds.has(id));
-    if (requested.length) void loader.request(requested, "viewport");
-    if (!backgroundEventLoadStartedRef.current) {
-      backgroundEventLoadStartedRef.current = true;
-      void loader.loadRemaining([...pendingEventIds]);
+    if (requested.length) {
+      const loadingWorkspace = {
+        ...currentWorkspace,
+        eventLoad: { ...eventLoad, status: "loading" as const, mode: "viewport" as const },
+      };
+      workspaceRef.current = loadingWorkspace;
+      setWorkspace(loadingWorkspace);
+      eventRecencyRef.current = touchResidentEventIds(
+        eventRecencyRef.current,
+        [...eventWindowIds],
+        new Set(currentProject.events.map((event) => event.id)),
+      );
+      void loader.request(requested, "viewport");
     }
-  }, []);
+    const trimmed = trimProgressiveEventCache(workspaceRef.current ?? currentWorkspace, projectRef.current ?? currentProject);
+    if (trimmed.project !== (projectRef.current ?? currentProject)) applyProject(trimmed.project, { normalized: true });
+  }, [applyProject, trimProgressiveEventCache]);
 
   const ensureCompleteStoryEvents = useCallback(() => {
     const eventLoad = workspaceRef.current?.eventLoad;
-    if (!eventLoad || eventLoad.status === "ready") return true;
+    if (!eventLoad) return true;
+    if (eventLoad.status === "incomplete") {
+      const reason = workspaceRef.current?.saveBlockReasons?.[0];
+      setMessage(uiLocaleRef.current === "es"
+        ? `No se puede completar la operación hasta reparar la carga de eventos.${reason ? ` ${reason}` : ""}`
+        : `This operation needs a complete story load before it can continue.${reason ? ` ${reason}` : ""}`);
+      return false;
+    }
+    if (eventLoad.pendingEventIds.size === 0) return true;
 
     const pendingEventIds = [...eventLoad.pendingEventIds];
     const loader = eventLoaderRef.current;
     if (pendingEventIds.length && loader) {
+      fullHydrationPinnedRef.current = true;
+      const loadingWorkspace = {
+        ...workspaceRef.current!,
+        eventLoad: { ...eventLoad, status: "loading" as const, mode: "complete" as const },
+      };
+      workspaceRef.current = loadingWorkspace;
+      setWorkspace(loadingWorkspace);
       void loader.loadRemaining(pendingEventIds, { resumeBackground: true });
       setMessage(uiLocaleRef.current === "es"
         ? "Cargando los eventos restantes antes de completar la operación…"
@@ -11365,6 +11553,12 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
 
   const applyWorkspace = useCallback(
     (nextWorkspace: PathBranchingWorkspace, universePath: string, eventLoader?: ProgressiveStoryEventLoader) => {
+      if (nextWorkspace.eventLoad) {
+        nextWorkspace = {
+          ...nextWorkspace,
+          eventLoad: { ...nextWorkspace.eventLoad, mode: "viewport" },
+        };
+      }
       eventLoaderUnsubscribeRef.current?.();
       eventLoaderRef.current?.cancel();
       eventLoaderUnsubscribeRef.current = undefined;
@@ -11373,7 +11567,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       pendingEventFileBatchesRef.current = [];
       pendingEventFileCountRef.current = 0;
       activeLoadStoryIdRef.current = nextWorkspace.activeProject.storyId;
-      backgroundEventLoadStartedRef.current = false;
+      eventRecencyRef.current = nextWorkspace.activeProject.events.map((event) => event.id);
+      dirtyEventIdsRef.current = new Set();
+      historyEventIdsRef.current = new Set();
+      inspectorEventIdsRef.current = new Set();
+      fullHydrationPinnedRef.current = false;
       canvasEventWindowRef.current = eventLoader ? new Set<string>() : undefined;
       setCanvasWindowRevision((revision) => revision + 1);
       const savedSession = normalizeWorkspaceSession(
@@ -11386,7 +11584,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...nextWorkspace.activeProject,
         canonPropertyDescriptors: canonicalPropertyDescriptors(nextWorkspace.canonIndex.propertiesConfig),
         universeRootPath: universePath,
-      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad) });
+      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad && (
+        nextWorkspace.eventLoad.pendingEventIds.size || nextWorkspace.eventLoad.status === "incomplete"
+      )) });
       setPendingRecovery(readAuthoringRecovery(universePath, activeProject.storyId ?? ""));
       const restoredScope =
         savedSession.activeScope ??
@@ -11402,7 +11602,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               ? restoredScope.id
               : activeProject.canvas?.activeSequenceId,
         },
-      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad) });
+      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad && (
+        nextWorkspace.eventLoad.pendingEventIds.size || nextWorkspace.eventLoad.status === "incomplete"
+      )) });
       const normalizedScope = activeCanvasScope(activeProjectWithScope);
       const model = buildStoryCanvasModel(activeProjectWithScope, {
         nodeColors: settingsRef.current.nodeColors,
@@ -11430,7 +11632,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           const currentViewport = canvasEventWindowRef.current;
           const includesViewportEvent = Boolean(currentViewport && batch.eventIds.some((id) => currentViewport.has(id)));
           const completesLoad = pendingEventFileCountRef.current >= (currentWorkspace.eventLoad?.pendingEventIds.size ?? Number.POSITIVE_INFINITY);
-          if (pendingEventFileCountRef.current < 256 && !includesViewportEvent && !completesLoad) return;
+          if (fullHydrationPinnedRef.current && pendingEventFileCountRef.current < 256 && !includesViewportEvent && !completesLoad) return;
 
           const queuedBatches = pendingEventFileBatchesRef.current;
           pendingEventFileBatchesRef.current = [];
@@ -11443,7 +11645,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           const merged = mergeProgressiveEventBatch({
             ...currentWorkspace,
             activeProject: currentProject ?? currentWorkspace.activeProject,
-          }, mergedBatch);
+          }, mergedBatch, { mode: fullHydrationPinnedRef.current ? "complete" : "viewport" });
+          const residentIds = new Set(merged.project.events.map((event) => event.id));
+          eventRecencyRef.current = touchResidentEventIds(eventRecencyRef.current, mergedBatch.eventIds, residentIds);
           workspaceRef.current = merged.workspace;
           setWorkspace(merged.workspace);
           applyProject(merged.project, { normalized: true });
@@ -11572,8 +11776,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       workspace?: PathBranchingWorkspace;
       fileState: ProjectFileState;
       selection?: Selection;
-      undoStack: BranchingProject[];
-      redoStack: BranchingProject[];
+      undoStack: ProjectHistorySnapshot[];
+      redoStack: ProjectHistorySnapshot[];
       revision: number;
       savedRevision: number;
     }) => {
@@ -11642,10 +11846,40 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return true;
       }
 
-      if (commitOptions.recordUndo !== false) {
-        setUndoStack((current) => [...current.slice(-199), currentProject]);
+      const currentWorkspace = workspaceRef.current;
+      const nextSequenceEventIds = new Set(mutationResult.project.sequences.flatMap((sequence) => sequence.eventIds));
+      const currentSequenceEventIds = new Set(currentProject.sequences.flatMap((sequence) => sequence.eventIds));
+      const removedPendingEventIds = [...currentSequenceEventIds]
+        .filter((eventId) => !nextSequenceEventIds.has(eventId) && currentWorkspace?.eventLoad?.pendingEventIds.has(eventId));
+      if (removedPendingEventIds.length) {
+        const loader = eventLoaderRef.current;
+        if (loader) {
+          const loadingWorkspace = currentWorkspace?.eventLoad ? {
+            ...currentWorkspace,
+            eventLoad: { ...currentWorkspace.eventLoad, status: "loading" as const, mode: "viewport" as const },
+          } : currentWorkspace;
+          if (loadingWorkspace) {
+            workspaceRef.current = loadingWorkspace;
+            setWorkspace(loadingWorkspace);
+          }
+          void loader.request(removedPendingEventIds, "viewport");
+          setMessage(uiLocaleRef.current === "es"
+            ? "Cargando los eventos seleccionados antes de eliminarlos. Repite la acción cuando termine."
+            : "Loading the selected events before deleting them. Repeat the action when loading finishes.");
+        }
+        return false;
       }
-      if (commitOptions.recordRedo !== false) setRedoStack([]);
+      const changedEventIds = changedProjectEventIds(currentProject, mutationResult.project);
+      if (commitOptions.recordUndo !== false) {
+        const undoSnapshot = projectHistorySnapshot(currentProject, changedEventIds);
+        const nextUndoStack = [...undoStack.slice(-199), undoSnapshot];
+        setUndoStack(nextUndoStack);
+        historyEventIdsRef.current = historyPinnedEventIds(nextUndoStack, commitOptions.recordRedo === false ? redoStack : []);
+      }
+      if (commitOptions.recordRedo !== false) {
+        setRedoStack([]);
+        historyEventIdsRef.current = historyPinnedEventIds(commitOptions.recordUndo === false ? undoStack : [...undoStack.slice(-199), projectHistorySnapshot(currentProject, changedEventIds)], []);
+      }
       if (commitOptions.recordActionHistory !== false) {
         setActionHistory((current) => [mutationResult.message ?? label, ...current].slice(0, 10));
       }
@@ -13174,27 +13408,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         rememberRecentProject(current, currentFileState.universePath as string),
       );
       const currentProjectAfterSave = projectRef.current;
-      let savedProject = isStillCurrentRevision
-        ? snapshot.savedProject
-        : currentProjectAfterSave ?? snapshot.savedProject;
-      if (isStillCurrentRevision && currentProjectAfterSave && currentProjectAfterSave.storyId === snapshot.savedProject.storyId) {
-        const savedEventIds = new Set(snapshot.savedProject.events.map((event) => event.id));
-        const newlyHydrated = currentProjectAfterSave.events.filter((event) => !savedEventIds.has(event.id));
-        if (newlyHydrated.length) {
-          const sequenceOrder = new Map<string, number>();
-          for (const sequence of snapshot.savedProject.sequences) {
-            sequence.eventIds.forEach((eventId) => {
-              if (!sequenceOrder.has(eventId)) sequenceOrder.set(eventId, sequenceOrder.size);
-            });
-          }
-          savedProject = {
-            ...snapshot.savedProject,
-            events: [...snapshot.savedProject.events, ...newlyHydrated].sort((left, right) =>
-              (sequenceOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (sequenceOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
-            ),
-          };
-        }
-      }
+      const savedProject = currentProjectAfterSave && currentProjectAfterSave.storyId === snapshot.savedProject.storyId
+        ? currentProjectAfterSave
+        : snapshot.savedProject;
       const workspaceAfterSave = workspaceRef.current;
       const nextWorkspace = workspaceRef.current
           ? {
@@ -13202,7 +13418,22 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               activeProject: savedProject,
               files: (() => {
                 const byPath = new Map(workspaceAfterSave?.files.map((file) => [file.relativePath, file]) ?? []);
-                snapshot.nextWorkspace.files.forEach((file) => byPath.set(file.relativePath, file));
+                const residentEventPaths = new Set<string>();
+                if (currentProjectAfterSave?.storyId) {
+                  const residentEventIds = new Set(currentProjectAfterSave.events.map((event) => event.id));
+                  for (const sequence of currentProjectAfterSave.sequences) {
+                    for (const eventId of sequence.eventIds) {
+                      if (!residentEventIds.has(eventId)) continue;
+                      residentEventPaths.add(eventPath(currentProjectAfterSave.storyId, sequence.id, eventId));
+                      residentEventPaths.add(eventEvpathPath(currentProjectAfterSave.storyId, sequence.id, eventId));
+                    }
+                  }
+                }
+                for (const deletedPath of snapshot.result.deletedPaths ?? []) byPath.delete(deletedPath);
+                snapshot.nextWorkspace.files.forEach((file) => {
+                  if (/\/events\/[^/]+\.(?:json|evpath)$/i.test(file.relativePath) && !residentEventPaths.has(file.relativePath)) return;
+                  byPath.set(file.relativePath, file);
+                });
                 return [...byPath.values()];
               })(),
               fileIndex: workspaceAfterSave?.fileIndex ?? snapshot.nextWorkspace.fileIndex,
@@ -13218,6 +13449,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setWorkspace(nextWorkspace);
       if (isStillCurrentRevision) {
         savedRevisionRef.current = saveRevision;
+        dirtyEventIdsRef.current.clear();
         if (currentProject.storyId) clearAuthoringRecovery(currentFileState.universePath, currentProject.storyId);
         setPendingRecovery(undefined);
       }
@@ -13944,7 +14176,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...(current.assets ?? []).filter((asset) => asset.origin === "uncanon"),
       ];
       const next = normalizeProject({ ...current, assets: nextAssets }, {
-        preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad),
+        preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad && (
+          workspaceRef.current.eventLoad.pendingEventIds.size || workspaceRef.current.eventLoad.status === "incomplete"
+        )),
       });
       projectRef.current = next;
       setProject(next);
@@ -14066,9 +14300,13 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (!project || undoStack.length === 0) {
       return;
     }
-    const previous = undoStack[undoStack.length - 1];
-    setUndoStack((current) => current.slice(0, -1));
-    setRedoStack((current) => [...current.slice(-199), project]);
+    const snapshot = undoStack[undoStack.length - 1];
+    const previous = restoreProjectHistorySnapshot(snapshot, project);
+    const nextUndoStack = undoStack.slice(0, -1);
+    const nextRedoStack = [...redoStack.slice(-199), projectHistorySnapshot(project, new Set(snapshot.affectedEventIds))];
+    setUndoStack(nextUndoStack);
+    setRedoStack(nextRedoStack);
+    historyEventIdsRef.current = historyPinnedEventIds(nextUndoStack, nextRedoStack);
     setActionHistory((current) => ["Undo", ...current].slice(0, 10));
     applyProject(previous, { dirty: true, revision: true });
     setMessage("Undo...");
@@ -14086,9 +14324,13 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (!project || redoStack.length === 0) {
       return;
     }
-    const next = redoStack[redoStack.length - 1];
-    setRedoStack((current) => current.slice(0, -1));
-    setUndoStack((current) => [...current.slice(-199), project]);
+    const snapshot = redoStack[redoStack.length - 1];
+    const next = restoreProjectHistorySnapshot(snapshot, project);
+    const nextRedoStack = redoStack.slice(0, -1);
+    const nextUndoStack = [...undoStack.slice(-199), projectHistorySnapshot(project, new Set(snapshot.affectedEventIds))];
+    setRedoStack(nextRedoStack);
+    setUndoStack(nextUndoStack);
+    historyEventIdsRef.current = historyPinnedEventIds(nextUndoStack, nextRedoStack);
     setActionHistory((current) => ["Redo", ...current].slice(0, 10));
     applyProject(next, { dirty: true, revision: true });
     setMessage("Redo...");
@@ -14220,7 +14462,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }, [navigateCanvasScope]);
 
   const validateNarrative = useMemo(() => createNarrativeValidationCache(), []);
-  const storyEventsComplete = !workspace?.eventLoad || workspace.eventLoad.status === "ready";
+  const storyEventsComplete = !workspace?.eventLoad || (workspace.eventLoad.status !== "incomplete" && workspace.eventLoad.pendingEventIds.size === 0);
   const narrativeFindings = storyEventsComplete && project ? validateNarrative(project) : [];
   const validateCanvasTopology = useMemo(() => createCanvasValidationCache(), []);
   const canvasFindings = storyEventsComplete ? validateCanvasTopology(nodes, edges) : [];

@@ -10,7 +10,7 @@ import {
   sequencePath,
   storyPath,
 } from "../lib/pathBranchingWorkspace.js";
-import { mergeProgressiveEventBatch, obsoleteSequenceSidecarPaths, registerSharedBrowserUniverse, saveUniverseStory, universeBatchFiles } from "../lib/projectPersistence.js";
+import { evictProgressiveEventBatch, mergeProgressiveEventBatch, obsoleteSequenceSidecarPaths, registerSharedBrowserUniverse, saveUniverseStory, universeBatchFiles } from "../lib/projectPersistence.js";
 import { browserUniversePath, readBrowserUniverse } from "../lib/utils/browserUniverse.js";
 import { sequenceEventIdsInBounds, buildStoryCanvasModel } from "../lib/canvas/storyCanvasModel.js";
 import { ProgressiveStoryEventLoader } from "../lib/progressiveStoryLoader.js";
@@ -65,6 +65,42 @@ assert.deepEqual(visibleNodes.map((node) => node.id), visibleIds, "the canvas mo
 const visibleNodeIds = new Set(visibleModel.nodes.map((node) => node.id));
 assert(visibleModel.edges.every((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)), "windowed edges must not dangle");
 
+const spatialNodes = Object.fromEntries(events.map((event, index) => [event.id, {
+  position: { x: (index * 173) % 1900, y: (index * 419) % 4200 },
+}]));
+const spatialProject = {
+  ...project,
+  canvas: { ...project.canvas, scopes: { [`sequence:${sequenceId}`]: { nodes: spatialNodes } } },
+};
+const spatialBounds = { x: 540, y: 1280, width: 760, height: 580 };
+const spatialOverscan = 0.75;
+const marginX = spatialBounds.width * spatialOverscan;
+const marginY = spatialBounds.height * spatialOverscan;
+const expectedSpatialIds = events.filter((event) => {
+  const { x, y } = spatialNodes[event.id].position;
+  return x <= spatialBounds.x + spatialBounds.width + marginX
+    && x + 460 >= spatialBounds.x - marginX
+    && y <= spatialBounds.y + spatialBounds.height + marginY
+    && y + 220 >= spatialBounds.y - marginY;
+}).map((event) => event.id);
+assert.deepEqual(
+  sequenceEventIdsInBounds(spatialProject, spatialBounds, { kind: "sequence", id: sequenceId }, spatialOverscan),
+  expectedSpatialIds,
+  "the spatial index must match a full scan for arbitrary manually arranged positions",
+);
+const movedSpatialNodes = {
+  ...spatialNodes,
+  [events[159].id]: { position: { x: spatialBounds.x, y: spatialBounds.y } },
+};
+const movedSpatialProject = {
+  ...spatialProject,
+  canvas: { ...spatialProject.canvas, scopes: { [`sequence:${sequenceId}`]: { nodes: movedSpatialNodes } } },
+};
+assert(
+  sequenceEventIdsInBounds(movedSpatialProject, spatialBounds, { kind: "sequence", id: sequenceId }, spatialOverscan).includes(events[159].id),
+  "a node-map update must invalidate the cached spatial index",
+);
+
 const hydratedIds = events.slice(0, 4).map((event) => event.id);
 const hydratedPaths = new Set(hydratedIds.flatMap((id) => [eventPath(storyId, sequenceId, id), eventEvpathPath(storyId, sequenceId, id)]));
 const firstBatchFiles = completeFiles.filter((file) => hydratedPaths.has(file.relativePath));
@@ -81,6 +117,17 @@ assert.equal(partialSequence.eventIds.length, events.length, "partial saves must
 const partialDeletes = obsoleteSequenceSidecarPaths(merged.workspace.files, partialOutput, storyId);
 const partialWriteBatch = universeBatchFiles(merged.workspace.files, partialOutput, partialDeletes);
 assert(!partialWriteBatch.some((file) => file.delete && file.relativePath.includes("/events/")), "a partial save must not delete an unhydrated event sidecar");
+
+const evictedIds = hydratedIds.slice(0, 2);
+const evictedPaths = new Set(evictedIds.flatMap((id) => [eventPath(storyId, sequenceId, id), eventEvpathPath(storyId, sequenceId, id)]));
+const evicted = evictProgressiveEventBatch(merged.workspace, merged.project, evictedIds);
+assert.equal(evicted.project.events.length, hydratedIds.length - evictedIds.length, "eviction should release resident event payloads");
+assert(evictedIds.every((id) => evicted.workspace.eventLoad?.pendingEventIds.has(id)), "evicted IDs must remain addressable for on-demand reload");
+assert.equal(evicted.workspace.eventLoad?.loadedEvents, evicted.project.events.length, "resident count should fall with eviction");
+assert(!evicted.workspace.files.some((file) => evictedPaths.has(file.relativePath)), "eviction should release raw sidecar strings from the workspace cache");
+const evictedOutput = serializeModularStoryFiles(evicted.project, story, { preserveUnloadedEventReferences: true });
+const evictedDeletePaths = obsoleteSequenceSidecarPaths(evicted.workspace.files, evictedOutput, storyId);
+assert(!evictedDeletePaths.some((path) => evictedPaths.has(path)), "eviction must not make clean sidecars look obsolete");
 
 let modifiedMs = 1;
 const createMemoryDirectory = (name) => {
@@ -128,7 +175,7 @@ for (const file of completeFiles) {
 }
 const memoryUniversePath = browserUniversePath(memoryUniverse);
 registerSharedBrowserUniverse(memoryUniversePath, memoryUniverse);
-const partialSave = await saveUniverseStory(memoryUniversePath, merged.workspace, merged.project);
+const partialSave = await saveUniverseStory(memoryUniversePath, evicted.workspace, evicted.project);
 assert.equal(partialSave.ok, true, partialSave.message);
 const savedFiles = await readBrowserUniverse(memoryUniverse);
 assert.equal(savedFiles.filter((file) => file.relativePath.includes("/events/") && file.relativePath.endsWith(".json")).length, events.length);
@@ -138,6 +185,15 @@ assert.equal(savedSequence.eventIds.length, events.length, "a partial save must 
 const reopenedWorkspace = loadPathBranchingWorkspace(savedFiles);
 assert.equal(reopenedWorkspace.activeProject.events.length, events.length, "a story saved during progressive loading must reopen with every event");
 assert.equal(reopenedWorkspace.saveBlocked, false);
+
+const rehydrated = mergeProgressiveEventBatch(evicted.workspace, {
+  eventIds: evictedIds,
+  files: completeFiles.filter((file) => evictedPaths.has(file.relativePath)),
+  errors: [],
+});
+assert.deepEqual(new Set(rehydrated.project.events.map((event) => event.id)), new Set(hydratedIds), "an evicted event must reload by its stable ID");
+assert(evictedIds.every((id) => !rehydrated.workspace.eventLoad?.pendingEventIds.has(id)), "rehydration should remove IDs from the nonresident set");
+assert(evictedPaths.size === rehydrated.workspace.files.filter((file) => evictedPaths.has(file.relativePath)).length, "rehydration should restore the raw sidecars needed for compare-and-swap saves");
 
 let releaseFirstRead;
 const firstReadGate = new Promise((resolve) => { releaseFirstRead = resolve; });
@@ -160,6 +216,9 @@ assert(readCalls[1].includes(eventPath(storyId, sequenceId, viewportEventId)), "
 assert.deepEqual(readCalls[1], [eventPath(storyId, sequenceId, viewportEventId), eventEvpathPath(storyId, sequenceId, viewportEventId)], "viewport reads should not be mixed with lower-priority background files");
 assert.equal(new Set(readCalls.flat()).size, events.length * 2, "each event file should be read once despite priority upgrades");
 assert(readCalls.every((paths) => paths.length <= 8), "the loader must respect its bounded batch size");
+const completedReadCount = readCalls.length;
+await loader.request([viewportEventId]);
+assert.equal(readCalls.length, completedReadCount + 1, "completed loader records should be released so evicted IDs can be read again on demand");
 loader.cancel();
 
 const pausedReadCalls = [];
@@ -182,4 +241,4 @@ assert.equal(new Set(pausedReadCalls.flat()).size, events.length * 2, "resuming 
 pausedLoader.cancel();
 
 assert(sequencePath(storyId, sequenceId).endsWith(`/sequences/sequence-progressive/sequence.json`));
-console.log("Progressive loading: indexed open, viewport windowing, priority batches, pause/resume, hydration order, and partial-save sidecar safety passed.");
+console.log("Progressive loading: indexed open, viewport windowing, priority batches, pause/resume, hydration order, bounded event eviction, stable-ID reload, and partial-save sidecar safety passed.");

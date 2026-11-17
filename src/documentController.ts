@@ -78,7 +78,9 @@ export async function saveBranchingDocument(input: DocumentSaveInput): Promise<D
     ...input.project,
     storyId: input.workspace.activeStory?.id ?? input.project.storyId,
     universeRootPath: input.fileState.universePath,
-  });
+  }, { preserveUnloadedEventReferences: Boolean(input.workspace.eventLoad && (
+    input.workspace.eventLoad.pendingEventIds.size || input.workspace.eventLoad.status === "incomplete"
+  )) });
 
   const nextFileState: ProjectFileState = {
     ...input.fileState,
@@ -102,9 +104,14 @@ export async function saveBranchingDocument(input: DocumentSaveInput): Promise<D
     manifest: result.manifest ?? input.workspace.manifest,
     activeProject: savedProject,
     files: result.savedFiles ? [
-      ...input.workspace.files.filter((file) => !result.savedFiles?.some((saved) => saved.relativePath === file.relativePath)),
+      ...input.workspace.files.filter((file) =>
+        !result.deletedPaths?.includes(file.relativePath) &&
+        !result.savedFiles?.some((saved) => saved.relativePath === file.relativePath),
+      ),
       ...result.savedFiles,
-    ] : input.workspace.files,
+    ] : result.deletedPaths?.length
+      ? input.workspace.files.filter((file) => !result.deletedPaths?.includes(file.relativePath))
+      : input.workspace.files,
     createdDefaultStory: false,
     storyModifiedMs: result.storyModifiedMs ?? result.modifiedMs,
   };

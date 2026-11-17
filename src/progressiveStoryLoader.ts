@@ -24,10 +24,9 @@ type QueuedEvent = {
   priority: "viewport" | "background";
   promise: Promise<StoryEventFileLoadResult>;
   resolve: (result: StoryEventFileLoadResult) => void;
-  result?: StoryEventFileLoadResult;
 };
 
-/** Bounded, deduplicated event-file reader that lets viewport requests jump the background queue. */
+/** Bounded event-file reader that deduplicates in-flight requests and prioritizes viewport reads. */
 export class ProgressiveStoryEventLoader {
   private readonly records = new Map<string, QueuedEvent>();
   private readonly viewportQueue: string[] = [];
@@ -105,7 +104,6 @@ export class ProgressiveStoryEventLoader {
         errors: [{ relativePath: record.relativePaths[0] ?? record.eventId, message: "Event loading was cancelled." }],
       };
       record.state = "done";
-      record.result = result;
       record.resolve(result);
     }
     this.viewportQueue.length = 0;
@@ -164,7 +162,6 @@ export class ProgressiveStoryEventLoader {
         });
         const result = { eventId: record.eventId, files, errors };
         record.state = "done";
-        record.result = result;
         record.resolve(result);
         return result;
       });
@@ -173,6 +170,11 @@ export class ProgressiveStoryEventLoader {
         const errors = eventResults.flatMap((result) => result.errors);
         const notification = { eventIds: batch.map((record) => record.eventId), files, errors };
         for (const handler of this.handlers) await handler(notification);
+      }
+      // The workspace now owns the resident payload. Drop completed promises so
+      // this queue cannot keep evicted event files reachable indefinitely.
+      for (const record of batch) {
+        if (this.records.get(record.eventId) === record) this.records.delete(record.eventId);
       }
       // Give React and the browser compositor a chance to process the visible batch.
       await new Promise<void>((resolve) => setTimeout(resolve, 0));

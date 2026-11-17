@@ -64,6 +64,7 @@ export type SaveUniverseStoryResult = WriteResult & {
   manifest?: PathBranchingWorkspace["manifest"];
   manifestModifiedMs?: number;
   savedFiles?: UniverseFile[];
+  deletedPaths?: string[];
 };
 
 export type UniverseBatchFile = {
@@ -152,6 +153,7 @@ function isSaveBlockingWorkspaceWarning(warning: string): boolean {
 export function mergeProgressiveEventBatch(
   workspace: PathBranchingWorkspace,
   batch: StoryEventFileBatch,
+  options: { mode?: "viewport" | "complete" } = {},
 ): { workspace: PathBranchingWorkspace; project: BranchingProject } {
   if (!workspace.activeStory) return { workspace, project: workspace.activeProject };
   const hydrated = hydratePathBranchingEvents(
@@ -168,11 +170,15 @@ export function mergeProgressiveEventBatch(
   const saveBlockReasons = [...(workspace.saveBlockReasons ?? []), ...newBlockReasons];
   const pendingEventIds = new Set(workspace.eventLoad?.pendingEventIds ?? []);
   batch.eventIds.forEach((id) => pendingEventIds.delete(id));
-  const loadedEventIds = new Set(hydrated.loadedEventIds);
   const eventLoad = workspace.eventLoad ? {
     ...workspace.eventLoad,
-    status: saveBlockReasons.length ? "incomplete" as const : pendingEventIds.size ? "loading" as const : "ready" as const,
-    loadedEvents: Math.min(workspace.eventLoad.totalEvents, workspace.eventLoad.loadedEvents + loadedEventIds.size),
+    status: saveBlockReasons.length
+      ? "incomplete" as const
+      : options.mode === "complete" && pendingEventIds.size
+        ? "loading" as const
+        : "ready" as const,
+    mode: options.mode ?? "viewport",
+    loadedEvents: hydrated.project.events.length,
     failedEvents: workspace.eventLoad.failedEvents + hydrated.failedEventIds.length,
     pendingEventIds,
   } : undefined;
@@ -190,6 +196,50 @@ export function mergeProgressiveEventBatch(
     saveBlockReasons: saveBlockReasons.length ? saveBlockReasons : undefined,
   };
   return { workspace: nextWorkspace, project: hydrated.project };
+}
+
+/** Evict clean, off-window event payloads while keeping their stable IDs and disk sidecars. */
+export function evictProgressiveEventBatch(
+  workspace: PathBranchingWorkspace,
+  project: BranchingProject,
+  eventIds: readonly string[],
+): { workspace: PathBranchingWorkspace; project: BranchingProject } {
+  if (!workspace.eventLoad || !workspace.activeStory || eventIds.length === 0) {
+    return { workspace, project };
+  }
+
+  const residentIds = new Set(project.events.map((event) => event.id));
+  const evictedIds = new Set(eventIds.filter((eventId) => residentIds.has(eventId)));
+  if (!evictedIds.size) return { workspace, project };
+
+  const evictedPaths = new Set<string>();
+  for (const sequence of project.sequences) {
+    for (const eventId of sequence.eventIds) {
+      if (!evictedIds.has(eventId)) continue;
+      evictedPaths.add(eventPath(workspace.activeStory.id, sequence.id, eventId));
+      evictedPaths.add(eventEvpathPath(workspace.activeStory.id, sequence.id, eventId));
+    }
+  }
+
+  const nextProject = {
+    ...project,
+    events: project.events.filter((event) => !evictedIds.has(event.id)),
+  };
+  const pendingEventIds = new Set(workspace.eventLoad.pendingEventIds);
+  evictedIds.forEach((eventId) => pendingEventIds.add(eventId));
+  const nextWorkspace: PathBranchingWorkspace = {
+    ...workspace,
+    activeProject: nextProject,
+    files: workspace.files.filter((file) => !evictedPaths.has(file.relativePath)),
+    eventLoad: {
+      ...workspace.eventLoad,
+      status: workspace.eventLoad.status === "incomplete" ? "incomplete" : "ready",
+      mode: "viewport",
+      loadedEvents: nextProject.events.length,
+      pendingEventIds,
+    },
+  };
+  return { workspace: nextWorkspace, project: nextProject };
 }
 
 export type BridgeStatus = {
@@ -557,7 +607,9 @@ export async function saveUniverseStory(
   const output = serializeModularStoryFiles(
     { ...project, storyId: story.id, universeRootPath: universePath, name: project.name ?? story.name },
     normalizedStory,
-    { preserveUnloadedEventReferences: Boolean(workspace.eventLoad && workspace.eventLoad.status !== "ready") },
+    { preserveUnloadedEventReferences: Boolean(workspace.eventLoad && (
+      workspace.eventLoad.pendingEventIds.size || workspace.eventLoad.status === "incomplete"
+    )) },
   );
   if (project.integrationConfig && !workspace.files.some((file) => file.relativePath === pathBranchingMetadataPaths.config)) {
     output.push({ relativePath: pathBranchingMetadataPaths.config, content: serializeIntegrationConfigYaml(project.integrationConfig) });
@@ -619,7 +671,17 @@ export async function saveUniverseStory(
   if (!result.ok) return result;
   const savedFiles = batch.filter((file) => !file.delete).map((file) => ({ relativePath: file.relativePath, content: file.content, modifiedMs: result.files.find((entry) => entry.relativePath === file.relativePath)?.modifiedMs }));
   const storyModifiedMs = savedFiles.find((file) => file.relativePath === normalizedStory.path)?.modifiedMs ?? workspace.storyModifiedMs;
-  return { ...result, path: normalizedStory.path, modifiedMs: storyModifiedMs, storyPath: normalizedStory.path, storyModifiedMs, manifest, manifestModifiedMs: savedFiles.find((file) => file.relativePath === pathBranchingMetadataPaths.manifest)?.modifiedMs, savedFiles };
+  return {
+    ...result,
+    path: normalizedStory.path,
+    modifiedMs: storyModifiedMs,
+    storyPath: normalizedStory.path,
+    storyModifiedMs,
+    manifest,
+    manifestModifiedMs: savedFiles.find((file) => file.relativePath === pathBranchingMetadataPaths.manifest)?.modifiedMs,
+    savedFiles,
+    deletedPaths: batch.filter((file) => file.delete).map((file) => file.relativePath),
+  };
 }
 
 export async function saveUniverseManifest(

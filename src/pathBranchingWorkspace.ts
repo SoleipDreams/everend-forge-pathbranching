@@ -48,6 +48,8 @@ export type UniverseFileIndexEntry = {
 
 export type StoryEventLoadState = {
   status: "loading" | "ready" | "incomplete";
+  /** Whether the active read is filling the viewport or a full-story operation. */
+  mode?: "viewport" | "complete";
   totalEvents: number;
   loadedEvents: number;
   failedEvents: number;
