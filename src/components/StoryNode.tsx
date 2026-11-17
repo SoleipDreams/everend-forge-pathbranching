@@ -1405,7 +1405,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
         {identity}
         <span className="decision-style">{optionStyle === "iconOnly" ? (es ? "Iconos" : "Icons") : (es ? "Texto" : "Text")}</span>
         {nodeData.subtitle ? <div className="node-subtitle">{nodeData.subtitle}</div> : null}
-        <div className="decision-options">
+        <div className="decision-options" data-onboarding-target="pathbranching.decision-options">
           {options.map((option, index) => {
             const optionLetter = String.fromCharCode(65 + index);
             return (
@@ -1436,6 +1436,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
                     <button
                       type="button"
                       className="decision-option-icon decision-option-open nodrag nopan"
+                      data-onboarding-target="pathbranching.option-settings"
                       aria-label={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
                       title={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
                       onPointerDown={stopCanvasInteraction}
@@ -1453,6 +1454,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
                       <button
                         type="button"
                         className="decision-option-key decision-option-open nodrag nopan"
+                        data-onboarding-target="pathbranching.option-settings"
                         aria-label={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
                         title={`${es ? "Configurar opción" : "Configure option"} ${optionLetter}`}
                         onPointerDown={stopCanvasInteraction}
@@ -1485,8 +1487,8 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
                     )}
                   </>
                 )}
-                {nodeData.canvasLayerMode === "logic" || option.logicSummary?.when ? <button type="button" className={`decision-option-condition nodrag nopan${option.logicSummary?.when ? " configured" : ""}${option.logicSummary?.warningCount ? " has-warning" : ""}`} aria-label={option.logicSummary?.warningCount ? `${es ? "Revisar condición de opción" : "Review option condition"} ${optionLetter}` : option.logicSummary?.when ? `${es ? "Editar condición de opción" : "Edit option condition"} ${optionLetter}` : `${es ? "Añadir condición a opción" : "Add option condition"} ${optionLetter}`} title={option.logicSummary?.warningCount ? (es ? "Revisar la condición de esta opción" : "Review this option's condition") : option.logicSummary?.when ? (es ? "Editar la condición de esta opción" : "Edit this option's condition") : (es ? "Añadir condición a esta opción" : "Add a condition to this option")} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("conditions", { type: "node", id: option.handleId }); }}><GitBranch size={12} aria-hidden="true" /></button> : null}
-                {nodeData.canvasLayerMode === "logic" || option.interactionCards?.length ? <button type="button" className={`decision-option-interaction nodrag nopan${option.interactionCards?.length ? " configured" : ""}`} aria-label={option.interactionCards?.length ? `${es ? "Editar interacción de opción" : "Edit option interaction"} ${optionLetter}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} title={option.interactionCards?.length ? `${es ? "Interacciones de opción" : "Option interactions"} ${optionLetter}: ${option.interactionCards.map(card => `${({ before: es ? "Antes" : "Before", during: es ? "Durante" : "During", after: es ? "Después" : "After" })[card.moment]} · ${card.name} · ${card.mechanic?.kind ?? ""}`).join("; ")}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("interactions", { type: "node", id: option.handleId }); }}><D20Icon size={13} />{(option.interactionCards?.length ?? 0) > 1 ? <span className="decision-option-interaction-count" aria-hidden="true">{option.interactionCards!.length}</span> : null}</button> : null}
+                {nodeData.canvasLayerMode === "logic" || option.logicSummary?.when ? <button type="button" className={`decision-option-condition nodrag nopan${option.logicSummary?.when ? " configured" : ""}${option.logicSummary?.warningCount ? " has-warning" : ""}`} data-onboarding-target="pathbranching.condition-entry" aria-label={option.logicSummary?.warningCount ? `${es ? "Revisar condición de opción" : "Review option condition"} ${optionLetter}` : option.logicSummary?.when ? `${es ? "Editar condición de opción" : "Edit option condition"} ${optionLetter}` : `${es ? "Añadir condición a opción" : "Add option condition"} ${optionLetter}`} title={option.logicSummary?.warningCount ? (es ? "Revisar la condición de esta opción" : "Review this option's condition") : option.logicSummary?.when ? (es ? "Editar la condición de esta opción" : "Edit this option's condition") : (es ? "Añadir condición a esta opción" : "Add a condition to this option")} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("conditions", { type: "node", id: option.handleId }); }}><GitBranch size={12} aria-hidden="true" /></button> : null}
+                {nodeData.canvasLayerMode === "logic" || option.interactionCards?.length ? <button type="button" className={`decision-option-interaction nodrag nopan${option.interactionCards?.length ? " configured" : ""}`} data-onboarding-target="pathbranching.interaction-entry" aria-label={option.interactionCards?.length ? `${es ? "Editar interacción de opción" : "Edit option interaction"} ${optionLetter}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} title={option.interactionCards?.length ? `${es ? "Interacciones de opción" : "Option interactions"} ${optionLetter}: ${option.interactionCards.map(card => `${({ before: es ? "Antes" : "Before", during: es ? "Durante" : "During", after: es ? "Después" : "After" })[card.moment]} · ${card.name} · ${card.mechanic?.kind ?? ""}`).join("; ")}` : `${es ? "Añadir interacción a opción" : "Add interaction to option"} ${optionLetter}`} onPointerDown={stopCanvasInteraction} onClick={(event) => { stopCanvasInteraction(event); openInspectorSection("interactions", { type: "node", id: option.handleId }); }}><D20Icon size={13} />{(option.interactionCards?.length ?? 0) > 1 ? <span className="decision-option-interaction-count" aria-hidden="true">{option.interactionCards!.length}</span> : null}</button> : null}
                 {decisionEditor && editingDecisionOptionId === option.id ? (
                   <div className="decision-option-editor-popover nodrag nopan">
                     <div className="decision-option-editor-header">
@@ -1604,6 +1606,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
             <div
               ref={beatContentRef}
               className="speech-beat-content"
+              data-onboarding-target={isSpeech ? "pathbranching.create-speech" : undefined}
               role="textbox"
               aria-label={isSpeech ? "Dialogue text" : "Stage direction text"}
               aria-multiline="true"
@@ -1728,6 +1731,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       <div
         className={`story-node event event-overview${eventCoverImage ? " has-cover" : ""}${isFinalEvent ? " terminal" : ""}${focusClass}${inspectorFocusClass}${selected ? " selected" : ""}`}
         style={colorStyle}
+        data-onboarding-target="pathbranching.event-node"
       >
         {canReceive ? <Handle type="target" position={Position.Left} /> : null}
         {eventCoverImage ? (
@@ -1838,6 +1842,7 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
     <div
       className={`story-node ${nodeData.kind}${focusClass}${inspectorFocusClass}${isFinalEvent ? " terminal" : ""}${selected ? " selected" : ""}`}
       style={colorStyle}
+      data-onboarding-target={nodeData.kind === "dialogue" ? "pathbranching.dialogue-node" : nodeData.kind === "event" ? "pathbranching.event-node" : undefined}
     >
       {canReceive ? <Handle type="target" position={Position.Left} /> : null}
       {identity}

@@ -229,13 +229,13 @@ for (const [input, expected] of [
   [{ width: 1100, height: 1800 }, { width: 1100, height: 1800 }],
   [{ width: 600, height: Number.POSITIVE_INFINITY }, { width: 600, height: undefined }],
   [{ width: 600, height: Number.NaN }, { width: 600, height: undefined }],
-  [{ width: Number.POSITIVE_INFINITY, height: 500 }, { width: 420 }],
-  [{ width: Number.NaN, height: 500 }, { width: 420 }],
-  [{ width: "600", height: 500 }, { width: 420 }],
+  [{ width: Number.POSITIVE_INFINITY, height: 500 }, { width: 640 }],
+  [{ width: Number.NaN, height: 500 }, { width: 640 }],
+  [{ width: "600", height: 500 }, { width: 640 }],
 ]) {
   assert.deepEqual(normalizeWorkspaceSession({ inspectorSize: input }).inspectorSize, expected);
 }
-assert.deepEqual(normalizeWorkspaceSession({}).inspectorSize, { width: 420 });
+assert.deepEqual(normalizeWorkspaceSession({}).inspectorSize, { width: 640 });
 assert.deepEqual(normalizeWorkspaceSession({}).inspectorSections, {});
 
 // The dock mixes content/entity/action tabs above event tabs. Closing a range

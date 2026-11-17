@@ -241,8 +241,8 @@ assert.ok(groupedProject.events[0].dialogueBeats.some((beat) => beat.id === grou
 assert.equal(groupedProject.events[0].decisions[0].dialogueId, undefined, "Detaching must restore the Decision to the event.");
 const triggerCanvas = buildStoryCanvasModel(groupedProject, { scope: { kind: "event", id: eventId } });
 assert.ok(
-  triggerCanvas.nodes.some((node) => node.id === triggerNodeId && node.data.title.includes("Conversation start")),
-  "Expected the trigger to render independently from Dialogue containers.",
+  triggerCanvas.nodes.some((node) => node.id === triggerNodeId && node.data.kind === "dialogueStart" && node.data.title === "Trigger"),
+  "Expected the Dialogue Trigger node to render independently from Dialogue containers.",
 );
 assert.ok(triggerCanvas.edges.some((edge) => edge.source === triggerNodeId && edge.target === `decision:${eventId}:${groupedDecisionId}`), "Expected the trigger connection to render on the event subcanvas.");
 

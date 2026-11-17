@@ -15,7 +15,14 @@ export function useStoryTestController(project: BranchingProject | undefined, op
       onUpdate: next => callbacks.current.onUpdate?.(next), onLocate: id => callbacks.current.onLocate?.(id),
     });
   }, [controller, project, options.locale, options.theme, options.selectedNodeId, options.documentKey, options.resolveSpeakerPresentation]);
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const trackInteractionTime = snapshot.active
+    && !snapshot.paused
+    && !snapshot.changed
+    && snapshot.status === 'ready'
+    && snapshot.view?.interactions?.some(interaction => interaction.mechanic.kind === 'qte') === true;
   useEffect(() => {
+    if (!trackInteractionTime) return;
     let last = performance.now();
     const timer = window.setInterval(() => {
       const now = performance.now(); const elapsedMs = now - last; last = now;
@@ -25,7 +32,6 @@ export function useStoryTestController(project: BranchingProject | undefined, op
     const resetClock = () => { last = performance.now(); };
     window.addEventListener('focus', resetClock); window.addEventListener('blur', resetClock);
     return () => { clearInterval(timer); window.removeEventListener('focus', resetClock); window.removeEventListener('blur', resetClock); };
-  }, [controller]);
-  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  }, [controller, trackInteractionTime]);
   return { controller, snapshot, dispatch: controller.dispatch };
 }

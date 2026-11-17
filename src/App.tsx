@@ -44,8 +44,6 @@ import { EvpathEditor, type EvpathApplyOutcome } from "./components/EvpathEditor
 import { CanonWorkingCopyEditor } from "./components/CanonWorkingCopyEditor.js";
 import { DataDrawer } from "./components/DataDrawer.js";
 import { ReferencePicker } from "./components/ReferencePicker.js";
-import { AssetsPanel } from "./components/AssetsPanel.js";
-import { LogicPanel } from "./components/LogicPanel.js";
 import { PropertyCapabilitiesEditor } from "./components/PropertyCapabilitiesEditor.js";
 import { InteractionAuthoringContext } from './components/InteractionAuthoringContext.js';
 import { ConditionReferenceCreationContext } from "./components/ConditionReferenceCreationContext.js";
@@ -58,11 +56,10 @@ import { updatePropertyCapability, canonicalPropertyDescriptors } from './charac
 import type { InteractionMechanicsLibrary } from './domain.js';
 import { LogicConditionEditor, LogicEffectEditor, LogicMomentEditor } from "./components/LogicComposer.js";
 import type { ConditionAuthoringContext } from "./conditionAuthoring.js";
-import { StoryTestControls, StoryTestDebug, StoryTestInspectorView, StoryTestPlayback } from "./components/StoryTestViews.js";
+import { StoryTestControls } from "./components/StoryTestControls.js";
 import { storyTestSpeaker } from "./storyTestMedia.js";
 import { useStoryTestController } from "./useStoryTestController.js";
 import { useStoryTestWindows } from "./storyTestWindows.js";
-import { ExportPanel } from "./components/ExportPanel.js";
 import { ExportPreviewDialog } from "./components/ExportPreviewDialog.js";
 import { authoringNodeOptions, narrativeNodeReferences } from "./authoringMutations.js";
 import { inspectorDocumentIndex } from "./inspectorDocumentIndex.js";
@@ -85,8 +82,6 @@ import { authoringDraftEntries, authoringDraftKey, getAuthoringDraft, setAuthori
 import { LocaleSettingsFields } from "./components/LocaleSettingsFields.js";
 import { DesktopMenuBar } from "./components/DesktopMenuBar.js";
 import { WindowTitleControls } from "./components/WindowTitleControls.js";
-import { ConnectPanel } from "./components/ConnectPanel.js";
-import { EverendBridgePanel } from "./components/EverendBridgePanel.js";
 import { MarkdownEditorDock } from "./components/MarkdownEditorDock.js";
 import { editableCanvasEdgeTypes } from "./components/EditableCanvasEdge.js";
 import { nodeTypes, StoryCanvasNodeIcon, type DialoguePreset } from "./components/StoryNode.js";
@@ -206,7 +201,10 @@ import {
   cloneElement,
   Fragment,
   isValidElement,
+  lazy,
+  Suspense,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -314,6 +312,7 @@ import {
   openUniverseDialog,
   openUniversePath,
   openUniverseStory,
+  mergeProgressiveEventBatch,
   projectFileName,
   revealUniverseFolder,
   exportTextDialog,
@@ -325,6 +324,7 @@ import {
   saveUniverseTextFile,
   type ProjectFileState,
 } from "./projectPersistence.js";
+import type { ProgressiveStoryEventLoader, StoryEventFileBatch } from "./progressiveStoryLoader.js";
 import { DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE } from "./projectSerialization.js";
 import {
   workingCopyPathForCanonRef,
@@ -398,6 +398,7 @@ import {
 import { applyInterfaceLocale, interfaceLocaleCopy, pathbranchingSettingsCopy, resolveInterfaceLocale, useInterfaceLocale, authoringUiCopy, onboardingUiCopy, homeUiCopy, inspectorUiCopy, panelUiText } from "./i18n.js";
 import {
   buildStoryCanvasModel,
+  sequenceEventIdsInBounds,
   DIRECTION_BEAT_NODE_HEIGHT,
   fitSubcanvasWorkspaceBounds,
   layoutSubcanvasNodes,
@@ -415,6 +416,15 @@ import { canvasReturnConnectors } from "./canvas/returnConnectors.js";
 import { isTauriRuntime, shortcutMatches } from "./utils/appEnvironment.js";
 import { handleWindowTitlebarMouseDown } from "./utils/windowTitlebar.js";
 import { resolveUniverseAssetUrl } from "./utils/assetUrl.js";
+
+const loadStoryTestViews = () => import("./components/StoryTestViews.js");
+const StoryTestDebug = lazy(() => loadStoryTestViews().then(module => ({ default: module.StoryTestDebug })));
+const StoryTestInspectorView = lazy(() => loadStoryTestViews().then(module => ({ default: module.StoryTestInspectorView })));
+const StoryTestPlayback = lazy(() => loadStoryTestViews().then(module => ({ default: module.StoryTestPlayback })));
+const AssetsPanel = lazy(async () => ({ default: (await import("./components/AssetsPanel.js")).AssetsPanel }));
+const LogicPanel = lazy(async () => ({ default: (await import("./components/LogicPanel.js")).LogicPanel }));
+const ExportPanel = lazy(async () => ({ default: (await import("./components/ExportPanel.js")).ExportPanel }));
+const ConnectPanel = lazy(async () => ({ default: (await import("./components/ConnectPanel.js")).ConnectPanel }));
 
 function groupCanon(project: BranchingProject) {
   return project.canonRefs.reduce<Record<string, typeof project.canonRefs>>(
@@ -3486,6 +3496,7 @@ function NamePromptDialog({
           {panelUiText(locale, label)}
           <input
             value={value}
+            data-onboarding-target={title === "Create Story" ? "pathbranching.create-story" : title === "Create Sequence" ? "pathbranching.create-sequence" : title === "Crear conversación" || title === "Create conversation" ? "pathbranching.create-dialogue" : undefined}
             onChange={(event) => setValue(event.target.value)}
           />
         </label>
@@ -3802,6 +3813,88 @@ function OutlineBadges({ badges }: { badges: string[] }) {
   );
 }
 
+function EntryEventPicker({
+  eventIds,
+  eventById,
+  value,
+  locale,
+  onChange,
+}: {
+  eventIds: readonly string[];
+  eventById: ReadonlyMap<string, EventNode>;
+  value: string;
+  locale: "es" | "en";
+  onChange: (eventId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listboxId = `entry-event-options-${useId().replace(/:/g, "")}`;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const results = useMemo(() => {
+    if (!open) return [];
+    const matches: Array<{ id: string; label: string }> = [];
+    for (const id of eventIds) {
+      const label = eventById.get(id)?.name ?? id;
+      if (normalizedQuery && !`${label} ${id}`.toLocaleLowerCase().includes(normalizedQuery)) continue;
+      matches.push({ id, label });
+      if (matches.length === 40) break;
+    }
+    return matches;
+  }, [eventIds, eventById, normalizedQuery, open]);
+  const selectedLabel = eventById.get(value)?.name ?? value;
+  const choose = (eventId: string) => {
+    onChange(eventId);
+    setQuery("");
+    setOpen(false);
+    setActiveIndex(0);
+  };
+
+  return (
+    <div className="entry-event-picker">
+      <input
+        role="combobox"
+        aria-label={locale === "es" ? "Evento inicial" : "Entry Event"}
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        autoComplete="off"
+        placeholder={locale === "es" ? "Buscar por nombre o ID…" : "Search by name or ID…"}
+        value={open ? query : selectedLabel}
+        onFocus={() => { setQuery(""); setOpen(true); setActiveIndex(0); }}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); setActiveIndex(0); }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { setOpen(false); setQuery(""); return; }
+          if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => Math.min(index + 1, Math.max(0, results.length - 1))); return; }
+          if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => Math.max(0, index - 1)); return; }
+          if (event.key === "Enter" && results[activeIndex]) { event.preventDefault(); choose(results[activeIndex].id); }
+        }}
+        onBlur={() => { if (!open) return; window.setTimeout(() => setOpen(false), 100); }}
+      />
+      {open ? (
+        <div id={listboxId} className="entry-event-picker-results" role="listbox" aria-label={locale === "es" ? "Eventos disponibles" : "Available events"}>
+          {results.length ? results.map((result, index) => (
+            <div
+              key={result.id}
+              role="option"
+              aria-selected={value === result.id}
+              className={index === activeIndex ? "active" : ""}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => choose(result.id)}
+            >
+              <span>{result.label}</span>
+              {result.label !== result.id ? <small>{result.id}</small> : null}
+            </div>
+          )) : (
+            <p>{locale === "es" ? "No hay eventos que coincidan." : "No matching events."}</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SequenceOutlinePanel({
   project,
   propertiesConfig,
@@ -3820,6 +3913,7 @@ function SequenceOutlinePanel({
   onCreateSequenceCharacter: (sequenceId: string, name: string) => void;
 }) {
   const es = useInterfaceLocale() === "es";
+  const eventById = useMemo(() => new Map(project.events.map(event => [event.id, event])), [project.events]);
 
   const characterOptions = [
     ...project.canonRefs
@@ -3872,20 +3966,24 @@ function SequenceOutlinePanel({
         </label>
         <label className="field-label">
           {es ? "Evento inicial" : "Entry Event"}
-          <select
-            value={sequence.entryEventId}
-            onChange={(event) =>
-              onUpdateSequence(sequence.id, {
-                entryEventId: event.target.value,
-              })
-            }
-          >
-            {sequence.eventIds.map((eventId) => (
-              <option key={eventId} value={eventId}>
-                {findEvent(project, eventId)?.name ?? eventId}
-              </option>
-            ))}
-          </select>
+          {sequence.eventIds.length > 128 ? (
+            <EntryEventPicker
+              eventIds={sequence.eventIds}
+              eventById={eventById}
+              value={sequence.entryEventId}
+              locale={es ? "es" : "en"}
+              onChange={(entryEventId) => onUpdateSequence(sequence.id, { entryEventId })}
+            />
+          ) : (
+            <select
+              value={sequence.entryEventId}
+              onChange={(event) => onUpdateSequence(sequence.id, { entryEventId: event.target.value })}
+            >
+              {sequence.eventIds.map((eventId) => (
+                <option key={eventId} value={eventId}>{eventById.get(eventId)?.name ?? eventId}</option>
+              ))}
+            </select>
+          )}
         </label>
       </section></InspectorPanel>
       <InspectorPanel title={es ? "Actores" : "Actors"}>
@@ -4117,6 +4215,9 @@ function pathTreeNodeIcon(kind: PathTreeNode["kind"]) {
   return <GitBranch size={13} />;
 }
 
+const PATH_TREE_ROW_HEIGHT = 30;
+const PATH_TREE_OVERSCAN = 8;
+
 function PathTreeRow({
   node,
   depth,
@@ -4136,7 +4237,7 @@ function PathTreeRow({
   const isExpanded = expanded.has(node.id);
 
   return (
-    <div className="path-tree-node">
+    <div className="path-tree-node" style={{ height: PATH_TREE_ROW_HEIGHT }}>
       <div
         className={`path-tree-row ${isActive(node) ? "active" : ""}`}
         style={{ paddingLeft: 6 + depth * 16 }}
@@ -4182,21 +4283,6 @@ function PathTreeRow({
           ) : null}
         </button>
       </div>
-      {hasChildren && isExpanded ? (
-        <div className="path-tree-children">
-          {node.children.map((child) => (
-            <PathTreeRow
-              key={child.id}
-              node={child}
-              depth={depth + 1}
-              expanded={expanded}
-              onToggle={onToggle}
-              onNavigate={onNavigate}
-              isActive={isActive}
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -4206,17 +4292,52 @@ function PathOutlinePanel({
   sequence,
   selectedId,
   onNavigate,
+  active,
 }: {
   project: BranchingProject;
   sequence?: Sequence;
   selectedId?: string;
   onNavigate: (node: PathTreeNode) => void;
+  active: boolean;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 480 });
+  const listRef = useRef<HTMLDivElement>(null);
+  const savedScrollTop = useRef(0);
   const tree = useMemo(
-    () => buildPathTree(project, sequence),
-    [project, sequence],
+    () => active ? buildPathTree(project, sequence) : [],
+    [active, project.events, project.scriptDocuments, project.canonRefs, project.projectDataObjects, sequence],
   );
+  const visibleNodes = useMemo(() => {
+    const result: { node: PathTreeNode; depth: number }[] = [];
+    const visit = (node: PathTreeNode, depth: number) => {
+      result.push({ node, depth });
+      if (expanded.has(node.id)) node.children.forEach(child => visit(child, depth + 1));
+    };
+    tree.forEach(node => visit(node, 0));
+    return result;
+  }, [expanded, tree]);
+
+  useEffect(() => {
+    if (!active) return;
+    const element = listRef.current;
+    if (!element) return;
+    element.scrollTop = savedScrollTop.current;
+    const updateViewport = () => {
+      savedScrollTop.current = element.scrollTop;
+      const next = { scrollTop: element.scrollTop, height: element.clientHeight || 480 };
+      setViewport(current => current.scrollTop === next.scrollTop && current.height === next.height ? current : next);
+    };
+    updateViewport();
+    element.addEventListener("scroll", updateViewport, { passive: true });
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(element);
+    return () => {
+      savedScrollTop.current = element.scrollTop;
+      element.removeEventListener("scroll", updateViewport);
+      observer.disconnect();
+    };
+  }, [active]);
 
   const toggle = useCallback((id: string) => {
     setExpanded((current) => {
@@ -4230,29 +4351,44 @@ function PathOutlinePanel({
     });
   }, []);
 
-  const isActive = (node: PathTreeNode) =>
-    selectedId === (node.kind === "event" ? `file:event:${node.selectId}` : `file:path:${node.selectId}`);
+  const isActive = useCallback((node: PathTreeNode) =>
+    selectedId === (node.kind === "event" ? `file:event:${node.selectId}` : `file:path:${node.selectId}`), [selectedId]);
+  const startIndex = Math.max(0, Math.floor(viewport.scrollTop / PATH_TREE_ROW_HEIGHT) - PATH_TREE_OVERSCAN);
+  const endIndex = Math.min(visibleNodes.length, Math.ceil((viewport.scrollTop + viewport.height) / PATH_TREE_ROW_HEIGHT) + PATH_TREE_OVERSCAN);
+  const activeIndex = visibleNodes.findIndex(({ node }) => isActive(node));
+
+  useEffect(() => {
+    const element = listRef.current;
+    if (!active || !element || activeIndex < 0) return;
+    const top = activeIndex * PATH_TREE_ROW_HEIGHT;
+    if (top < element.scrollTop || top + PATH_TREE_ROW_HEIGHT > element.scrollTop + element.clientHeight) {
+      element.scrollTop = top;
+    }
+  }, [active, activeIndex, visibleNodes]);
 
   return (
     <div className="story-outline-map">
       <div className="outline-toolbar">
         <span>
-          {tree.length} root event{tree.length === 1 ? "" : "s"}
+          {active ? tree.length : sequence?.eventIds.length ?? 0} root event{(active ? tree.length : sequence?.eventIds.length ?? 0) === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="path-tree">
-        {tree.map((node) => (
-          <PathTreeRow
-            key={node.id}
-            node={node}
-            depth={0}
-            expanded={expanded}
-            onToggle={toggle}
-            onNavigate={onNavigate}
-            isActive={isActive}
-          />
-        ))}
-      </div>
+      {active ? <div className="path-tree path-tree-virtualized" ref={listRef}>
+        <div className="path-tree-virtual-spacer" style={{ height: visibleNodes.length * PATH_TREE_ROW_HEIGHT }}>
+          {visibleNodes.slice(startIndex, endIndex).map(({ node, depth }, offset) => (
+            <div key={node.id} className="path-tree-virtual-row" style={{ top: (startIndex + offset) * PATH_TREE_ROW_HEIGHT, height: PATH_TREE_ROW_HEIGHT }}>
+              <PathTreeRow
+                node={node}
+                depth={depth}
+                expanded={expanded}
+                onToggle={toggle}
+                onNavigate={onNavigate}
+                isActive={isActive}
+              />
+            </div>
+          ))}
+        </div>
+      </div> : null}
       {!tree.length ? (
         <span className="empty-line">No paths yet.</span>
       ) : null}
@@ -4390,6 +4526,7 @@ function FilesPanel({
             sequence={activeSequence}
             selectedId={selectedId}
             onNavigate={onNavigatePathNode}
+            active={activeOutlineTab === "paths"}
           />
         </ExplorerPane>
         {totalItems === 0 ? (
@@ -5705,6 +5842,7 @@ function Inspector({
 }) {
   const interfaceLocale = useInterfaceLocale();
   const c = inspectorUiCopy(interfaceLocale);
+  const eventById = useMemo(() => new Map(project.events.map(event => [event.id, event])), [project.events]);
   const [routeGateRouteId, setRouteGateRouteId] = useState<string>();
   const [objectInspectorTab, setObjectInspectorTab] = useState("overview");
   const selectionKey = selection ? inspectorSelectionKey(selection) : "";
@@ -6284,20 +6422,24 @@ function Inspector({
             </label>
             <label className="field-label">
               Entry Event
-              <select
-                value={sequence.entryEventId}
-                onChange={(event) =>
-                  onUpdateSequence(sequence.id, {
-                    entryEventId: event.target.value,
-                  })
-                }
-              >
-                {sequence.eventIds.map((eventId) => (
-                  <option key={eventId} value={eventId}>
-                    {findEvent(project, eventId)?.name ?? eventId}
-                  </option>
-                ))}
-              </select>
+              {sequence.eventIds.length > 128 ? (
+                <EntryEventPicker
+                  eventIds={sequence.eventIds}
+                  eventById={eventById}
+                  value={sequence.entryEventId}
+                  locale={interfaceLocale === "es" ? "es" : "en"}
+                  onChange={(entryEventId) => onUpdateSequence(sequence.id, { entryEventId })}
+                />
+              ) : (
+                <select
+                  value={sequence.entryEventId}
+                  onChange={(event) => onUpdateSequence(sequence.id, { entryEventId: event.target.value })}
+                >
+                  {sequence.eventIds.map((eventId) => (
+                    <option key={eventId} value={eventId}>{eventById.get(eventId)?.name ?? eventId}</option>
+                  ))}
+                </select>
+              )}
             </label>
             <dl>
               <div>
@@ -7622,6 +7764,7 @@ type CanvasContextMenu = {
 
 const DIRECTED_NODE_OPEN_DELAY_MS = 750;
 const DIRECTED_NODE_MOVE_THRESHOLD_PX = 5;
+const LARGE_CANVAS_NODE_THRESHOLD = 250;
 const NESTED_EDGE_INSPECTOR_OPEN_DELAY_MS = 640;
 const SUBCANVAS_DOUBLE_CLICK_DELAY_MS = 500;
 
@@ -7677,15 +7820,19 @@ function EventTypeMenuButton({
   icon,
   options,
   onSelect,
+  triggerTarget,
+  optionTarget,
 }: {
   label: string;
   icon: ReactNode;
   options: EventCategoryDefinition[];
   onSelect: (categoryId: string) => void;
+  triggerTarget?: string;
+  optionTarget?: string;
 }) {
   return (
     <div className="canvas-menu-submenu">
-      <button type="button" className="canvas-menu-submenu-trigger canvas-create-menu-item" aria-haspopup="true">
+      <button type="button" className="canvas-menu-submenu-trigger canvas-create-menu-item" aria-haspopup="true" data-onboarding-target={triggerTarget}>
         <span className="canvas-create-menu-icon" aria-hidden="true">{icon}</span>
         <span className="canvas-create-menu-item-label">{label}</span>
         <ChevronRight size={15} className="canvas-create-menu-chevron" aria-hidden="true" />
@@ -7696,6 +7843,7 @@ function EventTypeMenuButton({
             key={category.id}
             type="button"
             className="canvas-create-menu-item"
+            data-onboarding-target={optionTarget}
             onClick={() => onSelect(category.id)}
           >
             <span className="canvas-create-menu-icon canvas-create-menu-icon--category" aria-hidden="true"><StoryCanvasNodeIcon kind="event" size={15} /></span>
@@ -7713,13 +7861,15 @@ function CanvasCreateMenuItem({
   icon,
   children,
   onClick,
+  onboardingTarget,
 }: {
   icon: ReactNode;
   children: ReactNode;
   onClick: () => void;
+  onboardingTarget?: string;
 }) {
   return (
-    <button type="button" className="canvas-create-menu-item" onClick={onClick}>
+    <button type="button" className="canvas-create-menu-item" data-onboarding-target={onboardingTarget} onClick={onClick}>
       <span className="canvas-create-menu-icon" aria-hidden="true">{icon}</span>
       <span className="canvas-create-menu-item-label">{children}</span>
     </button>
@@ -7733,8 +7883,9 @@ const FIXABLE_FINDING_CODES = new Set<ValidationFinding["code"]>([
   "orphan_script_block",
 ]);
 
-function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding }: {
+function CanvasFindingsButton({ findings, project, complete, onEnsureComplete, onLocateFinding, onFixFinding }: {
   findings: ValidationFinding[]; project: BranchingProject;
+  complete: boolean; onEnsureComplete: () => boolean;
   onLocateFinding: (finding: ValidationFinding) => void;
   onFixFinding: (finding: ValidationFinding) => void;
 }) {
@@ -7744,8 +7895,10 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
   const trigger = useRef<HTMLButtonElement | null>(null);
   const errors = findings.filter((finding) => finding.severity === "error").length;
   const warnings = findings.filter((finding) => finding.severity === "warning").length;
-  const status = errors ? "error" : warnings ? "warning" : "clean";
-  const label = findings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
+  const status = !complete ? "loading" : errors ? "error" : warnings ? "warning" : "clean";
+  const label = !complete
+    ? (locale === "es" ? "Esperando a que carguen todos los eventos" : "Waiting for all events to load")
+    : findings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
   useApplicationEffect(() => {
     if (!open) return;
     function pointer(event: PointerEvent) { if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false); }
@@ -7754,14 +7907,14 @@ function CanvasFindingsButton({ findings, project, onLocateFinding, onFixFinding
     return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); };
   }, [open]);
   return <div data-onboarding-target="pathbranching.validation" className="canvas-findings-anchor" ref={wrapperRef}>
-    <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={() => setOpen((current) => !current)} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
-      {status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+    <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={() => { if (!complete) { onEnsureComplete(); return; } setOpen((current) => !current); }} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
+      {!complete ? <CircleDot size={14} /> : status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
       <span className="pb-validation-label">{locale === "es" ? "Validar" : "Validate"}</span>
       {findings.length ? <span className="canvas-findings-count">{findings.length}</span> : null}
     </button>
     {open ? <div className="canvas-findings-popup" role="region" aria-label={locale === "es" ? "Hallazgos de validación" : "Validation findings"}>
       <div className="canvas-findings-popup-header"><strong>{label}</strong></div>
-      {findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
+      {!complete ? <span className="clean">{label}</span> : findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
         const presentation = findingPresentation(finding, project, locale);
         const transitionOrderTarget = finding.code === "invalid_transition_order" && finding.id
           ? transitionOrderDetails(project, finding.id, locale)
@@ -7938,6 +8091,8 @@ function StoryCanvas({
   edges,
   selection,
   findings,
+  eventLoad,
+  onEnsureCompleteStoryEvents,
   message,
   showStatusMessages,
   activeScope,
@@ -7966,6 +8121,7 @@ function StoryCanvas({
   onNodesChange,
   onEdgesChange,
   onConnect,
+  onCanvasViewportChange,
   onNodeDragStop,
   onSelect,
   onCanvasSelect,
@@ -8110,6 +8266,8 @@ function StoryCanvas({
   edges: StoryCanvasEdge[];
   selection?: Selection;
   findings: ValidationFinding[];
+  eventLoad?: PathBranchingWorkspace["eventLoad"];
+  onEnsureCompleteStoryEvents: () => boolean;
   message?: string;
   showStatusMessages: boolean;
   activeScope?: CanvasScope;
@@ -8138,6 +8296,7 @@ function StoryCanvas({
   onNodesChange: (changes: NodeChange<StoryCanvasNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<StoryCanvasEdge>[]) => void;
   onConnect: OnConnect;
+  onCanvasViewportChange?: (bounds: { x: number; y: number; width: number; height: number }) => void;
   onNodeDragStop: (
     event: MouseEvent | TouchEvent | ReactMouseEvent,
     node: StoryCanvasNode,
@@ -8415,6 +8574,27 @@ function StoryCanvas({
   const draggedNodeRef = useRef(false);
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance<any, any>>();
+  const reportViewportBounds = useCallback((instance: ReactFlowInstance<any, any>) => {
+    const canvasElement = shellRef.current?.querySelector<HTMLElement>(".react-flow");
+    const rect = canvasElement?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0 || !onCanvasViewportChange) return;
+    const topLeft = instance.screenToFlowPosition({ x: rect.left, y: rect.top });
+    const bottomRight = instance.screenToFlowPosition({ x: rect.right, y: rect.bottom });
+    onCanvasViewportChange({
+      x: topLeft.x,
+      y: topLeft.y,
+      width: Math.max(0, bottomRight.x - topLeft.x),
+      height: Math.max(0, bottomRight.y - topLeft.y),
+    });
+  }, [onCanvasViewportChange]);
+  const handleReactFlowInit = useCallback((instance: ReactFlowInstance<any, any>) => {
+    setReactFlowInstance(instance);
+    window.requestAnimationFrame(() => reportViewportBounds(instance));
+  }, [reportViewportBounds]);
+  useEffect(() => {
+    if (!reactFlowInstance) return;
+    window.requestAnimationFrame(() => reportViewportBounds(reactFlowInstance));
+  }, [activeScope, eventLoad?.loadedEvents, reactFlowInstance, reportViewportBounds]);
   const [contextMenu, setContextMenu] = useState<CanvasContextMenu>();
   const contextMenuFocusRef = useRef<HTMLElement | null>(null);
   const contextMenuWasOpenRef = useRef(false);
@@ -9390,6 +9570,15 @@ function StoryCanvas({
     if (!hasFitNodes || (!scopeChanged && !nodesBecameAvailable)) {
       return;
     }
+    if (eventLoad && eventLoad.status !== "ready" && activeScope?.kind === "sequence") {
+      // Keep the persisted sequence viewport during progressive hydration.
+      // Fitting the partial set would replace it as each batch changes the graph.
+      fittedCanvasRef.current = {
+        projectKey: canvasProjectKey,
+        scopeKey: canvasScopeKeyValue,
+      };
+      return;
+    }
     if (pendingLocateFitSkipRef.current && graph.nodes.some((node) => node.id === pendingLocateFitSkipRef.current)) {
       fittedCanvasRef.current = {
         projectKey: canvasProjectKey,
@@ -9408,22 +9597,25 @@ function StoryCanvas({
         duration: 0,
       });
     });
-  }, [activeScope, canvasNodeIdSignature, canvasProjectKey, canvasScopeKeyValue, graph.nodes, reactFlowInstance]);
+  }, [activeScope, canvasNodeIdSignature, canvasProjectKey, canvasScopeKeyValue, eventLoad?.status, graph.nodes, reactFlowInstance]);
 
-  const previousCanvasNodeIdsRef = useRef<{ scopeKey: string; ids: Set<string> } | undefined>(undefined);
+  const previousCanvasNodeIdsRef = useRef<{ scopeKey: string; ids: Set<string>; loadedEvents?: number } | undefined>(undefined);
   useEffect(() => {
     const scopeKey = activeScope ? canvasScopeKey(activeScope) : "";
     const currentIds = new Set(graph.nodes.map((node) => node.id));
     const previous = previousCanvasNodeIdsRef.current;
-    previousCanvasNodeIdsRef.current = { scopeKey, ids: currentIds };
-    if (!previous || previous.scopeKey !== scopeKey || !reactFlowInstance) return;
+    const eventBatchHydrated = Boolean(eventLoad && previous && previous.loadedEvents !== eventLoad.loadedEvents);
+    previousCanvasNodeIdsRef.current = { scopeKey, ids: currentIds, loadedEvents: eventLoad?.loadedEvents };
+    // Hydrating a batch adds existing story nodes. Do not pan the user's saved
+    // viewport to each one as background loading advances through the story.
+    if (!previous || previous.scopeKey !== scopeKey || !reactFlowInstance || eventBatchHydrated) return;
 
     const createdNode = graph.nodes.find((node) => !previous.ids.has(node.id));
     if (!createdNode) return;
     window.requestAnimationFrame(() => {
       ensureCanvasNodeVisible(reactFlowInstance, createdNode);
     });
-  }, [activeScope, canvasNodeIdSignature, graph.nodes, reactFlowInstance]);
+  }, [activeScope, canvasNodeIdSignature, eventLoad?.loadedEvents, graph.nodes, reactFlowInstance]);
 
   const positionForNewNode = useCallback(
     (position: CanvasPoint, kind: StoryCanvasNodeData["kind"]) =>
@@ -9895,7 +10087,7 @@ function StoryCanvas({
           })}
         </CanvasBreadcrumbScroller>
       </div>
-      <div data-onboarding-target="pathbranching.canvas" className="pb-canvas-tool-row" ref={canvasToolRowRef}>
+      <div className="pb-canvas-tool-row" ref={canvasToolRowRef}>
       <div className="canvas-layer-switch" role="toolbar" aria-label={ui.canvasLayer}>
         <button
           type="button"
@@ -9923,7 +10115,7 @@ function StoryCanvas({
       </div>
       <div className="pb-canvas-locale-tools">
       <div className="inspector-toolbar-host" ref={setInspectorToolbarHost} />
-      <CanvasFindingsButton findings={findings} project={project} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
+      <CanvasFindingsButton findings={findings} project={project} complete={!eventLoad || eventLoad.status === "ready"} onEnsureComplete={onEnsureCompleteStoryEvents} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
       <div className="canvas-locale-control">
         <button
           type="button"
@@ -9956,8 +10148,10 @@ function StoryCanvas({
 
       <ReactFlowProvider>
         <ReactFlow
+          data-onboarding-target="pathbranching.canvas"
           nodes={graph.nodes}
           edges={graph.edges}
+          onlyRenderVisibleElements={graph.nodes.length >= LARGE_CANVAS_NODE_THRESHOLD}
           nodeTypes={nodeTypes}
           edgeTypes={editableCanvasEdgeTypes}
           deleteKeyCode={null}
@@ -9970,7 +10164,10 @@ function StoryCanvas({
           selectionMode={SelectionMode.Partial}
           panOnDrag={[1]}
           onConnectEnd={finishConnectionGesture}
-          onInit={setReactFlowInstance}
+          onInit={handleReactFlowInit}
+          onMoveEnd={() => {
+            if (reactFlowInstance) reportViewportBounds(reactFlowInstance);
+          }}
           onSelectionChange={({ nodes: selectedNodes }) =>
             onBoundarySelectionChange(selectedNodes.map((node) => node.id))
           }
@@ -10075,6 +10272,20 @@ function StoryCanvas({
           snapToGrid={canvasBackground.snapToGrid}
           snapGrid={snapGrid}
         >
+          {eventLoad && eventLoad.status !== "ready" ? (
+            <Panel position="top-right" className={`pb-event-loading-progress${eventLoad.status === "incomplete" ? " incomplete" : ""}`}>
+              <span role="status" aria-live="polite">
+                {eventLoad.pendingEventIds.size > 0
+                  ? canvasUiLocale === "es"
+                    ? `Cargando eventos · ${eventLoad.loadedEvents.toLocaleString()} de ${eventLoad.totalEvents.toLocaleString()}`
+                    : `Loading events · ${eventLoad.loadedEvents.toLocaleString()} of ${eventLoad.totalEvents.toLocaleString()}`
+                  : canvasUiLocale === "es"
+                    ? `Carga incompleta · ${eventLoad.failedEvents} eventos con errores`
+                    : `Incomplete load · ${eventLoad.failedEvents} event errors`}
+              </span>
+              {eventLoad.pendingEventIds.size > 0 ? <progress max={Math.max(1, eventLoad.totalEvents)} value={eventLoad.loadedEvents} /> : null}
+            </Panel>
+          ) : null}
           {minimapOpen && !testingActive ? (
             <CanvasMiniMap locale={canvasUiLocale === "es" ? "es" : "en"} />
           ) : null}
@@ -10403,6 +10614,7 @@ function StoryCanvas({
                 </span>
                 <CanvasCreateMenuItem
                   icon={<StoryCanvasNodeIcon kind="speechBeat" size={17} />}
+                  onboardingTarget="pathbranching.create-speech"
                   onClick={() => {
                     onCreateDialogueBeat(
                       activeDialogueScope.eventId,
@@ -10456,6 +10668,7 @@ function StoryCanvas({
                 </span>
                 <CanvasCreateMenuItem
                   icon={<StoryCanvasNodeIcon kind="decision" size={17} />}
+                  onboardingTarget="pathbranching.create-decision"
                   onClick={() => {
                     onCreateDecision(
                       activeDialogueScope.eventId,
@@ -10496,6 +10709,7 @@ function StoryCanvas({
                     </CanvasCreateMenuItem>
                     <CanvasCreateMenuItem
                       icon={<StoryCanvasNodeIcon kind="speechBeat" size={17} />}
+                      onboardingTarget="pathbranching.create-speech"
                       onClick={() => {
                         onCreateEventDialogueBeat(
                           activeEventScope.id,
@@ -10509,6 +10723,7 @@ function StoryCanvas({
                     </CanvasCreateMenuItem>
                     <CanvasCreateMenuItem
                       icon={<StoryCanvasNodeIcon kind="decision" size={17} />}
+                      onboardingTarget="pathbranching.create-decision"
                       onClick={() => {
                         onCreateDecision(
                           activeEventScope.id,
@@ -10562,6 +10777,8 @@ function StoryCanvas({
                       label={canvasUiLocale === "es" ? "Subevento" : "Sub-event"}
                       icon={<StoryCanvasNodeIcon kind="event" size={17} />}
                       options={eventTypeOptions}
+                      triggerTarget="pathbranching.create-event-menu"
+                      optionTarget="pathbranching.create-event"
                       onSelect={(categoryId) => {
                         onCreateNestedEvent(
                           activeEventScope.id,
@@ -10573,6 +10790,7 @@ function StoryCanvas({
                     />
                     <CanvasCreateMenuItem
                       icon={<StoryCanvasNodeIcon kind="dialogue" size={17} />}
+                      onboardingTarget="pathbranching.create-dialogue"
                       onClick={() => {
                         onCreateDialogue(
                           activeEventScope.id,
@@ -10594,6 +10812,8 @@ function StoryCanvas({
                     label={canvasUiLocale === "es" ? "Evento" : "Event"}
                     icon={<StoryCanvasNodeIcon kind="event" size={17} />}
                     options={eventTypeOptions}
+                    triggerTarget="pathbranching.create-event-menu"
+                    optionTarget="pathbranching.create-event"
                     onSelect={(categoryId) => {
                       onCreateEvent(categoryId, {
                         ...positionForNewNode({ x: contextMenu.flowX, y: contextMenu.flowY }, "event"),
@@ -10691,6 +10911,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       "dismissed",
   );
   const [project, setProject] = useState<BranchingProject>();
+  const [canvasWindowRevision, setCanvasWindowRevision] = useState(0);
   const recoverableDraftCount = useAuthoringDraftCount(project?.projectId ?? "");
   const [pendingRecovery, setPendingRecovery] = useState<AuthoringRecovery>();
   const [fileState, setFileState] = useState<ProjectFileState>({
@@ -10876,6 +11097,14 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   } | undefined>(undefined);
   const canvasLayerModeRef = useRef<CanvasLayerMode>(canvasLayerMode);
   const workspaceRef = useRef<PathBranchingWorkspace | undefined>(undefined);
+  const eventLoaderRef = useRef<ProgressiveStoryEventLoader | undefined>(undefined);
+  const eventLoaderUnsubscribeRef = useRef<(() => void) | undefined>(undefined);
+  const pendingEventFileBatchesRef = useRef<StoryEventFileBatch[]>([]);
+  const pendingEventFileCountRef = useRef(0);
+  const activeLoadStoryIdRef = useRef<string | undefined>(undefined);
+  const backgroundEventLoadStartedRef = useRef(false);
+  const backgroundInteractionActiveRef = useRef(false);
+  const canvasEventWindowRef = useRef<ReadonlySet<string> | undefined>(undefined);
   const fileStateRef = useRef<ProjectFileState>({ dirty: false });
   const selectionRef = useRef<Selection | undefined>(undefined);
   const canvasClipboardRef = useRef<CanvasClipboard | undefined>(undefined);
@@ -10892,6 +11121,67 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     scopeKey: string;
     selection: Selection;
   } | undefined>(undefined);
+
+  useEffect(() => () => {
+    eventLoaderUnsubscribeRef.current?.();
+    eventLoaderRef.current?.cancel();
+  }, []);
+
+  useEffect(() => {
+    let resumeTimer: number | undefined;
+    let activePointers = 0;
+    const pauseBackground = () => {
+      backgroundInteractionActiveRef.current = true;
+      eventLoaderRef.current?.pauseBackground();
+    };
+    const scheduleResume = () => {
+      if (activePointers > 0) return;
+      if (resumeTimer !== undefined) window.clearTimeout(resumeTimer);
+      resumeTimer = window.setTimeout(() => {
+        resumeTimer = undefined;
+        if (activePointers > 0) return;
+        backgroundInteractionActiveRef.current = false;
+        eventLoaderRef.current?.resumeBackground();
+      }, 250); // Avoid resuming between closely spaced keystrokes or gestures.
+    };
+    const onPointerDown = () => {
+      activePointers += 1;
+      if (resumeTimer !== undefined) window.clearTimeout(resumeTimer);
+      resumeTimer = undefined;
+      pauseBackground();
+    };
+    const onPointerEnd = () => {
+      activePointers = Math.max(0, activePointers - 1);
+      scheduleResume();
+    };
+    const onActivity = () => {
+      pauseBackground();
+      scheduleResume();
+    };
+    const onWindowBlur = () => {
+      activePointers = 0;
+      scheduleResume();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerEnd, true);
+    document.addEventListener("pointercancel", onPointerEnd, true);
+    document.addEventListener("keydown", onActivity, true);
+    document.addEventListener("keyup", onActivity, true);
+    document.addEventListener("input", onActivity, true);
+    document.addEventListener("wheel", onActivity, { capture: true, passive: true });
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerEnd, true);
+      document.removeEventListener("pointercancel", onPointerEnd, true);
+      document.removeEventListener("keydown", onActivity, true);
+      document.removeEventListener("keyup", onActivity, true);
+      document.removeEventListener("input", onActivity, true);
+      document.removeEventListener("wheel", onActivity, true);
+      window.removeEventListener("blur", onWindowBlur);
+      if (resumeTimer !== undefined) window.clearTimeout(resumeTimer);
+    };
+  }, []);
 
   useEffect(() => {
     const universePath = fileState.universePath;
@@ -10940,11 +11230,16 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         universePath?: string;
         storyPath?: string;
         modifiedMs?: number;
+        normalized?: boolean;
       } = {},
     ) => {
       const currentProject = projectRef.current;
-      const normalizedProject = currentProject && narrativeContentUnchanged(currentProject, nextProject)
-        ? nextProject : normalizeProject(nextProject);
+      const normalizedProject = options.normalized
+        ? nextProject
+        : currentProject && narrativeContentUnchanged(currentProject, nextProject)
+        ? nextProject : normalizeProject(nextProject, {
+            preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad && workspaceRef.current.eventLoad.status !== "ready"),
+          });
       const normalizedScope = activeCanvasScope(normalizedProject);
       const model = buildStoryCanvasModel(normalizedProject, {
         nodeColors: settingsRef.current.nodeColors,
@@ -10953,6 +11248,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: canvasLayerModeRef.current,
         interfaceLocale: uiLocaleRef.current,
+        eventWindowIds: canvasEventWindowRef.current,
+        pendingEventIds: workspaceRef.current?.eventLoad?.pendingEventIds,
       });
       if (options.dirty || options.revision) {
         projectRevisionRef.current += 1;
@@ -11012,8 +11309,73 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     [],
   );
 
+  const updateCanvasEventWindow = useCallback((bounds: { x: number; y: number; width: number; height: number }) => {
+    const currentProject = projectRef.current;
+    const loader = eventLoaderRef.current;
+    if (!currentProject || !loader) return;
+    const scope = activeCanvasScope(currentProject);
+    const visibleIds = scope?.kind === "event"
+      ? [scope.id]
+      : scope?.kind === "dialogue"
+        ? [scope.eventId]
+        : sequenceEventIdsInBounds(currentProject, bounds, scope, 1);
+    const eventWindowIds = new Set(visibleIds);
+    const visibleLoadedEvents = currentProject.events.filter((event) => eventWindowIds.has(event.id));
+    for (const event of visibleLoadedEvents) {
+      for (const transition of event.transitions ?? []) {
+        if (currentProject.sequences.some((sequence) => sequence.eventIds.includes(transition.to))) eventWindowIds.add(transition.to);
+      }
+    }
+    const previousWindow = canvasEventWindowRef.current;
+    const changed = !previousWindow || previousWindow.size !== eventWindowIds.size || [...eventWindowIds].some((id) => !previousWindow.has(id));
+    if (changed) {
+      canvasEventWindowRef.current = eventWindowIds;
+      setCanvasWindowRevision((revision) => revision + 1);
+    }
+
+    const pendingEventIds = workspaceRef.current?.eventLoad?.pendingEventIds;
+    if (!pendingEventIds) return;
+    const requested = [...eventWindowIds].filter((id) => pendingEventIds.has(id));
+    if (requested.length) void loader.request(requested, "viewport");
+    if (!backgroundEventLoadStartedRef.current) {
+      backgroundEventLoadStartedRef.current = true;
+      void loader.loadRemaining([...pendingEventIds]);
+    }
+  }, []);
+
+  const ensureCompleteStoryEvents = useCallback(() => {
+    const eventLoad = workspaceRef.current?.eventLoad;
+    if (!eventLoad || eventLoad.status === "ready") return true;
+
+    const pendingEventIds = [...eventLoad.pendingEventIds];
+    const loader = eventLoaderRef.current;
+    if (pendingEventIds.length && loader) {
+      void loader.loadRemaining(pendingEventIds, { resumeBackground: true });
+      setMessage(uiLocaleRef.current === "es"
+        ? "Cargando los eventos restantes antes de completar la operación…"
+        : "Loading the remaining events before completing this operation…");
+    } else {
+      const reason = workspaceRef.current?.saveBlockReasons?.[0];
+      setMessage(uiLocaleRef.current === "es"
+        ? `No se puede completar la operación hasta reparar la carga de eventos.${reason ? ` ${reason}` : ""}`
+        : `This operation needs a complete story load before it can continue.${reason ? ` ${reason}` : ""}`);
+    }
+    return false;
+  }, []);
+
   const applyWorkspace = useCallback(
-    (nextWorkspace: PathBranchingWorkspace, universePath: string) => {
+    (nextWorkspace: PathBranchingWorkspace, universePath: string, eventLoader?: ProgressiveStoryEventLoader) => {
+      eventLoaderUnsubscribeRef.current?.();
+      eventLoaderRef.current?.cancel();
+      eventLoaderUnsubscribeRef.current = undefined;
+      eventLoaderRef.current = eventLoader;
+      if (backgroundInteractionActiveRef.current) eventLoader?.pauseBackground();
+      pendingEventFileBatchesRef.current = [];
+      pendingEventFileCountRef.current = 0;
+      activeLoadStoryIdRef.current = nextWorkspace.activeProject.storyId;
+      backgroundEventLoadStartedRef.current = false;
+      canvasEventWindowRef.current = eventLoader ? new Set<string>() : undefined;
+      setCanvasWindowRevision((revision) => revision + 1);
       const savedSession = normalizeWorkspaceSession(
         settingsRef.current.workspaceSessions?.[universePath],
       );
@@ -11024,7 +11386,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         ...nextWorkspace.activeProject,
         canonPropertyDescriptors: canonicalPropertyDescriptors(nextWorkspace.canonIndex.propertiesConfig),
         universeRootPath: universePath,
-      });
+      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad) });
       setPendingRecovery(readAuthoringRecovery(universePath, activeProject.storyId ?? ""));
       const restoredScope =
         savedSession.activeScope ??
@@ -11040,7 +11402,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
               ? restoredScope.id
               : activeProject.canvas?.activeSequenceId,
         },
-      });
+      }, { preserveUnloadedEventReferences: Boolean(nextWorkspace.eventLoad) });
       const normalizedScope = activeCanvasScope(activeProjectWithScope);
       const model = buildStoryCanvasModel(activeProjectWithScope, {
         nodeColors: settingsRef.current.nodeColors,
@@ -11049,12 +11411,44 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: restoredLayerMode,
         interfaceLocale: uiLocaleRef.current,
+        eventWindowIds: canvasEventWindowRef.current,
+        pendingEventIds: nextWorkspace.eventLoad?.pendingEventIds,
       });
       workspaceRef.current = nextWorkspace;
       projectRef.current = activeProjectWithScope;
       projectRevisionRef.current = 0;
       savedRevisionRef.current = 0;
       setWorkspace(nextWorkspace);
+      if (eventLoader && nextWorkspace.activeProject.storyId) {
+        const loadingStoryId = nextWorkspace.activeProject.storyId;
+        eventLoaderUnsubscribeRef.current = eventLoader.subscribe((batch) => {
+          const currentWorkspace = workspaceRef.current;
+          const currentProject = projectRef.current;
+          if (!currentWorkspace || currentWorkspace.activeProject.storyId !== loadingStoryId || activeLoadStoryIdRef.current !== loadingStoryId) return;
+          pendingEventFileBatchesRef.current.push(batch);
+          pendingEventFileCountRef.current += batch.eventIds.length;
+          const currentViewport = canvasEventWindowRef.current;
+          const includesViewportEvent = Boolean(currentViewport && batch.eventIds.some((id) => currentViewport.has(id)));
+          const completesLoad = pendingEventFileCountRef.current >= (currentWorkspace.eventLoad?.pendingEventIds.size ?? Number.POSITIVE_INFINITY);
+          if (pendingEventFileCountRef.current < 256 && !includesViewportEvent && !completesLoad) return;
+
+          const queuedBatches = pendingEventFileBatchesRef.current;
+          pendingEventFileBatchesRef.current = [];
+          pendingEventFileCountRef.current = 0;
+          const mergedBatch: StoryEventFileBatch = {
+            eventIds: queuedBatches.flatMap((queued) => queued.eventIds),
+            files: queuedBatches.flatMap((queued) => queued.files),
+            errors: queuedBatches.flatMap((queued) => queued.errors),
+          };
+          const merged = mergeProgressiveEventBatch({
+            ...currentWorkspace,
+            activeProject: currentProject ?? currentWorkspace.activeProject,
+          }, mergedBatch);
+          workspaceRef.current = merged.workspace;
+          setWorkspace(merged.workspace);
+          applyProject(merged.project, { normalized: true });
+        });
+      }
       try { setItemCatalog(itemCatalogFromFiles(nextWorkspace.files)); setItemCatalogError(undefined); }
       catch (catalogError) { setItemCatalog(emptyItemCatalog()); setItemCatalogError(catalogError instanceof Error ? catalogError.message : String(catalogError)); }
       try { setInteractionLibrary(interactionLibraryFromFiles(nextWorkspace.files)); setInteractionLibraryError(undefined); }
@@ -11202,6 +11596,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           authoringDisplay: settingsRef.current.authoringDisplay,
           canvasLayerMode: canvasLayerModeRef.current,
           interfaceLocale: uiLocaleRef.current,
+          eventWindowIds: canvasEventWindowRef.current,
+          pendingEventIds: snapshot.workspace?.eventLoad?.pendingEventIds,
         });
         setProject(snapshot.project);
         setActiveScopeState(snapshotScope);
@@ -12250,8 +12646,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const opened = await openUniverseStory(
           fileStateRef.current.universePath,
           storyId,
+          { progressive: true },
         );
-        applyWorkspace(opened.workspace, opened.path);
+        applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
         if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
@@ -12298,11 +12695,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     async function loadInitialProject() {
       if (settings.worldnotionBridge.connected && settings.lastOpenedProject) {
         try {
-          const opened = await openUniversePath(settings.lastOpenedProject);
+          const opened = await openUniversePath(settings.lastOpenedProject, { progressive: true });
           if (disposed) {
             return;
           }
-          applyWorkspace(opened.workspace, opened.path);
+          applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
           if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
           setSettings((current) => ({
             ...rememberRecentProject(current, opened.path),
@@ -12365,6 +12762,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       authoringDisplay: settings.authoringDisplay,
       canvasLayerMode,
       interfaceLocale: uiLocale,
+      eventWindowIds: canvasEventWindowRef.current,
+      pendingEventIds: workspaceRef.current?.eventLoad?.pendingEventIds,
     });
     setActiveScopeState(scope);
     // Layer changes are a single graph replacement. Interpolating nodes while
@@ -12373,7 +12772,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     setNodes(model.nodes);
     setEdges(model.edges);
     setFiles(model.files);
-  }, [canvasLayerMode, settings.authoringDisplay, settings.nodeColors, uiLocale]);
+  }, [canvasLayerMode, canvasWindowRevision, settings.authoringDisplay, settings.nodeColors, uiLocale]);
 
   const changeTheme = useCallback((theme: ThemeId) => {
     setSettings((current) => ({ ...current, theme }));
@@ -12558,7 +12957,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (!opened) {
         return;
       }
-      applyWorkspace(opened.workspace, opened.path);
+      applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
       if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
       setSettings((current) => ({
         ...rememberRecentProject(current, opened.path),
@@ -12619,10 +13018,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     if (fileStateRef.current.universePath === path && !browserDirectory) return;
 
     let disposed = false;
-    void openUniversePath(path)
+    void openUniversePath(path, { progressive: true })
       .then((opened) => {
         if (disposed) return;
-        applyWorkspace(opened.workspace, opened.path);
+        applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
         if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
@@ -12774,12 +13173,44 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       setSettings((current) =>
         rememberRecentProject(current, currentFileState.universePath as string),
       );
+      const currentProjectAfterSave = projectRef.current;
+      let savedProject = isStillCurrentRevision
+        ? snapshot.savedProject
+        : currentProjectAfterSave ?? snapshot.savedProject;
+      if (isStillCurrentRevision && currentProjectAfterSave && currentProjectAfterSave.storyId === snapshot.savedProject.storyId) {
+        const savedEventIds = new Set(snapshot.savedProject.events.map((event) => event.id));
+        const newlyHydrated = currentProjectAfterSave.events.filter((event) => !savedEventIds.has(event.id));
+        if (newlyHydrated.length) {
+          const sequenceOrder = new Map<string, number>();
+          for (const sequence of snapshot.savedProject.sequences) {
+            sequence.eventIds.forEach((eventId) => {
+              if (!sequenceOrder.has(eventId)) sequenceOrder.set(eventId, sequenceOrder.size);
+            });
+          }
+          savedProject = {
+            ...snapshot.savedProject,
+            events: [...snapshot.savedProject.events, ...newlyHydrated].sort((left, right) =>
+              (sequenceOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (sequenceOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+            ),
+          };
+        }
+      }
+      const workspaceAfterSave = workspaceRef.current;
       const nextWorkspace = workspaceRef.current
           ? {
               ...snapshot.nextWorkspace,
-              activeProject: isStillCurrentRevision
-                ? snapshot.savedProject
-                : (projectRef.current ?? workspaceRef.current.activeProject),
+              activeProject: savedProject,
+              files: (() => {
+                const byPath = new Map(workspaceAfterSave?.files.map((file) => [file.relativePath, file]) ?? []);
+                snapshot.nextWorkspace.files.forEach((file) => byPath.set(file.relativePath, file));
+                return [...byPath.values()];
+              })(),
+              fileIndex: workspaceAfterSave?.fileIndex ?? snapshot.nextWorkspace.fileIndex,
+              eventLoad: workspaceAfterSave?.eventLoad ?? snapshot.nextWorkspace.eventLoad,
+              loadWarnings: workspaceAfterSave?.loadWarnings ?? snapshot.nextWorkspace.loadWarnings,
+              loadingIncomplete: workspaceAfterSave?.loadingIncomplete ?? snapshot.nextWorkspace.loadingIncomplete,
+              saveBlocked: workspaceAfterSave?.saveBlocked ?? snapshot.nextWorkspace.saveBlocked,
+              saveBlockReasons: workspaceAfterSave?.saveBlockReasons ?? snapshot.nextWorkspace.saveBlockReasons,
               createdDefaultStory: false,
             }
           : workspaceRef.current;
@@ -13512,7 +13943,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         })),
         ...(current.assets ?? []).filter((asset) => asset.origin === "uncanon"),
       ];
-      const next = normalizeProject({ ...current, assets: nextAssets });
+      const next = normalizeProject({ ...current, assets: nextAssets }, {
+        preserveUnloadedEventReferences: Boolean(workspaceRef.current?.eventLoad),
+      });
       projectRef.current = next;
       setProject(next);
     }).catch(() => undefined);
@@ -13524,6 +13957,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
       if (!project) {
         return;
       }
+      if (!ensureCompleteStoryEvents()) return;
       try {
         const preview = buildExportPreview(project, mode);
         const result =
@@ -13550,7 +13984,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         );
       }
     },
-    [exportPreviewMode, project],
+    [ensureCompleteStoryEvents, exportPreviewMode, project],
   );
 
   const importTwine = useCallback(
@@ -13580,8 +14014,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         return;
       }
       try {
-        const opened = await openUniversePath(path);
-        applyWorkspace(opened.workspace, opened.path);
+        const opened = await openUniversePath(path, { progressive: true });
+        applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
         if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setSettings((current) => ({
           ...rememberRecentProject(current, opened.path),
@@ -13737,6 +14171,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         authoringDisplay: settingsRef.current.authoringDisplay,
         canvasLayerMode: canvasLayerModeRef.current,
         interfaceLocale: uiLocaleRef.current,
+        eventWindowIds: canvasEventWindowRef.current,
+        pendingEventIds: workspaceRef.current?.eventLoad?.pendingEventIds,
       });
       projectRef.current = nextProject;
       setProject(nextProject);
@@ -13784,9 +14220,10 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   }, [navigateCanvasScope]);
 
   const validateNarrative = useMemo(() => createNarrativeValidationCache(), []);
-  const narrativeFindings = project ? validateNarrative(project) : [];
+  const storyEventsComplete = !workspace?.eventLoad || workspace.eventLoad.status === "ready";
+  const narrativeFindings = storyEventsComplete && project ? validateNarrative(project) : [];
   const validateCanvasTopology = useMemo(() => createCanvasValidationCache(), []);
-  const canvasFindings = validateCanvasTopology(nodes, edges);
+  const canvasFindings = storyEventsComplete ? validateCanvasTopology(nodes, edges) : [];
   const findings = useMemo(() => project ? [...narrativeFindings, ...canvasFindings] : [], [project, narrativeFindings, canvasFindings]);
   const testCanvasNodes = useMemo(() => nodes.map(node => {
     const className = [node.className, node.id === testPosition ? "authoring-position-active" : testVisited.includes(node.id) ? "authoring-route-active" : ""].filter(Boolean).join(" ");
@@ -14181,8 +14618,9 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         const opened = await openUniverseStory(
           currentFileState.universePath as string,
           snapshot.nextWorkspace.activeStory?.id ?? "",
+          { progressive: true },
         );
-        applyWorkspace(opened.workspace, opened.path);
+        applyWorkspace(opened.workspace, opened.path, opened.eventLoader);
         if (opened.workspace.activeProject && !opened.workspace.createdDefaultStory) reportLearning("document-reopened", opened.workspace.activeProject.storyId ?? opened.workspace.activeProject.projectId, opened.path);
         setFileState((current) => {
           const nextState = { ...current, dirty: false };
@@ -17455,6 +17893,11 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
     selectedNodeId: selection?.type === "node" ? selection.id : undefined,
     documentKey: `${fileState.universePath ?? ""}:${project?.storyId ?? project?.projectId ?? ""}`,
   });
+  const dispatchStoryTestWhenEventsReady = useCallback((command: Parameters<typeof dispatchStoryTest>[0]) => {
+    const startsStoryRun = command.type === "start" || command.type === "restart" || (command.type === "play" && !storyTest.active);
+    if (startsStoryRun && !ensureCompleteStoryEvents()) return;
+    dispatchStoryTest(command);
+  }, [dispatchStoryTest, ensureCompleteStoryEvents, storyTest.active]);
   stopStoryTestRef.current = () => { dispatchStoryTest({ type: "stop" }); };
   const storyTestWindows = useStoryTestWindows(storyTest, storyTestController.request);
   useEffect(() => {
@@ -17935,7 +18378,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   const exportPanelActions = {
     onCollapsedChange: (collapsed: boolean) => setPanelCollapsedState("export", collapsed),
     onContextMenu: openPanelContextMenu,
-    onPreview: (mode: ExportPreviewMode) => { setExportPreviewMode(mode); setExportOpen(true); },
+    onPreview: (mode: ExportPreviewMode) => { if (!ensureCompleteStoryEvents()) return; setExportPreviewMode(mode); setExportOpen(true); },
     onLocateDiagnostic: locateExportDiagnostic,
     onExport: (mode: ExportPreviewMode) => { void exportRuntime(mode); },
     onImportTwine: importTwine,
@@ -17980,7 +18423,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
   useLearningAdapter(suiteChrome?.learning, {
     introduction: pathbranchingIntroduction, lessons: pathbranchingLessons,
     available: Boolean(fileState.universePath && !initialLoading),
-    busy: showSettings || showFeedback || exportOpen || Boolean(nameDialog),
+    busy: showSettings || showFeedback || exportOpen,
     subjectId: project?.storyId ?? project?.projectId,
     section: !panelCollapsed.export || exportOpen ? "export" : contextTab === "test" ? "preview" : explorerTab === "logic" ? "logic" : explorerTab === "outline" ? "outline" : "canvas",
     openSection: (section, userInitiated) => {
@@ -18300,13 +18743,14 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onAuthoringMutation={async mutate=>{if(projectRef.current) await commitStructuralAction("Updated story",mutate(projectRef.current));}}
             onOpenInspectorSection={openInspector} onOpenStoryPlay={openStoryPlay} onPinInspectorTarget={pinInspectorTarget} onUnpinInspectorTarget={unpinInspectorTarget}
             onCollapseInspector={()=>{setEventInspector(state=>({...state,open:true,expandedEventId:undefined}));setExpandedInspectorTabId(undefined);if(selection?.type==="node"){deselectCanvasNode(selection.id);setSelection(undefined);}if(selection?.type==="storyDebug")dispatchStoryTest({type:"debug",open:false});}}
-            inspectorDebugContent={<div className="inspector-debug-content"><button type="button" onClick={()=>dispatchStoryTest({type:"debug",open:false})}>{uiLocale === "es" ? "Cerrar depuración" : "Close debug"}</button>{storyTestWindows.canDetach ? <button type="button" onClick={()=>{void storyTestWindows.detach("preview");}}>{uiLocale === "es" ? "Abrir Play Mode completo" : "Open full Play Mode"}</button> : null}<StoryTestDebug integrated snapshot={storyTest} dispatch={dispatchStoryTest}/></div>}
+             inspectorDebugContent={<div className="inspector-debug-content"><button type="button" onClick={()=>dispatchStoryTest({type:"debug",open:false})}>{uiLocale === "es" ? "Cerrar depuración" : "Close debug"}</button>{storyTestWindows.canDetach ? <button type="button" onClick={()=>{void storyTestWindows.detach("preview");}}>{uiLocale === "es" ? "Abrir Play Mode completo" : "Open full Play Mode"}</button> : null}<Suspense fallback={<p role="status">{uiLocale === "es" ? "Cargando depuración…" : "Loading debug…"}</p>}><StoryTestDebug integrated snapshot={storyTest} dispatch={dispatchStoryTest}/></Suspense></div>}
             propertiesConfig={workspace?.canonIndex.propertiesConfig}
             files={files}
             nodes={testCanvasNodes}
             edges={testCanvasEdges}
             selection={selection}
             findings={findings}
+            eventLoad={workspace?.eventLoad}
             message={message}
             showStatusMessages={settings.showStatusMessages}
             activeScope={activeScope}
@@ -18327,13 +18771,13 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             expandedInspectorTabId={expandedInspectorTabId}
             inspectorMaximized={inspectorMaximized}
             canvasBackground={settings.canvasBackground}
-            storyTestControls={<StoryTestControls compact snapshot={storyTest} dispatch={dispatchStoryTest} onOpenPlay={openStoryPlay} showScenarioManager />}
+            storyTestControls={<StoryTestControls compact snapshot={storyTest} dispatch={dispatchStoryTestWhenEventsReady} onOpenPlay={openStoryPlay} showScenarioManager />}
             testingActive={storyTest.active}
-            storyTestWorkspace={storyTestWindows.detached.preview ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "La prueba está en otra ventana" : "Testing is in another window"}</strong><p>{uiLocale === "es" ? "El recorrido y sus valores se mantienen en este documento." : "The run and its values remain in this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver a acoplar" : "Redock"}</button></div> : <StoryTestPlayback snapshot={storyTest} dispatch={dispatchStoryTest} locale={uiLocale} />}
+             storyTestWorkspace={storyTestWindows.detached.preview ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "La prueba está en otra ventana" : "Testing is in another window"}</strong><p>{uiLocale === "es" ? "El recorrido y sus valores se mantienen en este documento." : "The run and its values remain in this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver a acoplar" : "Redock"}</button></div> : <Suspense fallback={<div className="pb-context-empty" role="status">{uiLocale === "es" ? "Cargando Play Mode…" : "Loading Play Mode…"}</div>}><StoryTestPlayback snapshot={storyTest} dispatch={dispatchStoryTestWhenEventsReady} locale={uiLocale} /></Suspense>}
             storyTestPlayTab={<>
               {storyTestWindows.detached.preview
                 ? <div className="pb-context-empty"><strong>{uiLocale === "es" ? "Play Mode y Debug están en otra ventana" : "Play Mode and Debug are in another window"}</strong><p>{uiLocale === "es" ? "La reproducción, configuración y traza siguen vinculadas a este documento." : "Playback, settings and trace remain connected to this document."}</p><button type="button" onClick={() => { void storyTestWindows.redock("preview"); }}>{uiLocale === "es" ? "Volver al inspector" : "Return to inspector"}</button></div>
-                : <StoryTestInspectorView snapshot={storyTest} dispatch={dispatchStoryTest} locale={uiLocale} fullscreen={contextFocus} detachable={storyTestWindows.canDetach} onDetach={detachStoryPlay} onOpenPlay={openStoryPlay} />}
+                 : <Suspense fallback={<div className="pb-context-empty" role="status">{uiLocale === "es" ? "Cargando Play Mode…" : "Loading Play Mode…"}</div>}><StoryTestInspectorView snapshot={storyTest} dispatch={dispatchStoryTestWhenEventsReady} locale={uiLocale} fullscreen={contextFocus} detachable={storyTestWindows.canDetach} onDetach={detachStoryPlay} onOpenPlay={openStoryPlay} /></Suspense>}
               {storyTestWindows.error ? <div className="story-test-window-error" role="alert"><span>{uiLocale === "es" ? "No se pudo desacoplar. El recorrido sigue disponible aquí." : "Could not detach. The run remains available here."} {storyTestWindows.error}</span><button type="button" onClick={storyTestWindows.clearError}>{uiLocale === "es" ? "Cerrar" : "Dismiss"}</button></div> : null}
             </>}
             minimapOpen={settings.minimapOpen}
@@ -18344,6 +18788,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
+            onCanvasViewportChange={updateCanvasEventWindow}
+            onEnsureCompleteStoryEvents={ensureCompleteStoryEvents}
             onAddTransitionWaypoint={addTransitionWaypoint}
             onMoveTransitionWaypoint={moveTransitionWaypoint}
             onRemoveTransitionWaypoint={removeTransitionWaypoint}

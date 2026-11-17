@@ -1,5 +1,5 @@
 import { useApplicationActive, useApplicationEffect } from "./useApplicationActivity.js";
-import { Children, cloneElement, createContext, isValidElement, useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
+import { Children, cloneElement, createContext, isValidElement, Suspense, useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import { allocateAuthoringWorkspace, isExplorerPanel, type AdaptivePanel, type ExplorerPanelId } from "../adaptiveWorkspace.js";
 import { clampExplorerWidth, type WorkspacePanelId } from "../workspaceSettings.js";
 import { useInterfaceLocale } from "../i18n.js";
@@ -67,6 +67,16 @@ export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, r
     ?? availableExplorer.find(panel => panel.id === explorerTab && panel.visible)
     ?? availableExplorer.find(panel => panel.visible)
     ?? availableExplorer[0];
+  const selectedExplorerId = selectedExplorer && isExplorerPanel(selectedExplorer.id) ? selectedExplorer.id : undefined;
+  const [loadedExplorerViews, setLoadedExplorerViews] = useState<Set<ExplorerPanelId>>(
+    () => new Set<ExplorerPanelId>(selectedExplorerId ? [selectedExplorerId] : []),
+  );
+  useEffect(() => {
+    if (!selectedExplorerId) return;
+    setLoadedExplorerViews(current => current.has(selectedExplorerId)
+      ? current
+      : new Set(current).add(selectedExplorerId));
+  }, [selectedExplorerId]);
   const explorerContent = useSurfaceMotion<HTMLDivElement>(selectedExplorer?.id);
   const explorerOpen = !focus && Boolean(selectedExplorer?.visible && !selectedExplorer.collapsed);
   const safeExplorerWidth = clampExplorerWidth(explorerWidth);
@@ -135,7 +145,8 @@ export function AdaptiveWorkspace({ panels, requestedPanel, onCollapsedChange, r
           <ExplorerEmbeddedContext.Provider value={true}><div ref={explorerContent} id="pb-explorer-content" className="pb-explorer-content" role="tabpanel" aria-label={labels[selectedExplorer.id]}>{explorerItems.map(child => {
             const element = child as ReactElement<{ id: WorkspacePanelId }>;
             const id = element.props.id as ExplorerPanelId;
-            return <div key={`${id}-${viewReloads[id] ?? 0}`} className="pb-explorer-section" hidden={element.props.id !== selectedExplorer.id}>{child}</div>;
+            const shouldRender = id === selectedExplorerId || loadedExplorerViews.has(id);
+            return <div key={`${id}-${viewReloads[id] ?? 0}`} className="pb-explorer-section" hidden={element.props.id !== selectedExplorer.id}>{shouldRender ? <Suspense fallback={<div className="pb-explorer-loading" role="status">{locale === "es" ? "Cargando vista…" : "Loading view…"}</div>}>{child}</Suspense> : null}</div>;
           })}</div></ExplorerEmbeddedContext.Provider>
         </div>
         {explorerOpen ? <button type="button" className="resize-handle pb-explorer-resize-handle" aria-label={locale === "es" ? "Cambiar ancho de gestión" : "Resize management panel"} title={locale === "es" ? "Cambiar ancho; doble clic para restablecer" : "Resize width; double-click to reset"} onPointerDown={startExplorerResize} onDoubleClick={onResetExplorerWidth} /> : null}

@@ -306,17 +306,23 @@ function decisionPathNode(
   };
 }
 
-function buildEventPathNode(project: BranchingProject, event: EventNode, scope: CanvasScope, visited: Set<string>): PathTreeNode {
+function buildEventPathNode(
+  project: BranchingProject,
+  event: EventNode,
+  scope: CanvasScope,
+  visited: Set<string>,
+  eventById: ReadonlyMap<string, EventNode>,
+): PathTreeNode {
   const nestedScope: CanvasScope = { kind: "event", id: event.id };
   const childEvents = visited.has(event.id)
     ? []
     : (event.childEventIds ?? [])
-        .map((childId) => project.events.find((candidate) => candidate.id === childId))
+        .map((childId) => eventById.get(childId))
         .filter((candidate): candidate is EventNode => Boolean(candidate));
   const nextVisited = new Set(visited).add(event.id);
 
   const children: PathTreeNode[] = [
-    ...childEvents.map((child) => buildEventPathNode(project, child, nestedScope, nextVisited)),
+    ...childEvents.map((child) => buildEventPathNode(project, child, nestedScope, nextVisited, eventById)),
     ...(event.dialogueStarts ?? []).map((start): PathTreeNode => ({
       id: `dialogue-start:${event.id}:${start.id}`,
       kind: "trigger",
@@ -375,8 +381,9 @@ function buildEventPathNode(project: BranchingProject, event: EventNode, scope: 
 export function buildPathTree(project: BranchingProject, sequence: Sequence | undefined): PathTreeNode[] {
   if (!sequence) return [];
   const rootScope: CanvasScope = { kind: "sequence", id: sequence.id };
+  const eventById = new Map(project.events.map((event) => [event.id, event]));
   return sequence.eventIds
-    .map((eventId) => project.events.find((event) => event.id === eventId))
+    .map((eventId) => eventById.get(eventId))
     .filter((event): event is EventNode => Boolean(event))
-    .map((event) => buildEventPathNode(project, event, rootScope, new Set()));
+    .map((event) => buildEventPathNode(project, event, rootScope, new Set(), eventById));
 }

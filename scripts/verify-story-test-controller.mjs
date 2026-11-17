@@ -357,7 +357,9 @@ test('commands and debug validation use the captured document, including before 
   run(c, { type: 'play' });
   assert.equal(c.dispatch({ type: 'choose', outcomeId: 'open' }), true);
   assert.equal(snap(c).nodeId, 'beat:room:reward', 'Choice execution uses the same captured schema as its displayed evaluation.');
-  c.updateProject(p);
+  // The editor publishes immutable snapshots; keep the project ID while
+  // giving the controller a new document reference for the authored change.
+  c.updateProject(structuredClone(p));
   assert.equal(snap(c).changed, true, 'Even a same-identity update detects changes to narrative inputs.');
   assert.equal(snap(c).paused, true);
 });

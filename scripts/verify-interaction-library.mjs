@@ -18,7 +18,7 @@ assert.equal(restoredCheck.modifier,3);
 const fixture = () => normalizeProject({ specVersion:'0.1',projectId:'library-test',entrySequenceId:'s',name:'Library',canonRefs:[],sequences:[{id:'s',name:'S',eventIds:['e'],entryEventId:'e'}],branches:[],scripts:[],variables:{},externalFunctions:[],events:[{id:'e',name:'E',type:'normal',transitions:[]}] });
 const library = defaultInteractionMechanicsLibrary();
 const dicePresets = library.presets.filter(item => item.mechanic.kind === 'dice');
-assert.deepEqual(dicePresets.map(item => item.name), ['D9','D20','D100','D4','D6','D8','D10','D12','2D6','2D4 + 1D2','2D10 + 3D9']);
+assert.deepEqual(dicePresets.map(item => item.name), ['D9','D20','D100','D4','D6','D8','D10','D12','Dado 0–1','2D6','2D4 + 1D2','2D10 + 3D9']);
 for (const preset of dicePresets) assert.deepEqual(preset.results.map(item=>item.range),[diceBounds(preset.mechanic,preset.mechanic.modifier)]);
 for (const kind of ['dice', 'skillcheck', 'qte', 'custom']) assert.ok(library.presets.filter(item => (item.mechanic.kind === 'opposedcheck' ? 'skillcheck' : item.mechanic.kind) === kind).length >= 3, `At least three templates for ${kind}`);
 for (const preset of library.presets.filter(item => item.mechanic.kind === 'opposedcheck')) {
@@ -98,7 +98,7 @@ const localSkill=customizeInteractionUse(checkCreation.project,'e',checkCreation
 const refreshedCheck=applyInteractionPreset(localSkill,'e',checkCreation.useId,{...template,revision:2,mechanic:{...template.mechanic,difficulty:1,modifier:0,dice:{count:1,sides:9}}}).events[0].interactionDefinitions[0];
 assert.equal(refreshedCheck.mechanic.difficulty,25);assert.equal(refreshedCheck.mechanic.modifier,7);assert.deepEqual(refreshedCheck.mechanic.skill.subject,{kind:'entity',entityId:'hero'});
 const guarded=structuredClone(first.project);guarded.events[0].availability={type:'interactionResult',useId:first.useId,resultId:current.results[0].id,operator:'=='};
-assert.throws(()=>applyInteractionPreset(guarded,'e',first.useId,{...library.presets[1],results:[{id:'different',name:'Distinto',range:{min:1,max:20}}]}),/resultados usados/);
+assert.throws(()=>applyInteractionPreset(guarded,'e',first.useId,{...library.presets[1],presetKind:'recipe',results:[{id:'different',name:'Distinto',range:{min:1,max:20}}]}),/resultados usados/);
 assert.equal(original.events[0].interactionUses?.length??0,0);
 const placementProject=fixture();
 placementProject.events[0].decisions=[{id:'d',name:'Decisiones 1',type:'dialogue',outcomes:[{id:'a',name:'A',visibleText:'A'}]}];

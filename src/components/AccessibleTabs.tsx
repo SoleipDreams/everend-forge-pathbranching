@@ -1,7 +1,7 @@
 import { useId, useRef, type ReactNode } from "react";
 import "../accessibleUi.css";
 
-export type AccessibleTab = { id: string; label: ReactNode; title?: string; disabled?: boolean };
+export type AccessibleTab = { id: string; label: ReactNode; title?: string; disabled?: boolean; onboardingTarget?: string };
 
 /** Automatic-activation tabs: one tab stop, arrow keys, Home and End. */
 export function AccessibleTabs({
@@ -34,6 +34,7 @@ export function AccessibleTabs({
           tabIndex={selected === tab.id ? 0 : -1}
           disabled={tab.disabled}
           className={selected === tab.id ? "active" : ""}
+          data-onboarding-target={tab.onboardingTarget}
           ref={(element) => {
             if (element) tabRefs.current.set(tab.id, element);
             else tabRefs.current.delete(tab.id);

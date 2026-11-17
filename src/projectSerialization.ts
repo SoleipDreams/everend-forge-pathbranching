@@ -421,7 +421,16 @@ function addCompatibilityLogicCapabilities(project: BranchingProject): Branching
   return { ...project, logicPropertyOverrides: Array.from(overrides.values()) };
 }
 
-export function normalizeProject(project: BranchingProject): BranchingProject {
+export function normalizeProject(
+  project: BranchingProject,
+  options: { preserveUnloadedEventReferences?: boolean } = {},
+): BranchingProject {
+  const sequenceEventIds = options.preserveUnloadedEventReferences
+    ? new Map((project.sequences ?? []).map((sequence) => [sequence.id, [...sequence.eventIds]]))
+    : undefined;
+  const branchEventIds = options.preserveUnloadedEventReferences
+    ? new Map((project.branches ?? []).map((branch) => [branch.id, branch.eventIds ? [...branch.eventIds] : undefined]))
+    : undefined;
   // Migrate local types to properties if they exist
   project = migrateProjectTypesToProperties(project);
   const logicCapabilities = normalizeLogicCapabilities(project);
@@ -432,21 +441,24 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
     entrySequenceId ??
     project.sequences[0]?.id;
   const candidateScope = project.canvas?.activeScope;
+  const deferredEventIds = options.preserveUnloadedEventReferences
+    ? new Set((project.sequences ?? []).flatMap((sequence) => sequence.eventIds))
+    : undefined;
   const dialogueScopeValid =
     candidateScope?.kind === "dialogue" &&
-    project.events.some(
+    (deferredEventIds?.has(candidateScope.eventId) === true || project.events.some(
       (event) =>
         event.id === candidateScope.eventId &&
         event.dialogues?.some((dialogue) => dialogue.id === candidateScope.id),
-    );
+    ));
   const activeScope =
     dialogueScopeValid
       ? project.canvas!.activeScope
       :
     project.canvas?.activeScope?.kind === "event" &&
-    project.events?.some(
+    (deferredEventIds?.has(project.canvas.activeScope.id) === true || project.events?.some(
       (event) => event.id === project.canvas?.activeScope?.id,
-    )
+    ))
       ? project.canvas.activeScope
       : project.canvas?.activeScope?.kind === "sequence" &&
           project.sequences?.some(
@@ -559,7 +571,7 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
     };
   });
 
-  return normalizeAuthoringEntities(addCompatibilityLogicCapabilities(normalizeBranchMembership({
+  const normalized = normalizeAuthoringEntities(addCompatibilityLogicCapabilities(normalizeBranchMembership({
     ...project,
     specVersion: project.specVersion ?? "0.1",
     dataClasses: normalizeDataClasses(project),
@@ -619,6 +631,18 @@ export function normalizeProject(project: BranchingProject): BranchingProject {
     externalFunctions: project.externalFunctions ?? [],
     variables: Object.fromEntries(logicVariables.map((variable) => [variable.name, variable.value])),
   })));
+  if (!sequenceEventIds || !branchEventIds) return normalized;
+  return {
+    ...normalized,
+    sequences: normalized.sequences.map((sequence) => {
+      const eventIds = sequenceEventIds.get(sequence.id);
+      return eventIds ? { ...sequence, eventIds } : sequence;
+    }),
+    branches: normalized.branches.map((branch) => {
+      const eventIds = branchEventIds.get(branch.id);
+      return eventIds ? { ...branch, eventIds } : branch;
+    }),
+  };
 }
 
 function normalizeLogicGroups(groups: LogicVariableGroup[] | undefined): LogicVariableGroup[] {

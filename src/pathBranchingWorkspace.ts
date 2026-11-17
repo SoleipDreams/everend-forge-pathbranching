@@ -39,6 +39,21 @@ export type UniverseFile = WorldNotionVaultFile & {
   modifiedMs?: number;
 };
 
+export type UniverseFileIndexEntry = {
+  relativePath: string;
+  absolutePath?: string;
+  modifiedMs?: number;
+  sizeBytes?: number;
+};
+
+export type StoryEventLoadState = {
+  status: "loading" | "ready" | "incomplete";
+  totalEvents: number;
+  loadedEvents: number;
+  failedEvents: number;
+  pendingEventIds: ReadonlySet<string>;
+};
+
 export type UniverseIcon = {
   type: "preset" | "image";
   value: string;
@@ -74,6 +89,9 @@ export type PathBranchingWorkspace = {
   universeProfile?: UniverseProfile;
   canonIndex: WorldNotionBridgeIndex;
   files: UniverseFile[];
+  fileIndex?: UniverseFileIndexEntry[];
+  storageVersion?: string;
+  eventLoad?: StoryEventLoadState;
   activeStory?: PathBranchingStoryManifestEntry;
   activeProject: BranchingProject;
   storyModifiedMs?: number;
@@ -304,6 +322,13 @@ type ModularStoryFile = Omit<Partial<BranchingProject>, "sequences" | "branches"
   sequenceIds?: string[];
 };
 
+type LoadedPathBranchingStory = {
+  project: BranchingProject;
+  modifiedMs?: number;
+  storageVersion?: string;
+  pendingEventIds?: Set<string>;
+};
+
 function parseJsonFile<T>(file: UniverseFile | undefined): T | undefined {
   if (!file) return undefined;
   try {
@@ -311,6 +336,14 @@ function parseJsonFile<T>(file: UniverseFile | undefined): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function indexUniverseFilesByPath(files: UniverseFile[]): Map<string, UniverseFile> {
+  const filesByPath = new Map<string, UniverseFile>();
+  for (const file of files) {
+    if (!filesByPath.has(file.relativePath)) filesByPath.set(file.relativePath, file);
+  }
+  return filesByPath;
 }
 
 function unwrapSequence(
@@ -357,11 +390,14 @@ function parseModularStoryProject(
   story: PathBranchingStoryManifestEntry,
   storyId: string,
   loadWarnings?: string[],
-): { project: BranchingProject; modifiedMs?: number } | undefined {
+  indexedPaths?: ReadonlySet<string>,
+  deferEventSidecars = false,
+): LoadedPathBranchingStory | undefined {
+  const filesByPath = indexUniverseFilesByPath(files);
   const modularPath = story.path.endsWith("/story.json")
     ? story.path
     : storyPath(storyId);
-  const storyFile = files.find((file) => file.relativePath === modularPath);
+  const storyFile = filesByPath.get(modularPath);
   const parsedStory = parseJsonFile<ModularStoryFile>(storyFile);
   if (!storyFile || !parsedStory || typeof parsedStory !== "object") {
     if (storyFile || story.path.endsWith("/story.json")) loadWarnings?.push(`Incomplete story: ${modularPath} is missing or invalid.`);
@@ -377,7 +413,7 @@ function parseModularStoryProject(
   }
 
   const readRequired = <T>(relativePath: string, unwrap: (value: unknown) => T | undefined, expectedId?: string): T | undefined => {
-    const file = files.find((candidate) => candidate.relativePath === relativePath);
+    const file = filesByPath.get(relativePath);
     const value = unwrap(parseJsonFile<unknown>(file));
     if (!value || (expectedId && (value as { id?: string }).id !== expectedId)) {
       loadWarnings?.push(`Incomplete story: ${relativePath} is ${file ? "invalid or has a mismatched identifier" : "missing"}. Reopen after repairing the file before saving.`);
@@ -390,25 +426,47 @@ function parseModularStoryProject(
     .filter((value): value is BranchingProject["sequences"][number] => Boolean(value));
   const events: BranchingProject["events"] = [];
   const branches: BranchingProject["branches"] = [];
+  const pendingEventIds = new Set<string>();
+  const loadedEventIds = new Set<string>();
+  const loadedBranchIds = new Set<string>();
+  const eventJsonFilesByDirectory = new Map<string, UniverseFile[]>();
+  for (const file of files) {
+    if (!file.relativePath.endsWith(".json")) continue;
+    const eventsDirectoryIndex = file.relativePath.lastIndexOf("/events/");
+    if (eventsDirectoryIndex < 0) continue;
+    const directory = file.relativePath.slice(0, eventsDirectoryIndex + "/events/".length);
+    const directoryFiles = eventJsonFilesByDirectory.get(directory);
+    if (directoryFiles) directoryFiles.push(file);
+    else eventJsonFilesByDirectory.set(directory, [file]);
+  }
   for (const sequence of sequences) {
     if (!Array.isArray(sequence.eventIds) || (sequence.branchIds !== undefined && !Array.isArray(sequence.branchIds))) {
       loadWarnings?.push(`Incomplete story: ${sequencePath(storyId, sequence.id)} has invalid member lists.`);
       continue;
     }
+    const sequenceEventIds = new Set(sequence.eventIds);
     for (const id of sequence.eventIds) {
-      if (events.some((candidate) => candidate.id === id)) continue;
-      const event = readRequired(eventPath(storyId, sequence.id, id), unwrapEvent, id);
-      if (event && !events.some((candidate) => candidate.id === id)) events.push(event);
-      if (parsedStory.storageVersion === STORAGE_VERSION && !files.some((file) => file.relativePath === eventEvpathPath(storyId, sequence.id, id))) {
-        loadWarnings?.push(`Incomplete story: ${eventEvpathPath(storyId, sequence.id, id)} is missing.`);
+      if (loadedEventIds.has(id)) continue;
+      const eventFilePath = eventPath(storyId, sequence.id, id);
+      const eventFile = filesByPath.get(eventFilePath);
+      const eventFileIsDeferred = !eventFile && (deferEventSidecars || indexedPaths?.has(eventFilePath));
+      const event = eventFileIsDeferred ? undefined : readRequired(eventFilePath, unwrapEvent, id);
+      if (eventFileIsDeferred) pendingEventIds.add(id);
+      if (event && !loadedEventIds.has(id)) {
+        events.push(event);
+        loadedEventIds.add(id);
+      }
+      const eventEvpathFilePath = eventEvpathPath(storyId, sequence.id, id);
+      if (!deferEventSidecars && parsedStory.storageVersion === STORAGE_VERSION && !filesByPath.has(eventEvpathFilePath) && !indexedPaths?.has(eventEvpathFilePath)) {
+        loadWarnings?.push(`Incomplete story: ${eventEvpathFilePath} is missing.`);
       }
     }
     // Sidecars left after a deletion are not automatically resurrected. A
     // still-referenced missing event, however, must not be silently ignored.
     const prefix = `${sequenceDirectory(storyId, sequence.id)}/events/`;
-    for (const file of files.filter(file => file.relativePath.startsWith(prefix) && file.relativePath.endsWith('.json'))) {
+    for (const file of eventJsonFilesByDirectory.get(prefix) ?? []) {
       const excluded = unwrapEvent(parseJsonFile<unknown>(file));
-      if (!excluded || sequence.eventIds.includes(excluded.id)) continue;
+      if (!excluded || sequenceEventIds.has(excluded.id)) continue;
       const prefixId = `:${excluded.id}:`;
       const scenarios = parsedStory.authoringScenarios ?? [];
       if (scenarios.some(scenario => scenario.startNodeId === excluded.id || scenario.startNodeId?.includes(prefixId))) {
@@ -416,12 +474,15 @@ function parseModularStoryProject(
       }
     }
     for (const id of sequence.branchIds ?? []) {
-      if (branches.some((candidate) => candidate.id === id)) continue;
+      if (loadedBranchIds.has(id)) continue;
       const branch = readRequired(branchPath(storyId, sequence.id, id), unwrapBranch, id);
-      if (branch && !branches.some((candidate) => candidate.id === id)) branches.push(branch);
+      if (branch && !loadedBranchIds.has(id)) {
+        branches.push(branch);
+        loadedBranchIds.add(id);
+      }
     }
   }
-  const authoringFile = files.find((file) => file.relativePath === authoringCanvasPath(storyId));
+  const authoringFile = filesByPath.get(authoringCanvasPath(storyId));
   const authoring = parseJsonFile<{ canvas?: BranchingProject["canvas"]; panels?: BranchingProject["panels"] }>(authoringFile);
   if ((authoringFile || parsedStory.storageVersion === STORAGE_VERSION) && (!authoring || typeof authoring !== "object")) {
     loadWarnings?.push(`Incomplete story: ${authoringCanvasPath(storyId)} is missing or invalid.`);
@@ -474,10 +535,12 @@ function parseModularStoryProject(
     localExplorerEntities: parsedStory.localExplorerEntities ?? [],
     localExplorerTypes: parsedStory.localExplorerTypes ?? [],
     localExplorerProperties: parsedStory.localExplorerProperties ?? [],
-  });
+  }, { preserveUnloadedEventReferences: Boolean(indexedPaths) });
 
   return {
     modifiedMs: storyFile.modifiedMs,
+    storageVersion: parsedStory.storageVersion,
+    pendingEventIds,
     project: reconcileEventEvpathFiles(baseProject, files, storyId, loadWarnings),
   };
 }
@@ -496,18 +559,30 @@ function reconcileEventEvpathFiles(
   files: UniverseFile[],
   storyId: string,
   loadWarnings?: string[],
+  eventIds?: ReadonlySet<string>,
 ): BranchingProject {
   let current = project;
+  const eventById = new Map(project.events.map((event) => [event.id, event]));
+  const filesByPath = indexUniverseFilesByPath(files);
+  const sequenceIdByEventId = new Map<string, string>();
+  for (const sequence of project.sequences) {
+    for (const eventId of sequence.eventIds) {
+      if (!sequenceIdByEventId.has(eventId)) sequenceIdByEventId.set(eventId, sequence.id);
+    }
+  }
+  const fallbackSequenceId =
+    project.canvas?.activeSequenceId ??
+    project.entrySequenceId ??
+    project.sequences[0]?.id;
   for (const event of project.events) {
-    const sequenceId = ownerSequenceIdForEvent(current, event.id);
+    if (eventIds && !eventIds.has(event.id)) continue;
+    const sequenceId = sequenceIdByEventId.get(event.id) ?? fallbackSequenceId;
     if (!sequenceId) continue;
-    const evpathFile = files.find(
-      (file) => file.relativePath === eventEvpathPath(storyId, sequenceId, event.id),
-    );
+    const evpathFile = filesByPath.get(eventEvpathPath(storyId, sequenceId, event.id));
     if (!evpathFile) continue;
     // A generated projection must never rewrite its richer JSON sidecar.
     // Scoped IDs and modular rules can exceed the text grammar's vocabulary.
-    if (evpathFile.content.trim() === serializeEventEvpath(current, event.id).trim()) {
+    if (evpathFile.content.trim() === serializeEventEvpath(current, event.id, eventById).trim()) {
       const syntax = parseEvpath(evpathFile.content);
       if (syntax.errors.length) loadWarnings?.push(`${event.name}: representación textual limitada; se conserva el documento JSON completo (${syntax.errors[0].message}).`);
       if (evpathFile.content.includes('{ #')) loadWarnings?.push(`${event.name}: lógica opaca; se conserva el JSON original.`);
@@ -530,7 +605,10 @@ function reconcileEventEvpathFiles(
     }
     // The `.evpath` diverged from the JSON (an external edit). Adopt it only if
     // re-serializing the applied event reaches a fixed point.
-    const reserialized = serializeEventEvpath(applied.project, event.id);
+    const appliedEvent = applied.project.events.find((candidate) => candidate.id === event.id);
+    const appliedEventById = new Map(eventById);
+    if (appliedEvent) appliedEventById.set(event.id, appliedEvent);
+    const reserialized = serializeEventEvpath(applied.project, event.id, appliedEventById);
     const settle = applyEvpathToEvent(applied.project, event.id, reserialized);
     if (settle.errors.length || settle.changed) {
       loadWarnings?.push(
@@ -539,6 +617,7 @@ function reconcileEventEvpathFiles(
       continue;
     }
     current = applied.project;
+    if (appliedEvent) eventById.set(event.id, appliedEvent);
   }
   return current;
 }
@@ -547,7 +626,7 @@ function parseLegacyStoryProject(
   files: UniverseFile[],
   story: PathBranchingStoryManifestEntry,
   storyId: string,
-): { project: BranchingProject; modifiedMs?: number } | undefined {
+): LoadedPathBranchingStory | undefined {
   const legacyPath = story.path.endsWith(".pathbranching.json")
     ? story.path
     : legacyStoryPath(storyId);
@@ -580,6 +659,7 @@ function mergeCanonRefs(
 
 export function loadPathBranchingWorkspace(
   files: UniverseFile[],
+  options: { fileIndex?: UniverseFileIndexEntry[]; deferEventSidecars?: boolean } = {},
 ): PathBranchingWorkspace {
   const canonIndex = indexWorldNotionVaultFiles(files);
   const universeProfile = parseUniverseProfile(files);
@@ -602,9 +682,12 @@ export function loadPathBranchingWorkspace(
     loadWarnings.push("Incomplete story: the active story is not present in the manifest.");
   }
   let loadedStory: ReturnType<typeof parseModularStoryProject>;
+  const indexedPaths = options.fileIndex
+    ? new Set(options.fileIndex.map((file) => file.relativePath))
+    : undefined;
   try {
     loadedStory = activeStory
-      ? (parseModularStoryProject(files, activeStory, activeStory.id, loadWarnings) ?? parseLegacyStoryProject(files, activeStory, activeStory.id))
+      ? (parseModularStoryProject(files, activeStory, activeStory.id, loadWarnings, indexedPaths, options.deferEventSidecars) ?? parseLegacyStoryProject(files, activeStory, activeStory.id))
       : undefined;
   } catch (error) {
     loadWarnings.push(`Incomplete story: ${activeStory?.path ?? "manifest"}: ${error instanceof Error ? error.message : String(error)}`);
@@ -623,6 +706,17 @@ export function loadPathBranchingWorkspace(
       activeStory?.id ?? fallbackStoryId,
       activeStory?.name,
     );
+  const pendingEventIds = loadedStory?.pendingEventIds ?? new Set<string>();
+  const totalEvents = new Set(activeProject.sequences.flatMap((sequence) => sequence.eventIds)).size;
+  const eventLoad: StoryEventLoadState | undefined = (options.fileIndex || options.deferEventSidecars) && activeStory
+    ? {
+        status: saveBlockReasons.length ? "incomplete" : pendingEventIds.size ? "loading" : "ready",
+        totalEvents,
+        loadedEvents: activeProject.events.length,
+        failedEvents: 0,
+        pendingEventIds,
+      }
+    : undefined;
 
   return {
     manifest: {
@@ -632,6 +726,9 @@ export function loadPathBranchingWorkspace(
     universeProfile,
     canonIndex,
     files: [...files],
+    fileIndex: options.fileIndex ? [...options.fileIndex] : undefined,
+    storageVersion: loadedStory?.storageVersion,
+    eventLoad,
     activeStory,
     activeProject: normalizeLocalizationCatalog(normalizeProject({
       ...activeProject,
@@ -646,7 +743,7 @@ export function loadPathBranchingWorkspace(
           : undefined) ?? activeProject.integrationConfigOverride,
       canonRefs: mergeCanonRefs(canonIndex, activeProject),
       canonPropertyDescriptors: canonicalPropertyDescriptors(canonIndex.propertiesConfig as Record<string, unknown> | undefined),
-    }), universeProfile?.localization?.primaryLocale ?? machineLocale()),
+    }, { preserveUnloadedEventReferences: Boolean((options.fileIndex || options.deferEventSidecars) && activeStory) }), universeProfile?.localization?.primaryLocale ?? machineLocale()),
     storyModifiedMs: loadedStory?.modifiedMs,
     createdDefaultStory: !activeStory,
     loadWarnings: loadWarnings.length ? loadWarnings : undefined,
@@ -654,6 +751,101 @@ export function loadPathBranchingWorkspace(
     saveBlocked: saveBlockReasons.length > 0,
     saveBlockReasons: saveBlockReasons.length ? saveBlockReasons : undefined,
   };
+}
+
+export type HydratedStoryEvents = {
+  project: BranchingProject;
+  attemptedEventIds: string[];
+  loadedEventIds: string[];
+  failedEventIds: string[];
+  warnings: string[];
+};
+
+/** Parse and safely reconcile a batch of modular event sidecars into an open story. */
+export function hydratePathBranchingEvents(
+  project: BranchingProject,
+  story: PathBranchingStoryManifestEntry,
+  storageVersion: string | undefined,
+  files: UniverseFile[],
+  requestedEventIds: readonly string[],
+): HydratedStoryEvents {
+  const warnings: string[] = [];
+  const filesByPath = indexUniverseFilesByPath(files);
+  const sequenceIdByEventId = new Map<string, string>();
+  for (const sequence of project.sequences) {
+    sequence.eventIds.forEach((eventId) => {
+      if (!sequenceIdByEventId.has(eventId)) {
+        sequenceIdByEventId.set(eventId, sequence.id);
+      }
+    });
+  }
+  const existingIds = new Set(project.events.map((event) => event.id));
+  const attemptedEventIds = [...new Set(requestedEventIds)].filter((id) => !existingIds.has(id));
+  const loadedEventIds: string[] = [];
+  const failedEventIds: string[] = [];
+  const newEvents: BranchingProject["events"] = [];
+
+  for (const eventId of attemptedEventIds) {
+    const sequenceId = sequenceIdByEventId.get(eventId);
+    if (!sequenceId) {
+      failedEventIds.push(eventId);
+      warnings.push(`Incomplete story: event ${eventId} is not referenced by a sequence.`);
+      continue;
+    }
+    const jsonPath = eventPath(story.id, sequenceId, eventId);
+    const parsed = unwrapEvent(parseJsonFile<unknown>(filesByPath.get(jsonPath)));
+    if (!parsed || parsed.id !== eventId) {
+      failedEventIds.push(eventId);
+      warnings.push(`Incomplete story: ${jsonPath} is missing, invalid, or has a mismatched identifier. Reopen after repairing the file before saving.`);
+      continue;
+    }
+    newEvents.push(parsed);
+    loadedEventIds.push(eventId);
+
+    const evpathPath = eventEvpathPath(story.id, sequenceId, eventId);
+    if (storageVersion === STORAGE_VERSION && !filesByPath.has(evpathPath)) {
+      failedEventIds.push(eventId);
+      warnings.push(`Incomplete story: ${evpathPath} is missing.`);
+    }
+  }
+
+  const eventOrder = new Map<string, number>();
+  for (const sequence of project.sequences) {
+    sequence.eventIds.forEach((eventId) => {
+      if (!eventOrder.has(eventId)) eventOrder.set(eventId, eventOrder.size);
+    });
+  }
+  const normalizedNewEvents = newEvents.length
+    ? normalizeProject({ ...project, events: newEvents }, { preserveUnloadedEventReferences: true }).events
+    : [];
+  const orderedNewEvents = normalizedNewEvents.sort((left, right) =>
+    (eventOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (eventOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+  );
+  const mergedEvents: BranchingProject["events"] = [];
+  let existingIndex = 0;
+  let newIndex = 0;
+  while (existingIndex < project.events.length && newIndex < orderedNewEvents.length) {
+    const existingEvent = project.events[existingIndex];
+    const newEvent = orderedNewEvents[newIndex];
+    if ((eventOrder.get(existingEvent.id) ?? Number.MAX_SAFE_INTEGER) <= (eventOrder.get(newEvent.id) ?? Number.MAX_SAFE_INTEGER)) {
+      mergedEvents.push(existingEvent);
+      existingIndex += 1;
+    } else {
+      mergedEvents.push(newEvent);
+      newIndex += 1;
+    }
+  }
+  mergedEvents.push(...project.events.slice(existingIndex), ...orderedNewEvents.slice(newIndex));
+  const mergedProject: BranchingProject = { ...project, events: mergedEvents };
+  const reconciledProject = reconcileEventEvpathFiles(
+    mergedProject,
+    files,
+    story.id,
+    warnings,
+    new Set(loadedEventIds),
+  );
+
+  return { project: reconciledProject, attemptedEventIds, loadedEventIds, failedEventIds, warnings };
 }
 
 export function serializePathBranchingManifest(
@@ -664,19 +856,6 @@ export function serializePathBranchingManifest(
 
 export function serializePathBranchingStory(project: BranchingProject): string {
   return serializeProject(project);
-}
-
-function ownerSequenceIdForEvent(
-  project: BranchingProject,
-  eventId: string,
-): string | undefined {
-  return (
-    project.sequences.find((sequence) => sequence.eventIds.includes(eventId))
-      ?.id ??
-    project.canvas?.activeSequenceId ??
-    project.entrySequenceId ??
-    project.sequences[0]?.id
-  );
 }
 
 function ownerSequenceIdForBranch(
@@ -700,15 +879,24 @@ function ownerSequenceIdForBranch(
 export function serializeModularStoryFiles(
   projectInput: BranchingProject,
   story: PathBranchingStoryManifestEntry,
+  options: { preserveUnloadedEventReferences?: boolean } = {},
 ): Array<{ relativePath: string; content: string }> {
   const project = normalizeProject({
     ...projectInput,
     storyId: story.id,
     name: projectInput.name ?? story.name,
-  });
+  }, options);
   // Keep all project metadata, including future modular authoring extensions.
   // Only split graph/layout collections and integration YAML out of story.json.
   const { sequences, branches, events, canvas, panels, integrationConfig, integrationConfigOverride, ...metadata } = project;
+  const eventSequenceIdById = new Map<string, string>();
+  const eventById = new Map(events.map((event) => [event.id, event]));
+  for (const sequence of sequences) {
+    for (const eventId of sequence.eventIds) {
+      if (!eventSequenceIdById.has(eventId)) eventSequenceIdById.set(eventId, sequence.id);
+    }
+  }
+  const fallbackEventSequenceId = project.canvas?.activeSequenceId ?? project.entrySequenceId ?? sequences[0]?.id;
   const storyMetadata: ModularStoryFile = {
     ...metadata,
     storageVersion: STORAGE_VERSION,
@@ -743,7 +931,7 @@ export function serializeModularStoryFiles(
   });
 
   project.events.forEach((event) => {
-    const sequenceId = ownerSequenceIdForEvent(project, event.id);
+    const sequenceId = eventSequenceIdById.get(event.id) ?? fallbackEventSequenceId;
     if (!sequenceId) return;
     files.push({
       relativePath: eventPath(story.id, sequenceId, event.id),
@@ -752,7 +940,7 @@ export function serializeModularStoryFiles(
     // Canonical narrative projection alongside the JSON sidecar.
     files.push({
       relativePath: eventEvpathPath(story.id, sequenceId, event.id),
-      content: serializeEventEvpath(project, event.id),
+      content: serializeEventEvpath(project, event.id, eventById),
     });
   });
 

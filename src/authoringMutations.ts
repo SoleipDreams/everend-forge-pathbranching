@@ -1,4 +1,4 @@
-import type { BranchingProject, Consequence, DialogueBeat, InstanceEffect, NarrativeEffect, ScriptBlock, Transition } from "./domain.js";
+import type { BranchingProject, Consequence, DialogueBeat, EventNode, InstanceEffect, NarrativeEffect, ScriptBlock, Transition } from "./domain.js";
 import { createDecision, createDialogue, createDialogueBeat, createEventDialogueBeat, createInternalTransition, createOutcome, updateDecision, updateDialogue, updateDialogueBeat, updateEvent, updateEventDialogueBeat, updateOutcome, updateScriptBlock, updateTransition, type MutationResult } from "./projectMutations.js";
 import { splitNarrativeEffects } from "./logic.js";
 import { scriptBlockTextKey, updateLocalizedEntry } from "./localization.js";
@@ -10,15 +10,15 @@ export type NarrativeInsertOptions = { dialogueId?: string; afterNodeId?: string
 export function authoringNodeOptions(project: BranchingProject, eventId?: string) {
   return project.events.filter(event => !eventId || event.id === eventId).flatMap(event => [
     { id: event.id, label: event.name, eventId: event.id, dialogueId: undefined as string | undefined, kind: "event" as string },
-    ...narrativeNodeReferences(project, event.id).map(node => ({ id: node.id, label: node.label, eventId: event.id, dialogueId: node.kind === "dialogue" ? node.elementId : node.dialogueId, kind: node.kind as string })),
+    ...narrativeNodeReferences(project, event.id, event).map(node => ({ id: node.id, label: node.label, eventId: event.id, dialogueId: node.kind === "dialogue" ? node.elementId : node.dialogueId, kind: node.kind as string })),
     ...(event.interactionUses ?? []).filter(u => !u.ownerNodeId).map(u => ({ id: `interaction:${event.id}:${u.id}`, label: event.interactionDefinitions?.find(d => d.id === u.definitionId)?.name ?? u.id, eventId: event.id, dialogueId: u.dialogueId, kind: 'interaction' as string })),
     ...(event.interactionBarriers ?? []).map(b => ({ id: `barrier:${event.id}:${b.id}`, label: b.name, eventId: event.id, dialogueId: b.dialogueId, kind: 'barrier' as string })),
   ]);
 }
 
 /** These are document IDs, including their canvas-compatible wrappers, never ReactFlow edges. */
-export function narrativeNodeReferences(project: BranchingProject, eventId: string): NarrativeNodeReference[] {
-  const event = project.events.find(item => item.id === eventId);
+export function narrativeNodeReferences(project: BranchingProject, eventId: string, eventOverride?: EventNode): NarrativeNodeReference[] {
+  const event = eventOverride?.id === eventId ? eventOverride : project.events.find(item => item.id === eventId);
   if (!event) return [];
   const references: NarrativeNodeReference[] = [];
   const addBeat = (beat: DialogueBeat, dialogueId?: string) => {

@@ -24,6 +24,8 @@ export function defaultInteractionMechanicsLibrary(): InteractionMechanicsLibrar
     preset('2d6', '2D6', 'Dos dados de seis caras; suma de 2 a 12.', { kind: 'dice', count: 2, sides: 6, modifier: 0 }, [{ id: 'completed', name: 'Completada', range: { min: 2, max: 12 } }]),
     preset('2d4-1d2', '2D4 + 1D2', 'Tres dados; suma de 3 a 10.', { kind: 'dice', count: 2, sides: 4, groups: [{ id: 'd4', count: 2, sides: 4 }, { id: 'd2', count: 1, sides: 2 }], modifier: 0 }, [{ id: 'completed', name: 'Completada', range: { min: 3, max: 10 } }]),
     preset('2d10-3d9', '2D10 + 3D9', 'Cinco dados; suma de 5 a 47.', { kind: 'dice', count: 2, sides: 10, groups: [{ id: 'd10', count: 2, sides: 10 }, { id: 'd9', count: 3, sides: 9 }], modifier: 0 }, [{ id: 'completed', name: 'Completada', range: { min: 5, max: 47 } }]),
+    ...[{ id: 'skill-easy', name: 'Prueba de habilidad · Fácil', difficulty: 8 }, { id: 'skill-standard', name: 'Prueba de habilidad · Estándar', difficulty: 12 }, { id: 'skill-hard', name: 'Prueba de habilidad · Difícil', difficulty: 16 }].map(item => preset(item.id, item.name, `Prueba D20 con dificultad ${item.difficulty}; asigna el atributo en cada uso.`,
+      { kind: 'skillcheck', actor: { kind: 'context', role: 'actor' }, difficulty: item.difficulty, difficultyOperator: '>=', modifier: 0, dice: { count: 1, sides: 20 } }, results())),
     ...[{ id: 'qte-space', name: 'QTE · Reacción', key: 'Space', durationMs: 3000 },
       { id: 'qte-e', name: 'QTE · Activar', key: 'KeyE', durationMs: 5000 },
       { id: 'qte-enter', name: 'QTE · Confirmar', key: 'Enter', durationMs: 1500 }].map(item => preset(item.id, item.name, `${item.key} en ${item.durationMs / 1000} segundos.`,

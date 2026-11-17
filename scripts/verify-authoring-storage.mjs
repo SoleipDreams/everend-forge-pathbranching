@@ -85,7 +85,10 @@ try {
     assert.equal(legacy.saveBlocked, false, `legacy ${version} remains readable without evpath`);
     assert.equal(legacy.activeProject.events.length, 1);
   }
-  const baselines = universeBatchFiles(files, serializeModularStoryFiles(project, story));
+  const editedOutput = serializeModularStoryFiles(project, story);
+  const editedText = editedOutput.find((file) => file.relativePath.endsWith(".evpath"));
+  editedText.content += "\n# pending edit\n";
+  const baselines = universeBatchFiles(files, editedOutput);
   assert.ok(baselines.every((file) => file.expectedExists && file.expectedContent !== undefined && file.expectedModifiedMs !== undefined));
   const textBaseline = baselines.find((file) => file.relativePath.endsWith(".evpath"));
   assert.equal(textBaseline.expectedContent, files.find((file) => file.relativePath === textBaseline.relativePath).content, "canonical text participates in exact conflict detection");

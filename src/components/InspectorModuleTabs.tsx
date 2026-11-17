@@ -59,7 +59,7 @@ export function InspectorModuleTabs({ projectId, objectKey, modules, value, onCh
     }
   }}>
     <div className="inspector-module-scroll">
-      <AccessibleTabs className="inspector-subtabs inspector-module-tabs" value={value} tabs={visible.flatMap(id => { const item = modules.find(module => module.id === id); return item ? [{ id, label: label(item) }] : []; })} onChange={id => commit(visible, id)} ariaLabel={es ? 'Módulos del inspector' : 'Inspector modules'} onTabContextMenu={id => { if (!modules.find(item => item.id === id)?.fixed) setMenu(id); }} />
+      <AccessibleTabs className="inspector-subtabs inspector-module-tabs" value={value} tabs={visible.flatMap(id => { const item = modules.find(module => module.id === id); return item ? [{ id, label: label(item), onboardingTarget: id === 'conditions' ? 'pathbranching.condition-tab' : id === 'interactions' ? 'pathbranching.interaction-tab' : undefined }] : []; })} onChange={id => commit(visible, id)} ariaLabel={es ? 'Módulos del inspector' : 'Inspector modules'} onTabContextMenu={id => { if (!modules.find(item => item.id === id)?.fixed) setMenu(id); }} />
     </div>
     {hidden.length ? <button type="button" className="inspector-module-add" aria-label={es ? 'Añadir módulo' : 'Add module'} title={es ? 'Añadir módulo' : 'Add module'} aria-expanded={menu === 'add'} onClick={() => setMenu(menu === 'add' ? undefined : 'add')}><Plus size={16} /></button> : null}
     {menu && (menu !== 'add' || hidden.length > 0) ? createPortal(<div ref={menuRef} style={placement} className="inspector-module-menu" role="menu" aria-label={menu === 'add' ? (es ? 'Añadir módulo' : 'Add module') : label(context!)}>

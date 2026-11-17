@@ -53,6 +53,7 @@
     "src/universeSwitchGuard.ts",
     "src/inspectorNavigation.ts",
     "src/inspectorModules.ts",
-    "src/diagnosticPresentation.ts"
+    "src/diagnosticPresentation.ts",
+    "src/projectPersistence.ts"
   ]
 }

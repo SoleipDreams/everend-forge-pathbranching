@@ -175,7 +175,40 @@ export type StoryCanvasModelOptions = {
   authoringDisplay?: AuthoringDisplaySettings;
   canvasLayerMode?: CanvasLayerMode;
   interfaceLocale?: ConditionUiLocale;
+  eventWindowIds?: ReadonlySet<string>;
+  pendingEventIds?: ReadonlySet<string>;
 };
+
+export type StoryCanvasBounds = { x: number; y: number; width: number; height: number };
+
+/** Returns sequence events intersecting a flow-coordinate viewport plus one viewport of prefetch. */
+export function sequenceEventIdsInBounds(
+  project: BranchingProject,
+  bounds: StoryCanvasBounds,
+  scope: CanvasScope | undefined = activeCanvasScope(project),
+  overscan = 1,
+): string[] {
+  if (scope && scope.kind !== "sequence") return [];
+  const sequence = scope?.kind === "sequence"
+    ? project.sequences.find((candidate) => candidate.id === scope.id) ?? activeSequence(project)
+    : activeSequence(project);
+  if (!sequence) return [];
+  const scopeNodes = scope ? project.canvas?.scopes?.[canvasScopeKey(scope)]?.nodes : undefined;
+  const marginX = Math.max(0, bounds.width * overscan);
+  const marginY = Math.max(0, bounds.height * overscan);
+  const left = bounds.x - marginX;
+  const top = bounds.y - marginY;
+  const right = bounds.x + bounds.width + marginX;
+  const bottom = bounds.y + bounds.height + marginY;
+  return sequence.eventIds.filter((eventId, index) => {
+    const sequenceEntry = sequence.entryEventId === eventId;
+    const fallback = sequenceEntry ? { x: 320, y: 270 } : { x: 360, y: 80 + index * 220 };
+    const position = scopeNodes?.[eventId]?.position ?? project.canvas?.nodes?.[eventId]?.position ?? fallback;
+    const width = 460;
+    const height = 220;
+    return position.x <= right && position.x + width >= left && position.y <= bottom && position.y + height >= top;
+  });
+}
 
 function hashString(value: string) {
   let hash = 0;
@@ -409,7 +442,29 @@ function transitionCanvasLabel(transition: Transition) {
   return transition.label?.trim() ?? "";
 }
 
-function transitionEdgeData(project: BranchingProject, transition: Transition, locale: ConditionUiLocale = "en"): Partial<StoryCanvasEdgeData> {
+type CanvasProjectEventIndex = {
+  eventById: Map<string, EventNode>;
+  transitionById: Map<string, { event: EventNode; transition: Transition }>;
+};
+
+function indexCanvasProjectEvents(project: BranchingProject): CanvasProjectEventIndex {
+  const eventById = new Map<string, EventNode>();
+  const transitionById = new Map<string, { event: EventNode; transition: Transition }>();
+  for (const event of project.events) {
+    if (!eventById.has(event.id)) eventById.set(event.id, event);
+    for (const transition of event.transitions ?? []) {
+      if (!transitionById.has(transition.id)) transitionById.set(transition.id, { event, transition });
+    }
+  }
+  return { eventById, transitionById };
+}
+
+function transitionEdgeData(
+  project: BranchingProject,
+  transition: Transition,
+  locale: ConditionUiLocale = "en",
+  eventIndex?: CanvasProjectEventIndex,
+): Partial<StoryCanvasEdgeData> {
   const role = transition.role ?? (
     transition.mode === "fallback" || transition.conditions || transition.logic?.when || transition.consequences?.length || transition.logic?.then?.length
       ? "route"
@@ -423,9 +478,11 @@ function transitionEdgeData(project: BranchingProject, transition: Transition, l
     .slice(0, 1);
   const conditionItems = groupedConditionPresentation(project, conditions, locale, 150);
   const consequenceItems = presentConsequences(project, consequences, 2);
-  const owner = project.events.find((event) => event.transitions?.some((route) => route.id === transition.id));
-  const targetId = owner?.transitions?.find((route) => route.id === transition.id)?.to ?? transition.to;
-  const target = project.events.find((event) => event.id === targetId);
+  const indexedRoute = eventIndex?.transitionById.get(transition.id);
+  const owner = indexedRoute?.event ?? (eventIndex ? undefined : project.events.find((event) => event.transitions?.some((route) => route.id === transition.id)));
+  const ownerTransition = indexedRoute?.transition ?? (eventIndex ? undefined : owner?.transitions?.find((route) => route.id === transition.id));
+  const targetId = ownerTransition?.to ?? transition.to;
+  const target = eventIndex?.eventById.get(targetId) ?? (eventIndex ? undefined : project.events.find((event) => event.id === targetId));
   return {
     routeRole: role,
     conditions,
@@ -484,6 +541,7 @@ function transitionEdge(
   event: EventNode,
   transition: Transition,
   locale: ConditionUiLocale = "en",
+  eventIndex?: CanvasProjectEventIndex,
 ): StoryCanvasEdge {
   const source = visualTransitionSource(event, transition);
   const resultUse = event.interactionUses?.find(use => interactionNodeId(event.id, use.id) === transition.from);
@@ -499,7 +557,7 @@ function transitionEdge(
       transition.to,
       "transition",
       transitionCanvasLabel(transition),
-      transitionEdgeData(project, transition, locale),
+      transitionEdgeData(project, transition, locale, eventIndex),
     ),
     sourceHandle: resultId ? `interaction-result:${resultId}` : source.handleId,
     animated: transition.role === "route",
@@ -520,7 +578,18 @@ function projectRouteGates(
   edges: StoryCanvasEdge[],
   scope: CanvasScope | undefined,
   options: StoryCanvasModelOptions,
+  routeEvents: EventNode[] = project.events,
 ) {
+  const nodeById = new Map<string, StoryCanvasNode>();
+  for (const node of nodes) {
+    if (!nodeById.has(node.id)) nodeById.set(node.id, node);
+  }
+  const ownerEventIdBySource = new Map<string, string>();
+  for (const event of routeEvents) {
+    for (const transition of event.transitions ?? []) {
+      if (!ownerEventIdBySource.has(transition.from)) ownerEventIdBySource.set(transition.from, event.id);
+    }
+  }
   const shouldProjectGate = (_routeSourceId: string, routes: StoryCanvasEdge[]) =>
     routes.length >= 2;
   const transitionGroups = new Map<string, StoryCanvasEdge[]>();
@@ -536,23 +605,20 @@ function projectRouteGates(
         typeof item.data?.routeSourceId === "string"
           ? item.data.routeSourceId
           : item.source;
-      transitionGroups.set(routeSourceId, [
-        ...(transitionGroups.get(routeSourceId) ?? []),
-        item,
-      ]);
+      const group = transitionGroups.get(routeSourceId);
+      if (group) group.push(item);
+      else transitionGroups.set(routeSourceId, [item]);
     });
 
   const ownerEventIdForSource = (routeSourceId: string) =>
-    project.events.find((eventNode) =>
-      eventNode.transitions?.some((transition) => transition.from === routeSourceId),
-    )?.id ?? (scope?.kind === "event" ? scope.id : scope?.kind === "dialogue" ? scope.eventId : undefined);
+    ownerEventIdBySource.get(routeSourceId) ?? (scope?.kind === "event" ? scope.id : scope?.kind === "dialogue" ? scope.eventId : undefined);
 
   const finalTransitionEdges: StoryCanvasEdge[] = [];
   const gateInputEdges: StoryCanvasEdge[] = [];
 
   const projectGate = (routeSourceId: string, routes: StoryCanvasEdge[]) => {
     const sourceId = routes[0]?.source ?? routeSourceId;
-    const source = nodes.find((node) => node.id === sourceId);
+    const source = nodeById.get(sourceId);
     if (!source) {
       finalTransitionEdges.push(...routes);
       return;
@@ -2026,7 +2092,10 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
   const activeSequenceId = sequence?.id;
   const activeEventIds = new Set(sequence?.eventIds ?? []);
   const activeBranches = branchesForSequence(project, activeSequenceId);
-  const activeEvents = project.events.filter((eventNode) => activeEventIds.has(eventNode.id));
+  const activeEvents = project.events.filter((eventNode) =>
+    activeEventIds.has(eventNode.id) && (!options.eventWindowIds || options.eventWindowIds.has(eventNode.id)),
+  );
+  const eventIndex = indexCanvasProjectEvents({ ...project, events: activeEvents });
   const eventIndexInSequence = new Map((sequence?.eventIds ?? []).map((eventId, index) => [eventId, index]));
   const cursor: LayoutCursor = {
     sequenceY: 80,
@@ -2099,7 +2168,8 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
 
   });
 
-  if (sequence?.entryEventId && activeEventIds.has(sequence.entryEventId)) {
+  const canvasNodeIds = new Set(nodes.map((node) => node.id));
+  if (sequence?.entryEventId && activeEventIds.has(sequence.entryEventId) && canvasNodeIds.has(sequence.entryEventId)) {
     edges.push(
       edge(
         `edge:entry:start:${sequence.id}:${sequence.entryEventId}`,
@@ -2113,7 +2183,7 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
 
   activeEvents.forEach((eventNode) => {
     eventNode.transitions?.forEach((transition) => {
-      if (!nodes.some((node) => node.id === eventNode.id) || !activeEventIds.has(transition.to)) {
+      if (!canvasNodeIds.has(eventNode.id) || !canvasNodeIds.has(transition.to) || !activeEventIds.has(transition.to)) {
         return;
       }
       edges.push({
@@ -2123,15 +2193,18 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
           transition.to,
           "transition",
           transitionCanvasLabel(transition),
-          transitionEdgeData(project, transition, options.interfaceLocale),
+          transitionEdgeData(project, transition, options.interfaceLocale, eventIndex),
         ),
       });
     });
   });
 
-  projectRouteGates(project, nodes, edges, scope, options);
+  projectRouteGates(project, nodes, edges, scope, options, activeEvents);
 
-  const missingEventIds = (sequence?.eventIds ?? []).filter((eventId) => !project.events.some((candidate) => candidate.id === eventId));
+  const projectEventIds = new Set(project.events.map((event) => event.id));
+  const missingEventIds = (sequence?.eventIds ?? []).filter((eventId) =>
+    !projectEventIds.has(eventId) && !options.pendingEventIds?.has(eventId),
+  );
   missingEventIds.forEach((missingId) => {
     const sequenceIndex = eventIndexInSequence.get(missingId) ?? 0;
     pushNode(

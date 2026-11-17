@@ -16,7 +16,7 @@ export function firstAvailableNarrativeName(label: string, names: string[]) {
 export function automaticNarrativeName(project: BranchingProject, eventId: string | undefined, kind: NarrativeNameKind, options: { excludeId?: string; decisionId?: string; locale?: NamingLocale } = {}) {
   const event = project.events.find(event => event.id === eventId);
   const es = (options.locale ?? namingLocale) === 'es';
-  const label = kind === 'Decision' ? (es ? 'Decisiones' : 'Decisions') : kind === 'Conversation' ? (es ? 'Conversación' : 'Conversation') : (es ? 'Opción' : 'Option');
+  const label = kind === 'Decision' ? (es ? 'Decisión' : 'Decision') : kind === 'Conversation' ? (es ? 'Conversación' : 'Conversation') : (es ? 'Opción' : 'Option');
   const items = kind === 'Decision' ? event?.decisions?.map(item => ({ id: item.id, name: item.name })) : kind === 'Conversation' ? event?.dialogues?.map(item => ({ id: item.id, name: item.title })) : event?.decisions?.find(item => item.id === options.decisionId)?.outcomes.map(item => ({ id: item.id, name: item.name }));
   return firstAvailableNarrativeName(label, (items ?? []).filter(item => item.id !== options.excludeId).map(item => item.name));
 }

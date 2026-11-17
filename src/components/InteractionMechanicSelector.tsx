@@ -76,11 +76,11 @@ export function InteractionMechanicSelector({ projectId, definition, library, lo
   const detail = (preset: InteractionMechanicPreset) => preset.mechanic.kind === 'dice' ? `${diceFormula(preset.mechanic, preset.mechanic.modifier)} · Total ${diceBounds(preset.mechanic, preset.mechanic.modifier).min}–${diceBounds(preset.mechanic, preset.mechanic.modifier).max}` : preset.description;
   const selectionHint = es ? 'Los resultados conservan sus rutas y consecuencias al cambiar la plantilla.' : 'Results keep their routes and consequences when changing the template.';
   const triggerLabel = open ? es ? 'Cerrar selector de plantillas' : 'Close template picker' : pending ? es ? 'Elegir interacción' : 'Choose interaction' : currentCategory === 'dice' ? es ? 'Cambiar set de dados' : 'Change dice set' : es ? 'Cambiar mecánica' : 'Change mechanic';
-  const render = (preset: InteractionMechanicPreset) => <button key={preset.id} type="button" className="mechanic-selector-result" title={[preset.name, detail(preset)].filter(Boolean).join(' · ')} aria-pressed={!pending && definition.presetOrigin?.presetId === preset.id} disabled={busy} onClick={() => void choose(preset)}>
+  const render = (preset: InteractionMechanicPreset) => <button key={preset.id} type="button" className="mechanic-selector-result" data-onboarding-target="pathbranching.interaction-preset" title={[preset.name, detail(preset)].filter(Boolean).join(' · ')} aria-pressed={!pending && definition.presetOrigin?.presetId === preset.id} disabled={busy} onClick={() => void choose(preset)}>
     <ConditionPickerIcon name={choice?.icon} size={22} />
     <span><strong>{preset.name}</strong><small>{detail(preset)}</small></span>
   </button>;
-  const triggerButton = <button ref={trigger} type="button" className="mechanic-selector-trigger" aria-label={triggerLabel} aria-expanded={open} aria-controls={panelId} title={triggerLabel} disabled={busy} onClick={openSelector}>
+  const triggerButton = <button ref={trigger} type="button" className="mechanic-selector-trigger" data-onboarding-target="pathbranching.interaction" aria-label={triggerLabel} aria-expanded={open} aria-controls={panelId} title={triggerLabel} disabled={busy} onClick={openSelector}>
       {pending && (!open || stage === 'types') ? <Plus size={36} aria-hidden="true" /> : <ConditionPickerIcon name={icon} size={44} />}
     </button>;
   return <section className={`mechanic-selector${open ? ' open' : ''}${placement === 'dice-context' ? ' mechanic-selector-context' : ''}`} aria-label={es ? 'Mecánica de esta interacción' : 'Interaction mechanic'}>
@@ -102,7 +102,7 @@ export function InteractionMechanicSelector({ projectId, definition, library, lo
       if (event.key === 'Enter' && event.target === search.current) { event.preventDefault(); const first = catalog[0]; if (first && !busy) void choose(first); }
     }}>
       {stage === 'types' ? <header className="mechanic-selector-type-header"><strong>{es ? 'Tipo de interacción' : 'Interaction type'}</strong><button type="button" className="mechanic-selector-close-types" aria-label={es ? 'Cerrar selector' : 'Close picker'} onClick={close}><X size={16} /></button></header> : null}
-      {stage === 'types' ? <div className="mechanic-selector-types">{choices.map(type => <button key={type.id} type="button" className="mechanic-selector-type" title={`${type.label} · ${type.detail}`} aria-label={type.label} onClick={() => chooseType(type.id as InteractionCategory)}>
+      {stage === 'types' ? <div className="mechanic-selector-types">{choices.map(type => <button key={type.id} type="button" className="mechanic-selector-type" data-onboarding-target="pathbranching.interaction-type" title={`${type.label} · ${type.detail}`} aria-label={type.label} onClick={() => chooseType(type.id as InteractionCategory)}>
         <ConditionPickerIcon name={type.icon} size={24} /><span><strong>{type.label}</strong><small>{type.detail}</small></span><ChevronRight size={14} aria-hidden="true" />
       </button>)}</div> : <>
       {placement === 'dice-context' ? <div className="mechanic-selector-type-tabs" role="tablist" aria-label={es ? 'Tipo de interacción' : 'Interaction type'} onKeyDown={event => {

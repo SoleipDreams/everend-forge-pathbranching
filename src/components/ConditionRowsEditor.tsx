@@ -177,7 +177,7 @@ function ConditionRow({ node, project, context, locale, copyFilter, onChange, on
       <small>{[interaction?.definition?.name, result?.name].filter(Boolean).join(' · ') || (es ? 'La interacción o su resultado ya no existe' : 'The interaction or its result no longer exists')}</small>
     </div>;
   }
-  return <div className={`condition-row-shell${negated ? ' is-negated' : ''}`} data-condition-row={node.id}>
+  return <div className={`condition-row-shell${negated ? ' is-negated' : ''}`} data-condition-row={node.id} data-onboarding-target="pathbranching.condition">
     <div className={`condition-inline-row${hasValue ? '' : ' has-no-value'}`}>
       {dragHandle}
       <div className="condition-inline-field"><span>{es ? 'Tipo' : 'Type'}</span><ConditionReferencePicker label={es ? 'Tipo de condición' : 'Condition type'} projectId={project.projectId} category="condition-kind" locale={locale} searchable={false} autoOpen={node.autoOpen && !kind} value={kind} placeholder={es ? 'Elegir tipo…' : 'Choose type…'} candidates={catalog.map(item => ({ id: item.id, label: item.label, shortLabel: shortNames[item.id], detail: item.description, icon: item.icon }))} onChoose={pickKind} /></div>
@@ -363,7 +363,7 @@ export function ConditionRowsEditor({ project, value, onChange, context, locale,
           <div className="condition-node-wrapper" data-condition-node-id={child.id} data-condition-parent-id={node.id} data-condition-index={index} data-dragging={dropPreview?.source === child.id || undefined}>{render(child, depth + 1 + node.notLabels.length, `${path}.${index + 1}`, index === 0, index === node.children.length - 1)}</div>
         </Fragment>)}<div className="condition-drop-slot" data-condition-drop-parent={node.id} data-condition-drop-index={node.children.length} data-active={dropPreview?.parentId === node.id && dropPreview.index === node.children.length || undefined} /></div>
         {!node.children.length ? <p className="condition-empty" role="status">{depth ? es ? 'Añade una condición o elimina este grupo.' : 'Add a condition or remove this group.' : emptyMessage ?? (es ? 'Sin condiciones.' : 'No conditions.')}</p> : null}
-        <footer className="condition-group-add"><button type="button" disabled={!canAdd} onClick={() => append(pendingConditionNode())}><Plus size={14} />{es ? 'Condición' : 'Condition'}</button><button type="button" disabled={!canAddGroup} onClick={() => append(emptyConditionGroup())}><Plus size={14} />{es ? 'Grupo' : 'Group'}</button></footer>
+        <footer className="condition-group-add"><button type="button" data-onboarding-target={depth === 0 ? 'pathbranching.condition-add' : undefined} disabled={!canAdd} onClick={() => append(pendingConditionNode())}><Plus size={14} />{es ? 'Condición' : 'Condition'}</button><button type="button" disabled={!canAddGroup} onClick={() => append(emptyConditionGroup())}><Plus size={14} />{es ? 'Grupo' : 'Group'}</button></footer>
       </div> : null}
     </section>;
   };

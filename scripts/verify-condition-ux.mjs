@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
 import { fixture, strength } from './condition-fixture.mjs';
-import { initialAuthoringState, instanceOwnerIssue, ownerKey } from '../lib/authoringEntities.js';
+import { initialAuthoringState, instanceOwnerIssue, ownerKey, resolveOwner } from '../lib/authoringEntities.js';
 import { buildStoryCanvasModel } from '../lib/canvas/storyCanvasModel.js';
 import { evaluateConditionDetailed, externalConditionKey, resolveConditionValue } from '../lib/conditionEvaluation.js';
 import { conditionExpressionAtPath, conditionFieldIssues, conditionRouteResolution, conditionTestControls, conditionTreeSummary, groupedConditionPresentation, narrativeTargetLabel } from '../lib/conditionPresentation.js';
@@ -19,7 +19,7 @@ const testerSource = ts.createSourceFile('ConditionTester.tsx', readFileSync(new
 const reducer = testerSource.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'updateControlState');
 assert.ok(reducer, 'ConditionTester must expose its state reducer to this focused regression check.');
 const compiledReducer = ts.transpileModule(reducer.getText(testerSource), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-const updateControlState = new Function('externalConditionKey', 'ownerKey', `${compiledReducer}\nreturn updateControlState;`)(externalConditionKey, ownerKey);
+const updateControlState = new Function('externalConditionKey', 'ownerKey', 'resolveOwner', `${compiledReducer}\nreturn updateControlState;`)(externalConditionKey, ownerKey, resolveOwner);
 const setOwned = (project, state, value, predicate = key) => updateControlState(state, { predicate }, value, project);
 
 test('owned controls change normalized empty inventories and the selected route without modifying the project', () => {

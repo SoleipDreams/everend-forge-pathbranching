@@ -50,6 +50,24 @@ struct UniverseReadResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct UniverseFileIndexPayload {
+    relative_path: String,
+    absolute_path: String,
+    modified_ms: Option<u128>,
+    size_bytes: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UniverseIndexResult {
+    root_path: String,
+    files: Vec<UniverseFileIndexPayload>,
+    directories: Vec<String>,
+    errors: Vec<UniverseReadError>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteResult {
     ok: bool,
     path: String,
@@ -359,6 +377,14 @@ fn should_walk_universe_dir(root: &Path, path: &Path) -> bool {
     !name.starts_with('.')
 }
 
+fn is_pathbranching_events_directory(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/").to_ascii_lowercase();
+    let Some(story_path) = normalized.strip_prefix(".everend/.pathbranching/stories/") else { return false; };
+    let segments = story_path.split('/').collect::<Vec<_>>();
+    segments.windows(3).any(|window| window[0] == "sequences" && window[2] == "events")
+        && segments.last() == Some(&"events")
+}
+
 fn asset_kind(path: &Path) -> &'static str {
     let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
     match extension.as_str() {
@@ -448,6 +474,158 @@ fn walk_universe(
             }),
         }
     }
+}
+
+fn walk_universe_index(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<UniverseFileIndexPayload>,
+    directories: &mut Vec<String>,
+    errors: &mut Vec<UniverseReadError>,
+    include_event_sidecars: bool,
+) {
+    let entries = match fs::read_dir(current) {
+        Ok(entries) => entries,
+        Err(error) => {
+            errors.push(UniverseReadError {
+                relative_path: relative_path(root, current),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(UniverseReadError {
+                    relative_path: relative_path(root, current),
+                    message: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let path = entry.path();
+        if path.is_dir() {
+            if !should_walk_universe_dir(root, &path) {
+                continue;
+            }
+            let relative = relative_path(root, &path);
+            if !include_event_sidecars && is_pathbranching_events_directory(&relative) { continue; }
+            directories.push(relative);
+            walk_universe_index(root, &path, files, directories, errors, include_event_sidecars);
+            continue;
+        }
+        if !should_read_universe_file(&path) {
+            continue;
+        }
+        let relative = relative_path(root, &path);
+        if !include_event_sidecars && relative.starts_with(".everend/.pathbranching/stories/") && relative.contains("/sequences/") && relative.contains("/events/") {
+            continue;
+        }
+        match fs::metadata(&path) {
+            Ok(metadata) => files.push(UniverseFileIndexPayload {
+                relative_path: relative,
+                absolute_path: path.to_string_lossy().to_string(),
+                modified_ms: modified_ms(&path),
+                size_bytes: Some(metadata.len()),
+            }),
+            Err(error) => errors.push(UniverseReadError {
+                relative_path: relative_path(root, &path),
+                message: error.to_string(),
+            }),
+        }
+    }
+}
+
+fn index_universe_with_event_sidecars(root: PathBuf, include_event_sidecars: bool) -> Result<UniverseIndexResult, String> {
+    if !root.exists() {
+        return Err(format!("Universe path does not exist: {}", root.display()));
+    }
+    if !root.is_dir() {
+        return Err(format!("Universe path is not a directory: {}", root.display()));
+    }
+
+    let _storage_guard = story_storage::lock()?;
+    let _universe_guard = story_storage::lock_universe(&root)?;
+    story_storage::recover_locked(&root)?;
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+    let mut errors = Vec::new();
+    walk_universe_index(&root, &root, &mut files, &mut directories, &mut errors, include_event_sidecars);
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    directories.sort();
+
+    Ok(UniverseIndexResult {
+        root_path: root.to_string_lossy().to_string(),
+        files,
+        directories,
+        errors,
+    })
+}
+
+fn read_universe_paths(root: PathBuf, relative_paths: Vec<String>) -> Result<UniverseReadResult, String> {
+    if !root.exists() {
+        return Err(format!("Universe path does not exist: {}", root.display()));
+    }
+    if !root.is_dir() {
+        return Err(format!("Universe path is not a directory: {}", root.display()));
+    }
+
+    let _storage_guard = story_storage::lock()?;
+    let _universe_guard = story_storage::lock_universe(&root)?;
+    story_storage::recover_locked(&root)?;
+    let canonical_root = fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let mut files = Vec::new();
+    let mut errors = Vec::new();
+    for relative in relative_paths {
+        let normalized = match normalize_relative_path(&relative) {
+            Ok(path) => path,
+            Err(error) => {
+                errors.push(UniverseReadError { relative_path: relative, message: error });
+                continue;
+            }
+        };
+        let path = root.join(normalized);
+        if !should_read_universe_file(&path) {
+            errors.push(UniverseReadError {
+                relative_path: relative,
+                message: "Universe path is not a supported text file.".to_string(),
+            });
+            continue;
+        }
+        let canonical_path = match fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(error) => {
+                errors.push(UniverseReadError { relative_path: relative, message: error.to_string() });
+                continue;
+            }
+        };
+        if !canonical_path.starts_with(&canonical_root) || !canonical_path.is_file() {
+            errors.push(UniverseReadError {
+                relative_path: relative,
+                message: "Universe file is outside the selected folder or is not a file.".to_string(),
+            });
+            continue;
+        }
+        match fs::read_to_string(&canonical_path) {
+            Ok(content) => files.push(UniverseFilePayload {
+                relative_path: relative,
+                absolute_path: canonical_path.to_string_lossy().to_string(),
+                content,
+                modified_ms: modified_ms(&canonical_path),
+            }),
+            Err(error) => errors.push(UniverseReadError { relative_path: relative, message: error.to_string() }),
+        }
+    }
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    Ok(UniverseReadResult {
+        root_path: root.to_string_lossy().to_string(),
+        files,
+        directories: Vec::new(),
+        errors,
+    })
 }
 
 fn read_universe(root: PathBuf) -> Result<UniverseReadResult, String> {
@@ -635,11 +813,35 @@ async fn open_universe_dialog(app: tauri::AppHandle) -> Result<Option<UniverseRe
 }
 
 #[tauri::command]
+async fn open_universe_index_dialog(app: tauri::AppHandle) -> Result<Option<UniverseIndexResult>, String> {
+    let Some(folder_path) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = folder_path.into_path().map_err(|error| error.to_string())?;
+    let result = index_universe_with_event_sidecars(path.clone(), false)?;
+    allow_universe_asset_scope(&app, &path)?;
+    Ok(Some(result))
+}
+
+#[tauri::command]
 fn read_universe_folder(app: tauri::AppHandle, path: String) -> Result<UniverseReadResult, String> {
     let root = PathBuf::from(path);
     let result = read_universe(root.clone())?;
     allow_universe_asset_scope(&app, &root)?;
     Ok(result)
+}
+
+#[tauri::command]
+fn read_universe_index(app: tauri::AppHandle, path: String, include_event_sidecars: Option<bool>) -> Result<UniverseIndexResult, String> {
+    let root = PathBuf::from(path);
+    let result = index_universe_with_event_sidecars(root.clone(), include_event_sidecars.unwrap_or(true))?;
+    allow_universe_asset_scope(&app, &root)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn read_universe_files(path: String, relative_paths: Vec<String>) -> Result<UniverseReadResult, String> {
+    read_universe_paths(PathBuf::from(path), relative_paths)
 }
 
 #[tauri::command]
@@ -940,7 +1142,10 @@ pub fn run() {
             everend_bridge_stop,
             everend_bridge_status,
             open_universe_dialog,
+            open_universe_index_dialog,
             read_universe_folder,
+            read_universe_index,
+            read_universe_files,
             index_canon_assets,
             import_universe_assets,
             import_scene_images,

@@ -17,6 +17,7 @@
     "verify:conditions": "npm run build:core && node scripts/verify-conditions.mjs",
     "verify:condition-authoring": "npm run build:core && node scripts/verify-condition-authoring.mjs",
     "verify:canvas-performance": "npm run build:core && node scripts/verify-canvas-performance.mjs",
+    "verify:progressive-load": "npm run build:core && node scripts/verify-progressive-loading.mjs",
     "verify:twine": "npm run build:core && node scripts/verify-twine-import-export.mjs",
     "verify:evpath": "npm run build:core && node scripts/verify-evpath-format.mjs && node scripts/verify-evpath-storage.mjs",
     "verify:persistence": "npm run build:core && node scripts/verify-workspace-persistence.mjs && node scripts/verify-action-persistence.mjs",

@@ -501,8 +501,9 @@ function transitionPayloadFree(transition: Transition): boolean {
 export function serializeEventEvpathDetailed(
   project: BranchingProject,
   eventId: string,
+  eventById?: ReadonlyMap<string, EventNode>,
 ): EvpathSerialization {
-  const event = findEvent(project, eventId);
+  const event = eventById?.get(eventId) ?? findEvent(project, eventId);
   const registry = new Map<string, RegistryEntry>();
   const mainRoots: string[] = [];
   if (!event) return { text: "", registry, mainRoots };
@@ -531,7 +532,7 @@ export function serializeEventEvpathDetailed(
       const bare = bareAnchorFor(target);
       return `^${bare}`;
     }
-    const targetEvent = project.events.find((item) => item.id === target);
+    const targetEvent = eventById?.get(target) ?? project.events.find((item) => item.id === target);
     if (targetEvent) return `"${targetEvent.name || targetEvent.id}"`;
     return target;
   };
@@ -773,8 +774,8 @@ export function serializeEventEvpathDetailed(
   return { text: `${lines.join("\n")}\n`, registry, mainRoots };
 }
 
-export function serializeEventEvpath(project: BranchingProject, eventId: string): string {
-  return serializeEventEvpathDetailed(project, eventId).text;
+export function serializeEventEvpath(project: BranchingProject, eventId: string, eventById?: ReadonlyMap<string, EventNode>): string {
+  return serializeEventEvpathDetailed(project, eventId, eventById).text;
 }
 
 // ---------------------------------------------------------------------------

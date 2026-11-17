@@ -1,14 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { BranchingProject, ProjectAsset, RuntimePackage } from "./domain.js";
 import {
+  hydratePathBranchingEvents,
   loadPathBranchingWorkspace,
+  eventEvpathPath,
+  eventPath,
   pathBranchingMetadataPaths,
   serializeModularStoryFiles,
   serializePathBranchingManifest,
   storyPath,
+  STORAGE_VERSION,
   workingCopyPathForCanonRef,
   type PathBranchingWorkspace,
   type UniverseFile,
+  type UniverseFileIndexEntry,
   type UniverseProfile,
 } from "./pathBranchingWorkspace.js";
 import { normalizeProject, parseProject, projectFileName, serializeProject } from "./projectSerialization.js";
@@ -18,12 +23,15 @@ import {
   browserUniversePath,
   deleteBrowserUniverseFile,
   ensureBrowserUniverseWritePermission,
+  indexBrowserUniverse,
   pickBrowserUniverse,
   readBrowserUniverse,
+  readBrowserUniverseFiles,
   type BrowserDirectoryHandle,
   writeBrowserUniverseFile,
 } from "./utils/browserUniverse.js";
 import { createDemoBrowserUniverse } from "./utils/demoBrowserUniverse.js";
+import { ProgressiveStoryEventLoader, type StoryEventFileBatch, type StoryEventFileReadError } from "./progressiveStoryLoader.js";
 
 export { normalizeProject, parseProject, projectFileName, serializeProject } from "./projectSerialization.js";
 
@@ -76,6 +84,20 @@ export type UniverseReadResult = {
   errors: Array<{ relativePath: string; message: string }>;
 };
 
+export type UniverseIndexResult = {
+  rootPath: string;
+  files: UniverseFileIndexEntry[];
+  directories: string[];
+  errors: Array<{ relativePath: string; message: string }>;
+};
+
+export type OpenedUniverse = {
+  workspace: PathBranchingWorkspace;
+  path: string;
+  files: UniverseReadResult["files"];
+  eventLoader?: ProgressiveStoryEventLoader;
+};
+
 function workspaceFromReadResult(payload: UniverseReadResult): PathBranchingWorkspace {
   const workspace = loadPathBranchingWorkspace(payload.files);
   const failures = payload.errors.filter((error) => error.relativePath === "." || error.relativePath === ".everend" || error.relativePath.startsWith(pathBranchingMetadataPaths.root))
@@ -87,6 +109,87 @@ function workspaceFromReadResult(payload: UniverseReadResult): PathBranchingWork
     loadWarnings: [...(workspace.loadWarnings ?? []), ...failures],
     saveBlockReasons: [...(workspace.saveBlockReasons ?? []), ...failures],
   } : workspace;
+}
+
+function workspaceFromIndexedFiles(
+  files: UniverseReadResult["files"],
+  fileIndex: UniverseFileIndexEntry[],
+  errors: Array<{ relativePath: string; message: string }>,
+  activeStoryId?: string,
+  deferEventSidecars = false,
+): PathBranchingWorkspace {
+  const preparedFiles = activeStoryId ? files.map((file) => {
+    if (file.relativePath !== pathBranchingMetadataPaths.manifest) return file;
+    try {
+      const manifest = JSON.parse(file.content) as { activeStoryId?: string; stories?: unknown[] };
+      return { ...file, content: `${JSON.stringify({ ...manifest, activeStoryId }, null, 2)}\n` };
+    } catch {
+      return file;
+    }
+  }) : files;
+  const workspace = loadPathBranchingWorkspace(preparedFiles, { fileIndex, deferEventSidecars });
+  const failures = errors.filter((error) => error.relativePath === "." || error.relativePath === ".everend" || error.relativePath.startsWith(pathBranchingMetadataPaths.root))
+    .map((error) => `Incomplete story: could not read ${error.relativePath}: ${error.message}`);
+  return failures.length ? {
+    ...workspace,
+    loadingIncomplete: true,
+    saveBlocked: true,
+    eventLoad: workspace.eventLoad ? { ...workspace.eventLoad, status: "incomplete" } : undefined,
+    loadWarnings: [...(workspace.loadWarnings ?? []), ...failures],
+    saveBlockReasons: [...(workspace.saveBlockReasons ?? []), ...failures],
+  } : workspace;
+}
+
+function isSaveBlockingWorkspaceWarning(warning: string): boolean {
+  return warning.startsWith("Incomplete story:")
+    || warning.startsWith("Could not parse ")
+    || warning.startsWith("Ignored ")
+    || warning.startsWith("Could not load ")
+    || warning.startsWith("No se pudo leer el texto")
+    || warning.startsWith("El texto editado");
+}
+
+export function mergeProgressiveEventBatch(
+  workspace: PathBranchingWorkspace,
+  batch: StoryEventFileBatch,
+): { workspace: PathBranchingWorkspace; project: BranchingProject } {
+  if (!workspace.activeStory) return { workspace, project: workspace.activeProject };
+  const hydrated = hydratePathBranchingEvents(
+    workspace.activeProject,
+    workspace.activeStory,
+    workspace.storageVersion,
+    batch.files,
+    batch.eventIds,
+  );
+  const readWarnings = batch.errors.map((error) => `Incomplete story: could not read ${error.relativePath}: ${error.message}`);
+  const addedWarnings = [...hydrated.warnings, ...readWarnings];
+  const loadWarnings = [...(workspace.loadWarnings ?? []), ...addedWarnings];
+  const newBlockReasons = addedWarnings.filter(isSaveBlockingWorkspaceWarning);
+  const saveBlockReasons = [...(workspace.saveBlockReasons ?? []), ...newBlockReasons];
+  const pendingEventIds = new Set(workspace.eventLoad?.pendingEventIds ?? []);
+  batch.eventIds.forEach((id) => pendingEventIds.delete(id));
+  const loadedEventIds = new Set(hydrated.loadedEventIds);
+  const eventLoad = workspace.eventLoad ? {
+    ...workspace.eventLoad,
+    status: saveBlockReasons.length ? "incomplete" as const : pendingEventIds.size ? "loading" as const : "ready" as const,
+    loadedEvents: Math.min(workspace.eventLoad.totalEvents, workspace.eventLoad.loadedEvents + loadedEventIds.size),
+    failedEvents: workspace.eventLoad.failedEvents + hydrated.failedEventIds.length,
+    pendingEventIds,
+  } : undefined;
+  const nextWorkspace: PathBranchingWorkspace = {
+    ...workspace,
+    activeProject: hydrated.project,
+    // The loader requests each sidecar once. Append the new files directly to
+    // avoid rebuilding a path Map for every incremental batch while retaining
+    // the contents needed for conflict checks and partial saves.
+    files: [...workspace.files, ...batch.files],
+    eventLoad,
+    loadWarnings: loadWarnings.length ? loadWarnings : undefined,
+    loadingIncomplete: Boolean(workspace.loadingIncomplete || newBlockReasons.length),
+    saveBlocked: Boolean(workspace.saveBlocked || newBlockReasons.length),
+    saveBlockReasons: saveBlockReasons.length ? saveBlockReasons : undefined,
+  };
+  return { workspace: nextWorkspace, project: hydrated.project };
 }
 
 export type BridgeStatus = {
@@ -111,6 +214,82 @@ function currentBrowserUniverse(path: string): BrowserDirectoryHandle | undefine
   if (shared) return shared;
   if (!selectedBrowserUniverse || path !== browserUniversePath(selectedBrowserUniverse)) return undefined;
   return selectedBrowserUniverse;
+}
+
+function isEventSidecarPath(relativePath: string): boolean {
+  return relativePath.startsWith(`${pathBranchingMetadataPaths.stories}/`)
+    && relativePath.includes("/sequences/")
+    && relativePath.includes("/events/")
+    && /\.(?:json|evpath)$/i.test(relativePath);
+}
+
+function isPathBranchingEventsDirectory(relativePath: string): boolean {
+  if (!relativePath.startsWith(`${pathBranchingMetadataPaths.stories}/`)) return false;
+  const segments = relativePath.split("/");
+  return segments.some((segment, index) => segment === "sequences" && segments[index + 2] === "events" && index + 3 === segments.length);
+}
+
+function omitEventSidecars(index: UniverseIndexResult): UniverseIndexResult {
+  return {
+    ...index,
+    files: index.files.filter((file) => !isEventSidecarPath(file.relativePath)),
+    directories: index.directories.filter((directory) => !isPathBranchingEventsDirectory(directory)),
+  };
+}
+
+async function readUniverseIndex(path: string, includeEventSidecars = false): Promise<UniverseIndexResult> {
+  const browserUniverse = currentBrowserUniverse(path);
+  if (browserUniverse) {
+    const index = await indexBrowserUniverse(browserUniverse);
+    return includeEventSidecars ? index : omitEventSidecars(index);
+  }
+  assertDesktopRuntime("Indexing a universe");
+  const index = await invoke<UniverseIndexResult>("read_universe_index", { path, includeEventSidecars });
+  return includeEventSidecars ? index : omitEventSidecars(index);
+}
+
+async function readUniverseFileBatch(path: string, relativePaths: readonly string[]): Promise<{ files: UniverseReadResult["files"]; errors: StoryEventFileReadError[] }> {
+  const browserUniverse = currentBrowserUniverse(path);
+  if (browserUniverse) return readBrowserUniverseFiles(browserUniverse, relativePaths);
+  assertDesktopRuntime("Reading universe files");
+  const result = await invoke<UniverseReadResult>("read_universe_files", { path, relativePaths: [...relativePaths] });
+  return { files: result.files, errors: result.errors };
+}
+
+async function openIndexedUniverse(
+  path: string,
+  index: UniverseIndexResult,
+  activeStoryId?: string,
+): Promise<OpenedUniverse> {
+  const basePaths = index.files.filter((file) => !isEventSidecarPath(file.relativePath)).map((file) => file.relativePath);
+  const baseRead = await readUniverseFileBatch(path, basePaths);
+  const errors = [...index.errors, ...baseRead.errors];
+  const workspace = workspaceFromIndexedFiles(baseRead.files, index.files, errors, activeStoryId, true);
+  const activeStory = workspace.activeStory;
+  const filePathsByEventId = new Map<string, string[]>();
+  if (activeStory && !activeStory.path.endsWith(".pathbranching.json")) {
+    for (const sequence of workspace.activeProject.sequences) {
+      for (const eventId of sequence.eventIds) {
+        const paths = [eventPath(activeStory.id, sequence.id, eventId), eventEvpathPath(activeStory.id, sequence.id, eventId)];
+        if (workspace.eventLoad?.pendingEventIds.has(eventId)) filePathsByEventId.set(eventId, paths);
+      }
+    }
+  }
+  const eventLoader = filePathsByEventId.size
+    ? new ProgressiveStoryEventLoader(
+        filePathsByEventId,
+        async (relativePaths) => {
+          const result = await readUniverseFileBatch(path, relativePaths);
+          return workspace.storageVersion === STORAGE_VERSION
+            ? result
+            : { ...result, errors: result.errors.filter((error) => !/\.evpath$/i.test(error.relativePath)) };
+        },
+        // Keep the first visible window small; larger background batches amortize native bridge reads.
+        16,
+        128,
+      )
+    : undefined;
+  return { workspace, path: index.rootPath || path, files: workspace.files, eventLoader };
 }
 
 export async function importUniverseAssets(universePath: string): Promise<ImportedAsset[]> {
@@ -147,18 +326,27 @@ export async function openProjectDialog(): Promise<{ project: BranchingProject; 
   };
 }
 
-export async function openUniverseDialog(): Promise<
-  { workspace: PathBranchingWorkspace; path: string; files: UniverseReadResult["files"] } | undefined
-> {
+export async function openUniverseDialog(options: { progressive?: boolean } = {}): Promise<OpenedUniverse | undefined> {
+  const progressive = options.progressive ?? true;
   if (!isTauriRuntime()) {
     const picked = await pickBrowserUniverse();
     if (picked.status === "cancelled") return undefined;
     const root = picked.root;
     await ensureBrowserUniverseWritePermission(root);
+    if (progressive) {
+      selectedBrowserUniverse = root;
+      const path = browserUniversePath(root);
+      const index = await readUniverseIndex(path);
+      return openIndexedUniverse(path, index);
+    }
     const files = await readBrowserUniverse(root);
     selectedBrowserUniverse = root;
     const path = browserUniversePath(root);
     return { workspace: loadPathBranchingWorkspace(files), path, files };
+  }
+  if (progressive) {
+    const payload = await invoke<UniverseIndexResult | null>("open_universe_index_dialog");
+    return payload ? openIndexedUniverse(payload.rootPath, payload) : undefined;
   }
   const payload = await invoke<UniverseReadResult | null>("open_universe_dialog");
   if (!payload) return undefined;
@@ -186,11 +374,11 @@ export async function verifyDesktopBridge(): Promise<BridgeStatus> {
   return invoke<BridgeStatus>("bridge_status");
 }
 
-export async function openUniversePath(path: string): Promise<{
-  workspace: PathBranchingWorkspace;
-  path: string;
-  files: UniverseReadResult["files"];
-}> {
+export async function openUniversePath(path: string, options: { progressive?: boolean; activeStoryId?: string } = {}): Promise<OpenedUniverse> {
+  if (options.progressive) {
+    const index = await readUniverseIndex(path);
+    return openIndexedUniverse(path, index, options.activeStoryId);
+  }
   const browserUniverse = currentBrowserUniverse(path);
   if (browserUniverse) {
     const files = await readBrowserUniverse(browserUniverse);
@@ -208,11 +396,8 @@ export async function openUniversePath(path: string): Promise<{
   };
 }
 
-export async function openUniverseStory(path: string, storyId: string): Promise<{
-  workspace: PathBranchingWorkspace;
-  path: string;
-  files: UniverseReadResult["files"];
-}> {
+export async function openUniverseStory(path: string, storyId: string, options: { progressive?: boolean } = {}): Promise<OpenedUniverse> {
+  if (options.progressive) return openUniversePath(path, { progressive: true, activeStoryId: storyId });
   const opened = await openUniversePath(path);
   const files = opened.files.map((file) => {
     if (file.relativePath !== pathBranchingMetadataPaths.manifest) {
@@ -285,9 +470,10 @@ export function universeBatchFiles(
   deletePaths: string[] = [],
 ): UniverseBatchFile[] {
   const previousByPath = new Map(files.map((file) => [file.relativePath, file]));
-  const writes = output.map((file) => {
-    const previous = files.find((candidate) => candidate.relativePath === file.relativePath);
-    return { ...file, expectedExists: Boolean(previous), expectedContent: previous?.content, expectedModifiedMs: previous?.modifiedMs };
+  const writes = output.flatMap((file) => {
+    const previous = previousByPath.get(file.relativePath);
+    if (previous?.content === file.content) return [];
+    return [{ ...file, expectedExists: Boolean(previous), expectedContent: previous?.content, expectedModifiedMs: previous?.modifiedMs }];
   });
   const deletions = deletePaths.flatMap((relativePath) => {
     const previous = previousByPath.get(relativePath);
@@ -337,7 +523,7 @@ export async function saveUniverseBatch(universePath: string, files: UniverseBat
 }
 
 export function obsoleteSequenceSidecarPaths(
-  files: UniverseFile[],
+  files: ReadonlyArray<Pick<UniverseFile, "relativePath">>,
   output: Array<{ relativePath: string }>,
   storyId: string,
 ): string[] {
@@ -368,7 +554,11 @@ export async function saveUniverseStory(
   const story = workspace.activeStory;
   if (!story) throw new Error("No active Everend PathBranching story is available for this universe.");
   const normalizedStory = { ...story, path: storyPath(story.id) };
-  const output = serializeModularStoryFiles({ ...project, storyId: story.id, universeRootPath: universePath, name: project.name ?? story.name }, normalizedStory);
+  const output = serializeModularStoryFiles(
+    { ...project, storyId: story.id, universeRootPath: universePath, name: project.name ?? story.name },
+    normalizedStory,
+    { preserveUnloadedEventReferences: Boolean(workspace.eventLoad && workspace.eventLoad.status !== "ready") },
+  );
   if (project.integrationConfig && !workspace.files.some((file) => file.relativePath === pathBranchingMetadataPaths.config)) {
     output.push({ relativePath: pathBranchingMetadataPaths.config, content: serializeIntegrationConfigYaml(project.integrationConfig) });
   }
@@ -428,7 +618,7 @@ export async function saveUniverseStory(
   }
   if (!result.ok) return result;
   const savedFiles = batch.filter((file) => !file.delete).map((file) => ({ relativePath: file.relativePath, content: file.content, modifiedMs: result.files.find((entry) => entry.relativePath === file.relativePath)?.modifiedMs }));
-  const storyModifiedMs = savedFiles.find((file) => file.relativePath === normalizedStory.path)?.modifiedMs;
+  const storyModifiedMs = savedFiles.find((file) => file.relativePath === normalizedStory.path)?.modifiedMs ?? workspace.storyModifiedMs;
   return { ...result, path: normalizedStory.path, modifiedMs: storyModifiedMs, storyPath: normalizedStory.path, storyModifiedMs, manifest, manifestModifiedMs: savedFiles.find((file) => file.relativePath === pathBranchingMetadataPaths.manifest)?.modifiedMs, savedFiles };
 }
 

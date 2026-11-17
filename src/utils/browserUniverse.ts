@@ -32,6 +32,26 @@ export type BrowserUniversePickerResult =
   | { status: "selected"; root: BrowserDirectoryHandle }
   | { status: "cancelled" };
 
+export type BrowserUniverseFileIndexEntry = {
+  relativePath: string;
+  modifiedMs?: number;
+  sizeBytes?: number;
+};
+
+export type BrowserUniverseIndex = {
+  rootPath: string;
+  files: BrowserUniverseFileIndexEntry[];
+  directories: string[];
+  errors: Array<{ relativePath: string; message: string }>;
+};
+
+export type BrowserUniverseReadBatch = {
+  files: UniverseFile[];
+  errors: Array<{ relativePath: string; message: string }>;
+};
+
+const indexedBrowserFileHandles = new WeakMap<object, Map<string, BrowserFileHandle>>();
+
 function pickerErrorName(error: unknown): string | undefined {
   return error instanceof DOMException ? error.name : undefined;
 }
@@ -128,6 +148,77 @@ export async function readBrowserUniverse(root: BrowserDirectoryHandle): Promise
 
   await walk(root, "");
   return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+/** Enumerates text-file metadata without reading file contents. */
+export async function indexBrowserUniverse(root: BrowserDirectoryHandle): Promise<BrowserUniverseIndex> {
+  const files: BrowserUniverseFileIndexEntry[] = [];
+  const directories: string[] = [];
+  const errors: Array<{ relativePath: string; message: string }> = [];
+  const handles = new Map<string, BrowserFileHandle>();
+
+  async function walk(directory: BrowserDirectoryHandle, prefix: string): Promise<void> {
+    let entries: AsyncIterableIterator<[string, BrowserDirectoryHandle | BrowserFileHandle]>;
+    try {
+      entries = directory.entries();
+    } catch (error) {
+      errors.push({ relativePath: prefix || ".", message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    try {
+      for await (const [name, handle] of entries) {
+        const relativePath = prefix ? `${prefix}/${name}` : name;
+        if ("entries" in handle) {
+          const insideEverend = prefix === ".everend" || prefix.startsWith(".everend/");
+          if (name.startsWith(".") && !insideEverend && name !== ".everend") continue;
+          directories.push(relativePath);
+          await walk(handle, relativePath);
+          continue;
+        }
+        if (!isUniverseTextFile(relativePath)) continue;
+        try {
+          const file = await handle.getFile();
+          handles.set(relativePath, handle);
+          files.push({ relativePath, modifiedMs: file.lastModified, sizeBytes: file.size });
+        } catch (error) {
+          errors.push({ relativePath, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    } catch (error) {
+      errors.push({ relativePath: prefix || ".", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  await walk(root, "");
+  indexedBrowserFileHandles.set(root, handles);
+  files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  directories.sort();
+  return { rootPath: browserUniversePath(root), files, directories, errors };
+}
+
+/** Reads only the requested indexed files; missing or unreadable files are reported individually. */
+export async function readBrowserUniverseFiles(
+  root: BrowserDirectoryHandle,
+  relativePaths: readonly string[],
+): Promise<BrowserUniverseReadBatch> {
+  const files: UniverseFile[] = [];
+  const errors: Array<{ relativePath: string; message: string }> = [];
+  const handles = indexedBrowserFileHandles.get(root) ?? new Map<string, BrowserFileHandle>();
+  for (const relativePath of [...new Set(relativePaths)]) {
+    try {
+      const parts = pathParts(relativePath);
+      const name = parts.pop();
+      if (!name) throw new Error("Browser universe paths must include a file name.");
+      const parent = await directoryFor(root, parts, false);
+      const handle = handles.get(relativePath) ?? await parent.getFileHandle(name, { create: false });
+      const file = await handle.getFile();
+      files.push({ relativePath, content: await file.text(), modifiedMs: file.lastModified });
+    } catch (error) {
+      errors.push({ relativePath, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  return { files, errors };
 }
 
 async function directoryFor(root: BrowserDirectoryHandle, parts: string[], create: boolean): Promise<BrowserDirectoryHandle> {

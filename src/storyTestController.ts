@@ -28,9 +28,45 @@ export type StoryTestSnapshot = {
   selectedNodeId?: string; drafts: Record<string, string>; draftErrors: Record<string, string>; draftEpochs: { run: number; scenario: number };
 };
 
-function orderedEventIds(project: BranchingProject) {
+type StoryTestEvent = BranchingProject["events"][number];
+type StoryTestEventStructure = {
+  byId: Map<string, StoryTestEvent>;
+  parentById: Map<string, string>;
+  childrenById: Map<string, string[]>;
+};
+
+function eventStructureIndex(project: BranchingProject): StoryTestEventStructure {
   const byId = new Map(project.events.map(event => [event.id, event]));
-  const parentOf = (id: string) => byId.get(id)?.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(id))?.id;
+  const parentById = new Map<string, string>();
+  const childrenById = new Map<string, string[]>();
+  const childIdsByParent = new Map<string, Set<string>>();
+  const addChild = (parentId: string, childId: string) => {
+    let seen = childIdsByParent.get(parentId);
+    if (!seen) childIdsByParent.set(parentId, seen = new Set());
+    if (seen.has(childId)) return;
+    seen.add(childId);
+    let children = childrenById.get(parentId);
+    if (!children) childrenById.set(parentId, children = []);
+    children.push(childId);
+  };
+  project.events.forEach(event => {
+    if (event.parentEventId) parentById.set(event.id, event.parentEventId);
+    event.childEventIds?.forEach(childId => addChild(event.id, childId));
+  });
+  project.events.forEach(event => {
+    if (event.parentEventId) {
+      addChild(event.parentEventId, event.id);
+      return;
+    }
+    event.childEventIds?.forEach(childId => {
+      if (!parentById.has(childId)) parentById.set(childId, event.id);
+    });
+  });
+  return { byId, parentById, childrenById };
+}
+
+function orderedEventIds(project: BranchingProject, structure = eventStructureIndex(project)) {
+  const { byId, parentById, childrenById } = structure;
   const visited = new Set<string>();
   const result: string[] = [];
   const visit = (id: string) => {
@@ -38,17 +74,16 @@ function orderedEventIds(project: BranchingProject) {
     if (!event || visited.has(id)) return;
     visited.add(id);
     result.push(id);
-    const children = [...new Set([...(event.childEventIds ?? []), ...project.events.filter(candidate => candidate.parentEventId === id).map(candidate => candidate.id)])];
-    children.forEach(visit);
+    childrenById.get(id)?.forEach(visit);
   };
   const visitFromRoot = (id: string) => {
     let currentId = id;
     const ancestors = new Set<string>();
-    let parentId = parentOf(currentId);
+    let parentId = parentById.get(currentId);
     while (parentId && !ancestors.has(parentId)) {
       ancestors.add(parentId);
       currentId = parentId;
-      parentId = parentOf(currentId);
+      parentId = parentById.get(currentId);
     }
     visit(currentId);
   };
@@ -58,22 +93,31 @@ function orderedEventIds(project: BranchingProject) {
     visitFromRoot(sequence.entryEventId);
     sequence.eventIds.forEach(visitFromRoot);
   }
-  project.events.filter(event => !parentOf(event.id)).forEach(event => visit(event.id));
+  project.events.filter(event => !parentById.has(event.id)).forEach(event => visit(event.id));
   project.events.forEach(event => visitFromRoot(event.id));
   return result;
 }
 
-function scenarioStartOptions(project: BranchingProject, locale: 'en' | 'es') {
+function scenarioStartOptions(
+  project: BranchingProject,
+  locale: 'en' | 'es',
+  nodes = authoringNodeOptions(project),
+  structure = eventStructureIndex(project),
+) {
   const es = locale === 'es';
   const marker = es ? 'Punto centrado' : 'Start point';
   const sequences = project.sequences.map(sequence => ({ id: `start:${sequence.id}`, label: `${sequence.name} [${marker}] ${es ? 'Secuencia' : 'Sequence'}` }));
-  const nodes = authoringNodeOptions(project);
-  const eventById = new Map(project.events.map(event => [event.id, event]));
-  const eventOrder = orderedEventIds(project);
+  const { byId: eventById, parentById } = structure;
+  const nodesByEventId = new Map<string, typeof nodes>();
+  nodes.forEach(node => {
+    let related = nodesByEventId.get(node.eventId);
+    if (!related) nodesByEventId.set(node.eventId, related = []);
+    related.push(node);
+  });
+  const eventOrder = orderedEventIds(project, structure);
   const options: { id: string; label: string }[] = [...sequences];
   for (const eventId of eventOrder) {
     const event = eventById.get(eventId)!;
-    const parentEventId = event.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(eventId))?.id;
     const path: string[] = [];
     let current: typeof event | undefined = event;
     const seen = new Set<string>();
@@ -81,13 +125,14 @@ function scenarioStartOptions(project: BranchingProject, locale: 'en' | 'es') {
       seen.add(current.id);
       path.unshift(current.name);
       const currentId: string = current.id;
-      const ancestorId: string | undefined = current.parentEventId ?? project.events.find(candidate => candidate.childEventIds?.includes(currentId))?.id;
+      const ancestorId = parentById.get(currentId);
       current = ancestorId ? eventById.get(ancestorId) : undefined;
     }
-    const related = nodes.filter(node => node.eventId === eventId && ['event', 'dialogue', 'decision'].includes(node.kind));
+    const related = (nodesByEventId.get(eventId) ?? []).filter(node => ['event', 'dialogue', 'decision'].includes(node.kind));
     const eventNode = related.find(node => node.kind === 'event');
     const orderedRelated = eventNode ? [eventNode] : [];
     const addedIds = new Set(orderedRelated.map(node => node.id));
+    const parentEventId = parentById.get(eventId);
     for (const dialogue of event.dialogues ?? []) {
       const conversationNode = related.find(node => node.kind === 'dialogue' && node.dialogueId === dialogue.id);
       if (conversationNode && !addedIds.has(conversationNode.id)) {
@@ -238,6 +283,19 @@ function storyTestRevision(project: BranchingProject | undefined): string {
     ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
 }
 
+/** Fast path for immutable canvas/panel changes that don't alter story data. */
+function sameStoryTestDocumentReference(previous: BranchingProject | undefined, next: BranchingProject | undefined) {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  const viewFields = new Set(['canvas', 'panels', 'authoringPreferences']);
+  const previousFields = previous as unknown as Record<string, unknown>;
+  const nextFields = next as unknown as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(previousFields), ...Object.keys(nextFields)])) {
+    if (!viewFields.has(key) && previousFields[key] !== nextFields[key]) return false;
+  }
+  return true;
+}
+
 /** The editor owns this controller. Views and auxiliary windows receive only its projection. */
 export class StoryTestController {
   private project?: BranchingProject;
@@ -272,12 +330,24 @@ export class StoryTestController {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   updateProject(project?: BranchingProject, options: Partial<StoryTestControllerOptions> = {}) {
     const reset = this.project?.projectId !== project?.projectId || ('documentKey' in options && this.options.documentKey !== options.documentKey);
-    const revision = storyTestRevision(project);
-    const changed = this.project !== project || revision !== this.documentRevision || Object.entries(options).some(([k,v]) => this.options[k as keyof StoryTestControllerOptions] !== v);
+    // Projects are immutable in the editor. Selection changes often keep the
+    // same document reference, so don't serialize the whole story for them.
+    const sameDocumentReference = sameStoryTestDocumentReference(this.project, project);
+    const revision = sameDocumentReference ? this.documentRevision : storyTestRevision(project);
+    const projectionOptions = ['locale', 'theme', 'documentKey', 'resolveSpeakerPresentation'] as const;
+    const projectionChanged = !sameDocumentReference || revision !== this.documentRevision
+      || projectionOptions.some(key => key in options && this.options[key] !== options[key]);
+    const selectedNodeChanged = 'selectedNodeId' in options && this.options.selectedNodeId !== options.selectedNodeId;
     this.project = project; this.documentRevision = revision; this.options = { ...this.options, ...options };
     if (reset) { this.clear(); this.scenarioId = project?.authoringScenarios?.[0]?.id ?? ''; }
     if (this.isChanged()) this.paused = true;
-    if (changed) this.publish();
+    if (projectionChanged || reset) this.publish();
+    else if (selectedNodeChanged) {
+      // This field is a canvas highlight hint, not a Story Test command. Keep
+      // its protocol sequence stable so selection doesn't rebuild the snapshot.
+      this.snapshot = { ...this.snapshot, selectedNodeId: this.options.selectedNodeId };
+      for (const listener of this.listeners) listener();
+    }
   }
   request = (request: StoryTestRequest): boolean => {
     if (request.version !== 1 || request.sessionId !== this.sessionId || !request.commandId) return false;
@@ -615,7 +685,9 @@ export class StoryTestController {
   private publish() { this.sequence++; this.refresh(); for (const listener of this.listeners) listener(); }
   private refresh() {
     const editingProject=this.project; const project=this.runProject ?? editingProject; const scenarioState=editingProject?initialAuthoringState(editingProject,this.scenario):{};
-    const state=this.session?.state ?? scenarioState; const nodes=project?authoringNodeOptions(project):[];
+    const state=this.session?.state ?? scenarioState;
+    const editingNodes=editingProject?authoringNodeOptions(editingProject):[];
+    const nodes=project===editingProject?editingNodes:project?authoringNodeOptions(project):[];
     const entities=project?[...project.canonRefs.map(e=>e.id),...(project.localExplorerEntities ?? []).map(e=>e.id)].map(id=>({id,name:entityDefinition(project,id)?.name ?? id,inventoryItem:entityCapabilities(project,id).inventoryItem})):[];
     let self: LogicSubject | undefined; let recipient: LogicSubject | undefined;
     try { self=this.self(); recipient=this.target?JSON.parse(this.target):undefined; } catch { /* Invalid draft stays visible; execution validates below. */ }
@@ -690,8 +762,8 @@ export class StoryTestController {
       scenario: this.scenario ? structuredClone(this.scenario) : undefined,
       scenarioState, scenarioVariables: this.variableFields(scenarioState, 'scenario'), scenarioCopies: this.copyFields(scenarioState, 'scenario'),
       sequenceInventories,
-      nodes: (editingProject ? authoringNodeOptions(editingProject) : []).map(n => ({ id: n.id, label: n.label })),
-      startNodes: editingProject ? scenarioStartOptions(editingProject, locale) : [], entities,
+      nodes: editingNodes.map(n => ({ id: n.id, label: n.label })),
+      startNodes: editingProject ? scenarioStartOptions(editingProject, locale, editingNodes) : [], entities,
       selectedNodeId: this.options.selectedNodeId, drafts: { ...this.drafts }, draftErrors: { ...this.draftErrors }, draftEpochs: { ...this.draftEpochs },
     };
   }

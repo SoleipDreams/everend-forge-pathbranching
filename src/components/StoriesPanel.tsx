@@ -19,8 +19,8 @@ export function storiesViewCopy(locale: "en" | "es") {
   };
 }
 
-function StoryActions({ label, createLabel, createTarget, renameLabel, deleteLabel, canRename, canDelete, onCreate, onRename, onDelete }: {
-  label: string; createLabel: string; createTarget: string; renameLabel: string; deleteLabel: string; canRename: boolean; canDelete: boolean;
+function StoryActions({ label, triggerTarget, createLabel, createTarget, renameLabel, deleteLabel, canRename, canDelete, onCreate, onRename, onDelete }: {
+  label: string; triggerTarget: string; createLabel: string; createTarget: string; renameLabel: string; deleteLabel: string; canRename: boolean; canDelete: boolean;
   onCreate: () => void; onRename: () => void; onDelete: () => void;
 }) {
   const id = useId();
@@ -56,7 +56,7 @@ function StoryActions({ label, createLabel, createTarget, renameLabel, deleteLab
     }
   };
   return <div className="pb-story-actions" ref={ref}>
-    <button type="button" ref={triggerRef} className="pb-story-menu-trigger" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={() => { setOpen((value) => !value); if (!open) focusMenu(); }} onKeyDown={(event) => {
+    <button type="button" ref={triggerRef} data-onboarding-target={triggerTarget} className="pb-story-menu-trigger" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={() => { setOpen((value) => !value); if (!open) focusMenu(); }} onKeyDown={(event) => {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); focusMenu(event.key === "ArrowUp"); }
       if (event.key === "Escape") close(true);
     }}><MoreHorizontal size={16} aria-hidden="true" /></button>
@@ -95,7 +95,7 @@ export function StoriesPanel({ stories, activeStoryId, sequences, activeSequence
           <option value="">{es ? "Selecciona una historia" : "Select a story"}</option>
           {stories.map((story) => <option key={story.id} value={story.id}>{story.name}</option>)}
         </select>
-        <StoryActions label={es ? "Acciones de la historia" : "Story actions"} createLabel={es ? "Nueva historia" : "New story"} createTarget="pathbranching.create-story" renameLabel={es ? "Renombrar historia" : "Rename story"} deleteLabel={es ? "Eliminar historia" : "Delete story"} canRename={Boolean(activeStoryId)} canDelete={Boolean(activeStoryId) && stories.length > 1} onCreate={onCreateStory} onRename={onRenameStory} onDelete={onDeleteStory} />
+        <StoryActions label={es ? "Acciones de la historia" : "Story actions"} triggerTarget="pathbranching.story-actions" createLabel={es ? "Nueva historia" : "New story"} createTarget="pathbranching.create-story" renameLabel={es ? "Renombrar historia" : "Rename story"} deleteLabel={es ? "Eliminar historia" : "Delete story"} canRename={Boolean(activeStoryId)} canDelete={Boolean(activeStoryId) && stories.length > 1} onCreate={onCreateStory} onRename={onRenameStory} onDelete={onDeleteStory} />
       </div>
     </section>
     {activeStoryId ? <section className="pb-story-level pb-sequence-level" aria-labelledby={`${id}-sequence-label`}>
@@ -105,7 +105,7 @@ export function StoriesPanel({ stories, activeStoryId, sequences, activeSequence
           <option value="" disabled={sequences.length > 0}>{es ? "Selecciona una secuencia" : "Select a sequence"}</option>
           {sequences.map((sequence) => <option key={sequence.id} value={sequence.id}>{sequence.name}</option>)}
         </select>
-        <StoryActions label={es ? "Acciones de la secuencia" : "Sequence actions"} createLabel={es ? "Nueva secuencia" : "New sequence"} createTarget="pathbranching.create-sequence" renameLabel={es ? "Renombrar secuencia" : "Rename sequence"} deleteLabel={es ? "Eliminar secuencia" : "Delete sequence"} canRename={hasSequence} canDelete={hasSequence} onCreate={onCreateSequence} onRename={onRenameSequence} onDelete={onDeleteSequence} />
+        <StoryActions label={es ? "Acciones de la secuencia" : "Sequence actions"} triggerTarget="pathbranching.sequence-actions" createLabel={es ? "Nueva secuencia" : "New sequence"} createTarget="pathbranching.create-sequence" renameLabel={es ? "Renombrar secuencia" : "Rename sequence"} deleteLabel={es ? "Eliminar secuencia" : "Delete sequence"} canRename={hasSequence} canDelete={hasSequence} onCreate={onCreateSequence} onRename={onRenameSequence} onDelete={onDeleteSequence} />
       </div>
     </section> : null}
   </div>;

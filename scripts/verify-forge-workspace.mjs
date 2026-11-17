@@ -9,17 +9,20 @@ import { normalizeProject } from '../lib/projectSerialization.js';
 import { updateDialogue } from '../lib/projectMutations.js';
 import { loadPathBranchingWorkspace, serializeModularStoryFiles, serializePathBranchingManifest, storyPath } from '../lib/pathBranchingWorkspace.js';
 
+const compactCanvasMinimum = (width) => Math.min(MIN_CANVAS_WIDTH, Math.max(160, width * 0.42));
+
 test('one explorer accounts for Suite rail, contextual dock and gaps without rewriting widths', () => {
   for (const windowWidth of [1440,1280,1100,900]) {
     for (const suiteRail of [0,56,208]) {
       const actualWorkspace = windowWidth-suiteRail-16;
       const layout = allocateAuthoringWorkspace(actualWorkspace,282,true,420);
-      if (layout.inlineExplorer) assert.ok(actualWorkspace-layout.explorerColumn-420-10 >= MIN_CANVAS_WIDTH);
+      const availableWidth = Math.max(40, actualWorkspace-420-24);
+      if (layout.inlineExplorer) assert.ok(actualWorkspace-layout.explorerColumn-420-24 >= compactCanvasMinimum(availableWidth) - 0.01);
       else assert.equal(layout.explorerColumn,40);
     }
   }
-  assert.equal(allocateAuthoringWorkspace(1184,282,true,420).inlineExplorer,false,'near the threshold uses a drawer');
-  assert.equal(allocateAuthoringWorkspace(1194,282,true,420).inlineExplorer,true,'all three surfaces fit');
+  assert.equal(allocateAuthoringWorkspace(1184,282,true,420).inlineExplorer,true,'the compact inline workspace remains open near the canvas threshold');
+  assert.equal(allocateAuthoringWorkspace(1194,282,true,420).inlineExplorer,true,'the inline workspace remains open when all surfaces fit');
 });
 
 test('UI preferences restore safely and remain separate from narrative documents', () => {
@@ -61,7 +64,8 @@ test('management navigation keeps one panel width plus its rail across desktop a
   for (const width of [1440, 1280, 1100, 900, 700]) {
     for (const panelWidth of [282, 420]) {
       const layout = allocateAuthoringWorkspace(width, panelWidth + 40, true, 420);
-      if (layout.inlineExplorer) assert.ok(width - layout.explorerColumn - 420 - 10 >= MIN_CANVAS_WIDTH);
+      const availableWidth = Math.max(40, width - 420 - 24);
+      if (layout.inlineExplorer) assert.ok(width - layout.explorerColumn - 420 - 24 >= compactCanvasMinimum(availableWidth) - 0.01);
       else assert.equal(layout.explorerColumn, 40);
     }
   }
