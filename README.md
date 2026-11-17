@@ -14,6 +14,8 @@
   <a href="https://github.com/SoleipDreams/everend-forge"><img src="https://img.shields.io/badge/Everend%20Forge-open%20core%20suite-0a0e1a.svg" alt="Part of Everend Forge"></a>
 </p>
 
+<p align="center"><a href="https://everend-forge-site.pages.dev/#access">Conoce y compra Everend Forge Suite →</a></p>
+
 ---
 
 Everend PathBranching is the visual branching narrative editor for Everend Forge. It creates interactive narrative graphs and exports runtime packages and narrative format projections defined by Everend Spec.
@@ -63,7 +65,7 @@ npm run verify:persistence
 
 ## Desktop Shell
 
-PathBranching uses the same React/Vite frontend in web and desktop modes. Tauri is only the desktop packaging/runtime layer, which keeps the architecture aligned with the future Everend Forge suite.
+PathBranching uses the same React/Vite frontend in web and desktop modes. Tauri is the desktop packaging/runtime layer and keeps the app aligned with Everend Forge Suite.
 
 ~~~bash
 npm run dev
@@ -75,9 +77,9 @@ The Tauri shell supports Windows and macOS development and packaging with the sa
 
 ## Everend Forge Suite Compatibility
 
-PathBranching remains a standalone app, but its core modules are exported so a future Everend Forge suite can mount it as the Branch page in a DaVinci Resolve-style workspace. Suite code should use the public exports from `src/index.ts` for domain types, project serialization, workspace loading, validation, runtime export, canvas modeling, environment helpers, and the `PathBranchingApp` component. It should not read private React state or Tauri command internals.
+PathBranching remains a standalone app, and its core modules are exported so Everend Forge Suite can mount it as the Branch workspace. Suite code uses the public exports from `src/index.ts` for domain types, project serialization, workspace loading, validation, runtime export, canvas modeling, environment helpers, and the `PathBranchingApp` component. It does not read private React state or Tauri command internals.
 
-The future suite should share the same active universe folder that WorldNotion edits by default. PathBranching should continue to treat canon Markdown as read-mostly source data and store branching authoring state under `.everend/.pathbranching`.
+The Suite shares the same active universe folder that WorldNotion edits by default. PathBranching treats canon Markdown as read-mostly source data and stores branching authoring state under `.everend/.pathbranching`.
 
 Until WorldNotion and PathBranching reach beta-quality integration surfaces, Everend Forge should pin compatible releases or commits for suite integration rather than tracking every latest app change automatically.
 
