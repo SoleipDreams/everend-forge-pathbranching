@@ -1,9 +1,8 @@
 # License
 
-Code in this repository is licensed under either MIT OR Apache-2.0 unless a file states otherwise.
+Unless a file or third-party notice says otherwise, application source code is licensed under either MIT or Apache-2.0, at your option. Project documentation and original project content are licensed under CC BY 4.0. Third-party materials and Everend brand assets retain their own terms.
 
-Documentation is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0) unless a file states otherwise.
+See LICENSE-MIT and LICENSE-APACHE for the source-code licenses and LICENSE-CC-BY-4.0 for documentation and original content. Preserve required copyright and license notices when redistributing.
 
-- MIT: https://opensource.org/license/mit/
-- Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
-- CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+See TRADEMARKS.md for the separate Everend brand policy.
+

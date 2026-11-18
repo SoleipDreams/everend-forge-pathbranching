@@ -4,17 +4,22 @@
 
 <h1 align="center">Everend PathBranching</h1>
 <p align="center">
-  The visual branching narrative editor for <a href="https://github.com/SoleipDreams/everend-forge">Everend Forge</a>.<br />
-  Interactive narrative graphs, Ink and SINPO GameData export, Everend Spec compatible.
+  Free, open-source visual editor for interactive branching stories.<br />
+  Author narrative graphs and export portable runtime packages.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20React%20Flow%20%2B%20TypeScript-1e2a4a.svg" alt="Built with Tauri, React Flow, TypeScript">
-  <a href="https://github.com/SoleipDreams/everend-forge"><img src="https://img.shields.io/badge/Everend%20Forge-open%20core%20suite-0a0e1a.svg" alt="Part of Everend Forge"></a>
+  <a href="README.es.md">Español</a> · <a href="https://github.com/SoleipDreams/everend-forge-pathbranching/releases/latest">Download free</a> · <a href="https://website-everend-forge.pages.dev/">Explore the integrated Suite</a>
 </p>
 
-<p align="center"><a href="https://everend-forge-site.pages.dev/#access">Conoce y compra Everend Forge Suite →</a></p>
+<p align="center">
+  <a href="https://github.com/SoleipDreams/everend-forge-pathbranching/actions/workflows/ci.yml"><img src="https://github.com/SoleipDreams/everend-forge-pathbranching/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/SoleipDreams/everend-forge-pathbranching/releases/latest"><img src="https://img.shields.io/github/v/release/SoleipDreams/everend-forge-pathbranching?label=latest%20release" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/code-MIT%20OR%20Apache--2.0-blue.svg" alt="Code license"></a>
+  <img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20React%20Flow%20%2B%20TypeScript-1e2a4a.svg" alt="Built with Tauri, React Flow, TypeScript">
+</p>
+
+<p align="center">PathBranching is free to use on its own. The paid Suite is a separate integrated product; buying it does not change this app's open-source rights.</p>
 
 ---
 
@@ -118,6 +123,14 @@ Until WorldNotion and PathBranching reach beta-quality integration surfaces, Eve
 
 PathBranching exports JSON/YAML runtime packages that engine plugins can execute without the authoring app installed. The first practical adapter should also produce SINPO-compatible Ink/GameData output. Future exporters may target Twine and other branching narrative formats as projections from the same story graph.
 
+~~~mermaid
+flowchart LR
+  A[WorldNotion canon] --> B[PathBranching story graph]
+  B --> C[Validate and preview]
+  C --> D[Portable runtime package]
+  D --> E[Engine adapters]
+~~~
+
 ## Related Repositories
 
 - [Everend Forge portal](https://github.com/SoleipDreams/everend-forge)
@@ -126,7 +139,7 @@ PathBranching exports JSON/YAML runtime packages that engine plugins can execute
 
 ## License
 
-Code is licensed under MIT OR Apache-2.0. Documentation is licensed under CC BY 4.0 unless stated otherwise.
+Code is licensed under either MIT or Apache-2.0; documentation is CC BY 4.0. Preserve required legal notices when redistributing. See [license scope](LICENSE), [MIT](LICENSE-MIT), [Apache-2.0](LICENSE-APACHE), [CC BY 4.0](LICENSE-CC-BY-4.0), and the separate [brand policy](TRADEMARKS.md).
 
 ## Support
 
