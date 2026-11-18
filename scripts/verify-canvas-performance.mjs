@@ -13,6 +13,17 @@ const project = normalizeProject({ specVersion: "0.1", projectId: "performance-t
   { id: "e-long", name: "Second event", type: "ending" },
 ], sequences: [{ id: "s", name: "Sequence", eventIds: ["e", "e-long"], entryEventId: "e" }], scripts: [], externalFunctions: [], variables: {} });
 const model = buildStoryCanvasModel(project, { scope: { kind: "sequence", id: "s" } });
+const reorderedProject = {
+  ...project,
+  sequences: project.sequences.map(sequence => ({ ...sequence, eventIds: [...sequence.eventIds].reverse() })),
+};
+const reorderedEvent = buildStoryCanvasModel(reorderedProject, { scope: { kind: "sequence", id: "s" } }).nodes.find(node => node.id === "e-long");
+assert.ok(reorderedEvent, "the reordered sequence event remains addressable by its stable ID");
+assert.notEqual(
+  reorderedEvent.position.y,
+  model.nodes.find(node => node.id === "e-long").position.y,
+  "a replacement sequence ID array recomputes the order index",
+);
 
 function referenceMinimapMarkers(items, scale, viewBox, markerSize) {
   const mapWidth = 210;

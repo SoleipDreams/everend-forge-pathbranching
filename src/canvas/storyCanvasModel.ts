@@ -191,6 +191,15 @@ type CachedSequenceEventSpatialIndex = {
 };
 
 const sequenceEventSpatialIndexes = new WeakMap<readonly string[], CachedSequenceEventSpatialIndex[]>();
+const sequenceEventOrderIndexes = new WeakMap<readonly string[], ReadonlyMap<string, number>>();
+
+function sequenceEventOrderIndex(eventIds: readonly string[]): ReadonlyMap<string, number> {
+  const cached = sequenceEventOrderIndexes.get(eventIds);
+  if (cached) return cached;
+  const index = new Map(eventIds.map((eventId, order) => [eventId, order] as const));
+  sequenceEventOrderIndexes.set(eventIds, index);
+  return index;
+}
 
 function sequenceEventSpatialIndex(
   project: BranchingProject,
@@ -2147,13 +2156,13 @@ export function buildStoryCanvasModel(project: BranchingProject, options: StoryC
       ? project.sequences.find((candidate) => candidate.id === scope.id) ?? activeSequence(project)
       : activeSequence(project);
   const activeSequenceId = sequence?.id;
-  const activeEventIds = new Set(sequence?.eventIds ?? []);
+  const eventIndexInSequence = sequenceEventOrderIndex(sequence?.eventIds ?? []);
+  const activeEventIds = eventIndexInSequence;
   const activeBranches = branchesForSequence(project, activeSequenceId);
   const activeEvents = project.events.filter((eventNode) =>
     activeEventIds.has(eventNode.id) && (!options.eventWindowIds || options.eventWindowIds.has(eventNode.id)),
   );
   const eventIndex = indexCanvasProjectEvents({ ...project, events: activeEvents });
-  const eventIndexInSequence = new Map((sequence?.eventIds ?? []).map((eventId, index) => [eventId, index]));
   const cursor: LayoutCursor = {
     sequenceY: 80,
     branchY: 80,
