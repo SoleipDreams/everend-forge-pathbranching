@@ -1,15 +1,40 @@
 import type { BranchingProject, ConditionInput, ValidationFinding } from './domain.js';
 import { barrierNodeId, freezeInteractionParticipants, interactionDefinitionIssues, interactionNodeId } from './interactions.js';
-import { authoringNodeExists, authoringNodeOptions } from './authoringEngine.js';
+import { createAuthoringNodeLookup, type AuthoringNodeLookup } from './authoringEngine.js';
 import { resolveConditionValue } from './conditionEvaluation.js';
 import { initialAuthoringState } from './authoringEntities.js';
 import { resolveCharacterSubject } from './characterStats.js';
 import { effectiveConditions, walkConditions } from './logic.js';
 
-export function validateInteractions(project: BranchingProject): ValidationFinding[] {
+export function validateInteractions(
+  project: BranchingProject,
+  getAuthoringNodeLookup?: () => AuthoringNodeLookup,
+): ValidationFinding[] {
   const findings: ValidationFinding[] = [];
   const issue = (id: string, message: string) => findings.push({ code: 'invalid_interaction', severity: 'error', id, message });
   const ids = new Set<string>();
+  let conditionMembershipIndexes: {
+    sequenceConditionsByEventId: Map<string, Array<ConditionInput | undefined>>;
+    branchConditionsByEventId: Map<string, Array<ConditionInput | undefined>>;
+  } | undefined;
+  const getConditionMembershipIndexes = () => {
+    if (conditionMembershipIndexes) return conditionMembershipIndexes;
+    const sequenceConditionsByEventId = new Map<string, Array<ConditionInput | undefined>>();
+    const branchConditionsByEventId = new Map<string, Array<ConditionInput | undefined>>();
+    const addConditionMembership = (membership: Map<string, Array<ConditionInput | undefined>>, eventIds: readonly string[], conditions: ConditionInput | undefined) => {
+      for (const eventId of eventIds) {
+        const values = membership.get(eventId);
+        if (values) values.push(conditions);
+        else membership.set(eventId, [conditions]);
+      }
+    };
+    for (const sequence of project.sequences) addConditionMembership(sequenceConditionsByEventId, sequence.eventIds, effectiveConditions(sequence));
+    for (const branch of project.branches) addConditionMembership(branchConditionsByEventId, branch.eventIds, effectiveConditions(branch));
+    conditionMembershipIndexes = { sequenceConditionsByEventId, branchConditionsByEventId };
+    return conditionMembershipIndexes;
+  };
+  let authoringNodeLookup: AuthoringNodeLookup | undefined;
+  const getNodes = () => authoringNodeLookup ??= getAuthoringNodeLookup?.() ?? createAuthoringNodeLookup(project);
   for (const event of project.events) {
     for (const item of [...(event.interactionDefinitions ?? []), ...(event.interactionUses ?? []), ...(event.interactionBarriers ?? [])]) {
       if (!item.id || ids.has(item.id)) issue(item.id, 'Interaction definitions, uses and barriers require unique stable IDs');
@@ -71,8 +96,8 @@ export function validateInteractions(project: BranchingProject): ValidationFindi
       if (!definition) issue(use.id, 'Missing interaction definition');
       if (!['before', 'during', 'after'].includes(use.moment)) issue(use.id, 'Invalid interaction moment');
       if (use.dialogueId && !event.dialogues?.some(d => d.id === use.dialogueId)) issue(use.id, 'Missing interaction dialogue');
-      if (use.ownerNodeId && !authoringNodeExists(project, use.ownerNodeId)) issue(use.id, 'Missing interaction owner');
-      if (use.ownerNodeId && authoringNodeOptions(project).find(n => n.id === use.ownerNodeId)?.eventId !== event.id) issue(use.id, 'Interaction owner belongs to another event');
+      if (use.ownerNodeId && !getNodes().has(use.ownerNodeId)) issue(use.id, 'Missing interaction owner');
+      if (use.ownerNodeId && getNodes().eventId(use.ownerNodeId) !== event.id) issue(use.id, 'Interaction owner belongs to another event');
       const nodeId = use.ownerNodeId ?? interactionNodeId(event.id, use.id);
       const decision = event.decisions?.find(item => `decision:${event.id}:${item.id}` === nodeId || item.outcomes.some(outcome => `outcome:${event.id}:${item.id}:${outcome.id}` === nodeId));
       const outcome = decision?.outcomes.find(item => `outcome:${event.id}:${decision.id}:${item.id}` === nodeId);
@@ -83,9 +108,10 @@ export function validateInteractions(project: BranchingProject): ValidationFindi
         walkConditions(conditions, condition => { if (condition.type === 'interactionResult' && condition.useId === use.id) found = true; });
         return found;
       };
+      const membership = getConditionMembershipIndexes();
       const gates = [
-        ...project.sequences.filter(sequence => sequence.eventIds.includes(event.id)).map(effectiveConditions),
-        ...project.branches.filter(branch => branch.eventIds.includes(event.id)).map(effectiveConditions),
+        ...(membership.sequenceConditionsByEventId.get(event.id) ?? []),
+        ...(membership.branchConditionsByEventId.get(event.id) ?? []),
         effectiveConditions(event), dialogue ? effectiveConditions(dialogue) : undefined, decision ? effectiveConditions(decision) : undefined,
         outcome ? effectiveConditions(outcome) : undefined, beat ? effectiveConditions(beat) : undefined,
       ];
@@ -101,7 +127,7 @@ export function validateInteractions(project: BranchingProject): ValidationFindi
         while (pending.length) {
           const id = pending.pop()!; if (seen.has(id) || stops.has(id)) continue; seen.add(id);
           const routes = successors(id);
-          if ((id !== nodeId && (!authoringNodeExists(project, id) || id.startsWith(`boundary:${event.id}:output:`))) || (!routes.length && id !== nodeId && !id.startsWith('decision:'))) { issue(use.id, 'A continuation can leave the event without waiting for this interaction'); break; }
+          if ((id !== nodeId && (!getNodes().has(id) || id.startsWith(`boundary:${event.id}:output:`))) || (!routes.length && id !== nodeId && !id.startsWith('decision:'))) { issue(use.id, 'A continuation can leave the event without waiting for this interaction'); break; }
           pending.push(...routes);
           const decision = event.decisions?.find(d => `decision:${event.id}:${d.id}` === id);
           decision?.outcomes.forEach(o => pending.push(`outcome:${event.id}:${decision.id}:${o.id}`));

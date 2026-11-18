@@ -51,13 +51,39 @@ export type AuthoringCommand =
   | { type: 'back' }
   | { type: 'restart'; scenario?: AuthoringScenario; startNodeId?: string };
 type ContentNode = { id: string; rawId: string; kind: string; event?: EventNode; dialogue?: DialogueNode; title?: string; text?: string; locationRef?: string; speakerRef?: string; speakerVariantId?: string; logic?: LogicMoment; when?: ConditionInput; automatic: boolean; decision?: NonNullable<EventNode['decisions']>[number] };
+export type AuthoringNodeLookup = { has(id: string): boolean; eventId(id: string): string | undefined };
 
 /** Only narrative data participates in the fixed revision; panels/layout never invalidate a run. */
 export function authoringRevision(project: BranchingProject): string {
   return JSON.stringify({ sequences: project.sequences, branches: project.branches, events: project.events, scriptDocuments: project.scriptDocuments, variables: project.logicVariables, logicFormats: project.logicFormats, canon: project.canonRefs, local: project.localExplorerEntities, properties: project.localExplorerProperties, canonProperties: project.canonPropertyDescriptors, instances: project.entityInstances, overrides: project.entityOverrides, actions: project.narrativeActions, rules: project.narrativeRules, typeOverrides: project.logicTypeOverrides, propertyOverrides: project.logicPropertyOverrides, data: project.projectDataObjects });
 }
 export function authoringNodeOptions(project: BranchingProject) {
-  return Array.from(nodeIndex(project).values()).filter((n, i, all) => all.findIndex(x => x.id === n.id) === i && !['outcome','boundary','dialogueStart'].includes(n.kind)).map(n => ({ id: n.id, label: [n.event?.name, n.dialogue?.title, n.title || n.kind].filter(Boolean).join(' / '), eventId: n.event?.id, dialogueId: n.dialogue?.id }));
+  const seenIds = new Set<string>();
+  const options: ReturnType<typeof authoringNodeOptionsForNode>[] = [];
+  for (const node of nodeIndex(project).values()) {
+    if (seenIds.has(node.id)) continue;
+    seenIds.add(node.id);
+    if (['outcome','boundary','dialogueStart'].includes(node.kind)) continue;
+    options.push(authoringNodeOptionsForNode(node));
+  }
+  return options;
+}
+function authoringNodeOptionsForNode(node: ContentNode) {
+  return { id: node.id, label: [node.event?.name, node.dialogue?.title, node.title || node.kind].filter(Boolean).join(' / '), eventId: node.event?.id, dialogueId: node.dialogue?.id };
+}
+export function createAuthoringNodeLookup(project: BranchingProject): AuthoringNodeLookup {
+  const nodes = new Map<string, ContentNode>();
+  const seenIds = new Set<string>();
+  for (const node of nodeIndex(project).values()) {
+    if (seenIds.has(node.id)) continue;
+    seenIds.add(node.id);
+    if (['outcome','boundary','dialogueStart'].includes(node.kind)) continue;
+    nodes.set(node.id, node);
+  }
+  return {
+    has: id => nodes.has(id),
+    eventId: id => nodes.get(id)?.event?.id,
+  };
 }
 export function authoringNodeExists(project: BranchingProject, id: string): boolean { return nodeIndex(project).has(id); }
 function nodeIndex(project: BranchingProject): Map<string, ContentNode> {

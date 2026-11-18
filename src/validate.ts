@@ -8,7 +8,7 @@ import { logicEffectOperations, logicOperatorsFor, resolveLogicField } from "./l
 import { isGenericSpeakerRef } from "./speakerRoles.js";
 import { canonVariantsForRef } from "./worldnotionVariants.js";
 import { entityCapabilities, entityDefinition, initialAuthoringState, instanceOwnerIssue, inventoryOwnerIssue } from './authoringEntities.js';
-import { authoringNodeExists } from './authoringEngine.js';
+import { createAuthoringNodeLookup, type AuthoringNodeLookup } from './authoringEngine.js';
 import { itemModifierIssues } from './itemCatalog.js';
 
 function finding(
@@ -35,12 +35,18 @@ function findDuplicates(values: string[]): string[] {
   return Array.from(duplicates);
 }
 
+function firstById<T extends { id: string }>(items: readonly T[]): Map<string, T> {
+  const byId = new Map<string, T>();
+  for (const item of items) if (!byId.has(item.id)) byId.set(item.id, item);
+  return byId;
+}
+
 function isTerminalEventType(project: BranchingProject, type: string | undefined) {
   return Boolean(type && (type === "final" || project.eventCategories?.some((category) => category.id === type && category.terminal)));
 }
 
-function validationNodeLabel(project: BranchingProject, nodeId: string) {
-  const event = project.events.find((candidate) => candidate.id === nodeId);
+function validationNodeLabel(project: BranchingProject, nodeId: string, eventById?: ReadonlyMap<string, EventNode>) {
+  const event = eventById?.get(nodeId) ?? project.events.find((candidate) => candidate.id === nodeId);
   return event?.name?.trim() ? `Event "${event.name}" (${nodeId})` : `Node "${nodeId}"`;
 }
 
@@ -150,8 +156,11 @@ function validateConditionRefs(
   if (structureIssues.length) return;
   walkConditions(conditions, (condition, path) => {
     if (condition.type === 'interactionResult') {
-      const use = projectRefs.project.events.flatMap(event => (event.interactionUses ?? []).map(use => ({ use, event }))).find(item => item.use.id === condition.useId);
-      const definition = use?.event.interactionDefinitions?.find(d => d.id === use.use.definitionId);
+      const interaction = typeof condition.useId === 'string'
+        ? projectRefs.interactionUseById.get(condition.useId)
+        : undefined;
+      const use = interaction?.use;
+      const definition = interaction?.definition;
       if (!use || !definition?.results.some(r => r.id === condition.resultId) || !['==','!='].includes(String(condition.operator))
         || condition.participantId && (definition.mechanic.kind !== 'opposedcheck' || !definition.mechanic.rivals.some(rival => rival.id === condition.participantId))) findings.push(finding('invalid_condition','error',`${context} references an invalid interaction result`,{id:ownerId}));
       return;
@@ -172,7 +181,7 @@ function validateConditionRefs(
       typeof condition.ref === "string"
     ) {
       validateCanonRef(findings, canonIds, ownerId, condition.ref, `${context} ${path}`);
-      const canonRef = projectRefs.project.canonRefs.find((ref) => ref.id === condition.ref);
+      const canonRef = projectRefs.canonRefById.get(condition.ref);
       const mappings = mappingsForCanonRef(projectRefs.project, canonRef);
       if (condition.type === "canonProperty") {
         const property = typeof condition.property === "string" ? condition.property : "";
@@ -328,19 +337,40 @@ function validateConsequenceCanonRefs(
 type ProjectReferenceSets = {
   project: BranchingProject;
   sequenceIds: Set<string>;
+  sequenceById: Map<string, BranchingProject["sequences"][number]>;
   branchIds: Set<string>;
+  branchById: Map<string, BranchingProject["branches"][number]>;
   eventIds: Set<string>;
+  eventById: Map<string, EventNode>;
   decisionIds: Set<string>;
   outcomeIds: Set<string>;
+  canonRefById: Map<string, BranchingProject["canonRefs"][number]>;
+  assetById: Map<string, NonNullable<BranchingProject["assets"]>[number]>;
+  dataClassById: Map<string, NonNullable<BranchingProject["dataClasses"]>[number]>;
+  localExplorerEntityIds: Set<string>;
+  interactionUseById: Map<string, {
+    event: EventNode;
+    use: NonNullable<EventNode["interactionUses"]>[number];
+    definition?: NonNullable<EventNode["interactionDefinitions"]>[number];
+  }>;
   dataObjectIds: Set<string>;
   grantableEntityIds: Set<string>;
 };
 
 export function validateProject(project: BranchingProject): ValidationFinding[] {
   const findings: ValidationFinding[] = [];
-  const sequenceIds = new Set(project.sequences.map((sequence) => sequence.id));
-  const branchIds = new Set(project.branches.map((branch) => branch.id));
-  const eventIds = new Set(project.events.map((event) => event.id));
+  let authoringNodeLookup: AuthoringNodeLookup | undefined;
+  const getAuthoringNodeLookup = () => authoringNodeLookup ??= createAuthoringNodeLookup(project);
+  const sequenceById = firstById(project.sequences);
+  const branchById = firstById(project.branches);
+  const eventById = firstById(project.events);
+  const canonRefById = firstById(project.canonRefs);
+  const assetById = firstById(project.assets ?? []);
+  const dataClassById = firstById(project.dataClasses ?? []);
+  const localExplorerEntityIds = new Set((project.localExplorerEntities ?? []).map((entity) => entity.id));
+  const sequenceIds = new Set(sequenceById.keys());
+  const branchIds = new Set(branchById.keys());
+  const eventIds = new Set(eventById.keys());
   const scriptIds = new Set(project.scripts.map((script) => script.id));
   const scriptDocumentIds = new Set((project.scriptDocuments ?? []).map((script) => script.id));
   const scriptBlocks = new Map<string, ScriptBlock>(
@@ -350,12 +380,21 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
   );
   const referencedScriptBlocks = new Set<string>();
   const scriptBlockUseCounts = new Map<string, number>();
-  const canonIds = new Set(project.canonRefs.map((ref) => ref.id));
-  const dataClassIds = new Set((project.dataClasses ?? []).map((dataClass) => dataClass.id));
+  const canonIds = new Set(canonRefById.keys());
+  const dataClassIds = new Set(dataClassById.keys());
   const dataObjectIds = new Set((project.projectDataObjects ?? []).map((dataObject) => dataObject.id));
   const decisionIds = new Set<string>();
   const outcomeIds = new Set<string>();
+  const interactionUseById: ProjectReferenceSets["interactionUseById"] = new Map();
   project.events.forEach((event) => {
+    const definitionsById = firstById(event.interactionDefinitions ?? []);
+    for (const use of event.interactionUses ?? []) {
+      if (!interactionUseById.has(use.id)) interactionUseById.set(use.id, {
+        event,
+        use,
+        definition: definitionsById.get(use.definitionId),
+      });
+    }
     event.decisions?.forEach((decision) => {
       decisionIds.add(decision.id);
       decision.outcomes.forEach((outcome) => {
@@ -366,10 +405,18 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
   const projectRefs: ProjectReferenceSets = {
     project,
     sequenceIds,
+    sequenceById,
     branchIds,
+    branchById,
     eventIds,
+    eventById,
     decisionIds,
     outcomeIds,
+    canonRefById,
+    assetById,
+    dataClassById,
+    localExplorerEntityIds,
+    interactionUseById,
     dataObjectIds,
     grantableEntityIds: grantableEntityIds(project),
   };
@@ -432,7 +479,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     });
 
     sequence.branchIds?.forEach((branchId) => {
-      const branch = project.branches.find((item) => item.id === branchId);
+      const branch = projectRefs.branchById.get(branchId);
       branch?.eventIds.forEach((eventId) => {
         if (!sequence.eventIds.includes(eventId)) {
           findings.push(
@@ -456,13 +503,13 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       if (!entityDefinition(project, copy.entityId) || !entityCapabilities(project, copy.entityId).inventoryItem) findings.push(finding('invalid_consequence','error','Sequence inventory contains an entity that is not an inventory item.',{id:copy.id,ref:copy.entityId}));
     }
     if (sequence.inheritInventoryFromSequenceId) {
-      let current = project.sequences.find(item => item.id === sequence.inheritInventoryFromSequenceId);
+      let current = projectRefs.sequenceById.get(sequence.inheritInventoryFromSequenceId);
       const seen = new Set([sequence.id]);
       if (!current) findings.push(finding('invalid_consequence','error','Sequence inventory inherits from a missing sequence.',{id:sequence.id,ref:sequence.inheritInventoryFromSequenceId}));
       while (current) {
         if (seen.has(current.id)) { findings.push(finding('invalid_consequence','error','Sequence inventory inheritance contains a cycle.',{id:sequence.id,ref:current.id})); break; }
         seen.add(current.id);
-        current = current.inheritInventoryFromSequenceId ? project.sequences.find(item => item.id === current!.inheritInventoryFromSequenceId) : undefined;
+        current = current.inheritInventoryFromSequenceId ? projectRefs.sequenceById.get(current.inheritInventoryFromSequenceId) : undefined;
       }
     }
   });
@@ -492,7 +539,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       );
     }
     if (event.parentEventId) {
-      const parentEvent = project.events.find((candidate) => candidate.id === event.parentEventId);
+      const parentEvent = projectRefs.eventById.get(event.parentEventId);
       if (parentEvent && !(parentEvent.childEventIds ?? []).includes(event.id)) {
         findings.push(
           finding("invalid_nested_event", "error", `Parent event "${parentEvent.id}" does not include child event "${event.id}".`, {
@@ -504,7 +551,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     }
 
     event.childEventIds?.forEach((childEventId) => {
-      const childEvent = project.events.find((candidate) => candidate.id === childEventId);
+      const childEvent = projectRefs.eventById.get(childEventId);
       if (!childEvent) {
         findings.push(
           finding("missing_event", "error", `Event "${event.id}" references missing child event "${childEventId}".`, {
@@ -534,7 +581,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     }
 
     if (event.branchRef) {
-      const branch = project.branches.find((item) => item.id === event.branchRef);
+      const branch = projectRefs.branchById.get(event.branchRef);
       if (branch && !branch.eventIds.includes(event.id)) {
         findings.push(
           finding("invalid_branch_membership", "error", `Event "${event.id}" has branchRef "${event.branchRef}" but is missing from branch.eventIds.`, {
@@ -561,7 +608,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       validateCanonRef(findings, canonIds, event.id, event.locationRef, `Event "${event.id}" location`);
     }
     if (event.coverImage) {
-      const asset = project.assets?.find((candidate) => candidate.id === event.coverImage?.assetId);
+      const asset = projectRefs.assetById.get(event.coverImage.assetId);
       if (!asset) {
         findings.push(
           finding(
@@ -585,7 +632,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
 
     const presentEntityIds = event.presentEntityRefs ?? event.canonRefs ?? [];
     presentEntityIds.forEach((canonRef) => {
-      if (!project.localExplorerEntities?.some(entity => entity.id === canonRef)) validateCanonRef(findings, canonIds, event.id, canonRef, `Event "${event.id}" present entity`);
+      if (!projectRefs.localExplorerEntityIds.has(canonRef)) validateCanonRef(findings, canonIds, event.id, canonRef, `Event "${event.id}" present entity`);
     });
     event.dialogueStarts?.forEach((start) => {
       const source = start.source;
@@ -600,7 +647,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       if (!presentEntityIds.includes(source.id)) {
         findings.push(finding("invalid_dialogue_trigger", "error", `Dialogue Trigger "${start.id}" references entity "${source.id}", which is not present in event "${event.id}".`, { id: start.id, ref: source.id }));
       }
-      const ref = project.canonRefs.find((candidate) => candidate.id === source.id);
+      const ref = projectRefs.canonRefById.get(source.id);
       if (ref && !entitySupportsDialogueTrigger(project, ref)) {
         findings.push(finding("invalid_dialogue_trigger", "error", `Entity "${source.id}" is not configured as a Dialogue Trigger. Mark one of its properties as Entity presentable and Dialogue Trigger reference.`, { id: start.id, ref: source.id }));
       }
@@ -665,9 +712,9 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       }
       const characterRef = block?.characterRef ?? block?.speakerRef;
       if (characterRef && !isGenericSpeakerRef(characterRef)) {
-        if (!project.localExplorerEntities?.some(entity => entity.id === characterRef)) validateCanonRef(findings, canonIds, beat.id, characterRef, `Dialogue beat "${beat.id}" character`);
+        if (!projectRefs.localExplorerEntityIds.has(characterRef)) validateCanonRef(findings, canonIds, beat.id, characterRef, `Dialogue beat "${beat.id}" character`);
         const selectedVariantId = block?.characterVariantId;
-        const canonRef = project.canonRefs.find((ref) => ref.id === characterRef);
+        const canonRef = projectRefs.canonRefById.get(characterRef);
         if (selectedVariantId && canonRef && !canonVariantsForRef(canonRef).some((variant) => variant.id === selectedVariantId)) {
           findings.push(
             finding("invalid_character_variant", "warning", `Dialogue beat "${beat.id}" selects missing variant "${selectedVariantId}" for "${characterRef}".`, {
@@ -695,7 +742,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
         );
       }
       (beat.kind === "speech" && beat.sceneImage ? [beat.sceneImage] : []).forEach((sceneImage) => {
-        const asset = project.assets?.find((candidate) => candidate.id === sceneImage.assetId);
+        const asset = projectRefs.assetById.get(sceneImage.assetId);
         if (!asset) {
           findings.push(
             finding("missing_scene_image", "error", `Dialogue beat "${beat.id}" references missing scene image asset "${sceneImage.assetId}".`, {
@@ -777,7 +824,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     ]);
     const parentInternalNodeIds = event.parentEventId
       ? new Set([
-          ...(project.events.find((candidate) => candidate.id === event.parentEventId)?.childEventIds ?? []),
+          ...(projectRefs.eventById.get(event.parentEventId)?.childEventIds ?? []),
         ])
       : new Set<string>();
     const localHierarchyEventIds = new Set([
@@ -848,24 +895,24 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
       const ordered = orderedTransitions(transitions);
       const fallbacks = transitions.filter((transition) => transition.mode === "fallback");
       if (fallbacks.length > 1) {
-        findings.push(finding("duplicate_fallback", "error", `${validationNodeLabel(project, sourceId)} has more than one fallback transition.`, { id: sourceId }));
+        findings.push(finding("duplicate_fallback", "error", `${validationNodeLabel(project, sourceId, projectRefs.eventById)} has more than one fallback transition.`, { id: sourceId }));
       }
       const orders = transitions.map((transition) => transition.order ?? 0);
       if (new Set(orders).size !== orders.length || orders.some((order) => order < 0)) {
-        findings.push(finding("invalid_transition_order", "error", `${validationNodeLabel(project, sourceId)} has duplicate or invalid transition order values.`, { id: sourceId }));
+        findings.push(finding("invalid_transition_order", "error", `${validationNodeLabel(project, sourceId, projectRefs.eventById)} has duplicate or invalid transition order values.`, { id: sourceId }));
       }
       const unconditionalIndex = ordered.findIndex(
         (transition) => transition.mode !== "fallback" && !effectiveConditions(transition),
       );
       if (unconditionalIndex >= 0 && unconditionalIndex < ordered.length - 1) {
-        findings.push(finding("invalid_transition_order", "warning", `${validationNodeLabel(project, sourceId)} has an unconditional route before later transitions; those routes are unreachable.`, { id: sourceId }));
+        findings.push(finding("invalid_transition_order", "warning", `${validationNodeLabel(project, sourceId, projectRefs.eventById)} has an unconditional route before later transitions; those routes are unreachable.`, { id: sourceId }));
       }
       if (
         transitions.some((transition) => transition.logic?.when ?? transition.conditions) &&
         !fallbacks.length &&
         !transitions.some((transition) => transition.mode !== "fallback" && !(transition.logic?.when ?? transition.conditions))
       ) {
-        findings.push(finding("no_valid_transition", "error", `Non-terminal ${validationNodeLabel(project, sourceId)} can stop when no conditional transition matches. Add an Else fallback.`, { id: sourceId }));
+        findings.push(finding("no_valid_transition", "error", `Non-terminal ${validationNodeLabel(project, sourceId, projectRefs.eventById)} can stop when no conditional transition matches. Add an Else fallback.`, { id: sourceId }));
       }
     });
   });
@@ -881,7 +928,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
 
   project.branches.forEach((branch) => {
     branch.eventIds.forEach((eventId) => {
-      const event = project.events.find((item) => item.id === eventId);
+      const event = projectRefs.eventById.get(eventId);
       if (event && event.branchRef !== branch.id) {
         findings.push(
           finding("invalid_branch_membership", "error", `Branch "${branch.id}" contains event "${eventId}" but event.branchRef is "${event.branchRef ?? "none"}".`, {
@@ -902,7 +949,7 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
   }
 
   (project.projectDataObjects ?? []).forEach((dataObject) => {
-    const dataClass = (project.dataClasses ?? []).find((definition) => definition.id === dataObject.classId);
+    const dataClass = projectRefs.dataClassById.get(dataObject.classId);
     if (!dataClass) {
       findings.push(
         finding("missing_data_class", "error", `Data object "${dataObject.id}" references missing data class "${dataObject.classId}".`, {
@@ -1010,11 +1057,11 @@ export function validateProject(project: BranchingProject): ValidationFinding[] 
     validateNarrativeEffects(findings,projectRefs,canonIds,owner.id,owner.logic?.narrativeEffects);
     if (owner.logic?.repeat && !['once','each-entry'].includes(owner.logic.repeat)) findings.push(finding('invalid_consequence','error','Invalid effect repeat policy.',{id:owner.id}));
   }
-  validateAuthoringDefinitions(findings,projectRefs,canonIds);
+  validateAuthoringDefinitions(findings,projectRefs,canonIds,getAuthoringNodeLookup);
   for (const event of project.events) for (const definition of event.interactionDefinitions ?? []) for (const result of definition.results) {
     validateNarrativeEffects(findings, projectRefs, canonIds, result.id, result.effects);
   }
-  return [...findings, ...validateInteractions(project)];
+  return [...findings, ...validateInteractions(project, getAuthoringNodeLookup)];
 }
 
 function authoredCopies(project: BranchingProject): EntityInstance[] {
@@ -1050,9 +1097,14 @@ function validateNarrativeEffects(findings: ValidationFinding[], refs: ProjectRe
     if (Object.values(e.states ?? {}).some(v=>typeof v!=='boolean')) fail('Copy states must have boolean values.');
   }
 }
-function validateAuthoringDefinitions(findings: ValidationFinding[], refs: ProjectReferenceSets, canonIds: Set<string>) {
+function validateAuthoringDefinitions(
+  findings: ValidationFinding[],
+  refs: ProjectReferenceSets,
+  canonIds: Set<string>,
+  getAuthoringNodeLookup: () => AuthoringNodeLookup,
+) {
   const project=refs.project;
-  const exists=(id:string)=>authoringNodeExists(project,id);
+  const exists=(id:string)=>getAuthoringNodeLookup().has(id);
   const copies=project.entityInstances ?? [];
   for(const duplicate of findDuplicates(copies.map(i=>i.id))) findings.push(finding('duplicate_id','error','Duplicate copy ID.',{id:duplicate}));
   const sequenceCopies=project.sequences.flatMap(sequence=>sequence.initialInventory ?? []);
