@@ -12336,7 +12336,7 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
           (copy) => copy.canonRefId === ref.id,
         )
       ) {
-        setMessage("This Canon entity already has a manual working copy.");
+        setMessage("This entity already has a manual working copy.");
         return;
       }
       const source = workspaceRef.current?.canonIndex.entities.find(

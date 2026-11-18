@@ -6,6 +6,8 @@ export type NotificationInput = {
   source?: string;
   /** Suppress only the transient toast; retain the notification in the bell. */
   silent?: boolean;
+  /** Keep the notification in history without counting it as unread. */
+  unread?: boolean;
   action?: { label: string; run: () => void | Promise<void> };
 };
 export type NotificationEntry = NotificationInput & {
@@ -66,7 +68,7 @@ export function createNotificationStore() {
           kind,
           id: ++nextId,
           createdAt: Date.now(),
-          unread: true,
+          unread: input.unread ?? true,
           count: 1,
         };
         snapshot = {
