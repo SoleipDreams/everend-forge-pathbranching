@@ -5,6 +5,8 @@ import {
   eventPath,
   loadPathBranchingWorkspace,
   pathBranchingMetadataPaths,
+  hydratePathBranchingEvents,
+  reconcilePathBranchingEventFiles,
   serializeModularStoryFiles,
   serializePathBranchingManifest,
   sequencePath,
@@ -111,6 +113,33 @@ assert.equal(merged.workspace.eventLoad?.loadedEvents, hydratedIds.length);
 assert.equal(merged.workspace.eventLoad?.pendingEventIds.size, events.length - hydratedIds.length);
 assert.equal(merged.workspace.saveBlocked, false);
 
+const deferredBatch = hydratePathBranchingEvents(
+  progressiveWorkspace.activeProject,
+  story,
+  progressiveWorkspace.storageVersion,
+  firstBatchFiles,
+  hydratedIds,
+  { deferEvpathReconciliation: true },
+);
+assert.equal(deferredBatch.warnings.length, 0, "streamed JSON batches should defer text reconciliation while cross-event references may still be unloaded");
+const completeStreamHydration = hydratePathBranchingEvents(
+  progressiveWorkspace.activeProject,
+  story,
+  progressiveWorkspace.storageVersion,
+  completeFiles.filter((file) => file.relativePath.includes("/events/")),
+  events.map((event) => event.id),
+  { deferEvpathReconciliation: true },
+);
+const completeReconciliationWarnings = [];
+const reconciledCompleteStream = reconcilePathBranchingEventFiles(
+  completeStreamHydration.project,
+  completeFiles.filter((file) => file.relativePath.endsWith(".evpath")),
+  storyId,
+  completeReconciliationWarnings,
+);
+assert.equal(reconciledCompleteStream.events.length, events.length, "full-story text reconciliation should preserve all loaded event IDs");
+assert.equal(completeReconciliationWarnings.length, 0, "text projections should resolve cross-event references after all events are present");
+
 const partialOutput = serializeModularStoryFiles(merged.project, story, { preserveUnloadedEventReferences: true });
 const partialSequence = JSON.parse(partialOutput.find((file) => file.relativePath === sequencePath(storyId, sequenceId)).content).sequence;
 assert.equal(partialSequence.eventIds.length, events.length, "partial saves must retain every indexed sequence reference");
@@ -199,8 +228,10 @@ let releaseFirstRead;
 const firstReadGate = new Promise((resolve) => { releaseFirstRead = resolve; });
 const pathMap = new Map(events.map((event) => [event.id, [eventPath(storyId, sequenceId, event.id), eventEvpathPath(storyId, sequenceId, event.id)]]));
 const readCalls = [];
-const loader = new ProgressiveStoryEventLoader(pathMap, async (relativePaths) => {
+const readPriorities = [];
+const loader = new ProgressiveStoryEventLoader(pathMap, async (relativePaths, priority) => {
   readCalls.push([...relativePaths]);
+  readPriorities.push(priority);
   if (readCalls.length === 1) await firstReadGate;
   const files = completeFiles.filter((file) => relativePaths.includes(file.relativePath));
   return { files, errors: [] };
@@ -214,6 +245,7 @@ releaseFirstRead();
 await Promise.all([backgroundLoad, viewportLoad]);
 assert(readCalls[1].includes(eventPath(storyId, sequenceId, viewportEventId)), "a newly visible event should jump ahead of queued background events");
 assert.deepEqual(readCalls[1], [eventPath(storyId, sequenceId, viewportEventId), eventEvpathPath(storyId, sequenceId, viewportEventId)], "viewport reads should not be mixed with lower-priority background files");
+assert.deepEqual(readPriorities.slice(0, 2), ["background", "viewport"], "the native read layer should know whether a batch is urgent viewport work or deferrable background work");
 assert.equal(new Set(readCalls.flat()).size, events.length * 2, "each event file should be read once despite priority upgrades");
 assert(readCalls.every((paths) => paths.length <= 8), "the loader must respect its bounded batch size");
 const completedReadCount = readCalls.length;
@@ -265,6 +297,21 @@ assert(streamedReads.every((read, index) => read.enumeratedEvents <= (Math.floor
 assert(streamedReads.every((read) => read.resolvedPaths === read.enumeratedEvents), "the path resolver should only build paths for the active request window");
 assert(streamedReads.every((read) => read.pathCount <= 8), "complete loading must keep each file-read batch within its event batch limit");
 streamingLoader.cancel();
+
+let silentNotifications = 0;
+let streamedValidationEvents = 0;
+const silentLoader = new ProgressiveStoryEventLoader(pathMap, async (relativePaths) => ({
+  files: completeFiles.filter((file) => relativePaths.includes(file.relativePath)),
+  errors: [],
+}), 4, 4);
+silentLoader.subscribe(() => { silentNotifications += 1; });
+await silentLoader.loadRemaining(allEventIds, {
+  notifyHandlers: false,
+  onBatch: (results) => { streamedValidationEvents += results.length; },
+});
+assert.equal(streamedValidationEvents, allEventIds.length, "a silent full-story consumer must receive every loaded event batch");
+assert.equal(silentNotifications, 0, "validation-only reads must not hydrate the interactive workspace subscriber");
+silentLoader.cancel();
 
 assert(sequencePath(storyId, sequenceId).endsWith(`/sequences/sequence-progressive/sequence.json`));
 console.log("Progressive loading: indexed open, viewport windowing, priority batches, pause/resume, bounded complete-load queue windows, hydration order, bounded event eviction, stable-ID reload, and partial-save sidecar safety passed.");

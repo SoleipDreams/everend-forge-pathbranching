@@ -565,7 +565,11 @@ fn index_universe_with_event_sidecars(root: PathBuf, include_event_sidecars: boo
     })
 }
 
-fn read_universe_paths(root: PathBuf, relative_paths: Vec<String>) -> Result<UniverseReadResult, String> {
+fn read_universe_paths(
+    root: PathBuf,
+    relative_paths: Vec<String>,
+    max_concurrent_reads: usize,
+) -> Result<UniverseReadResult, String> {
     if !root.exists() {
         return Err(format!("Universe path does not exist: {}", root.display()));
     }
@@ -577,13 +581,14 @@ fn read_universe_paths(root: PathBuf, relative_paths: Vec<String>) -> Result<Uni
     let _universe_guard = story_storage::lock_universe(&root)?;
     story_storage::recover_locked(&root)?;
     let canonical_root = fs::canonicalize(&root).map_err(|error| error.to_string())?;
-    // Viewport reads contain many small sidecars. A small fixed worker count
-    // overlaps their filesystem latency without creating one thread per file.
-    const MAX_CONCURRENT_UNIVERSE_READS: usize = 4;
+    // Bound concurrency even if a caller requests an oversized worker count.
+    const MAX_CONCURRENT_UNIVERSE_READS: usize = 16;
     let mut files = Vec::new();
     let mut errors = Vec::new();
     if !relative_paths.is_empty() {
-        let worker_count = MAX_CONCURRENT_UNIVERSE_READS.min(relative_paths.len());
+        let worker_count = max_concurrent_reads
+            .clamp(1, MAX_CONCURRENT_UNIVERSE_READS)
+            .min(relative_paths.len());
         let chunk_size = (relative_paths.len() + worker_count - 1) / worker_count;
         let (mut worker_files, mut worker_errors) = std::thread::scope(|scope| {
             let workers = relative_paths.chunks(chunk_size).map(|chunk| {
@@ -879,8 +884,12 @@ fn read_universe_index(app: tauri::AppHandle, path: String, include_event_sideca
 }
 
 #[tauri::command]
-fn read_universe_files(path: String, relative_paths: Vec<String>) -> Result<UniverseReadResult, String> {
-    read_universe_paths(PathBuf::from(path), relative_paths)
+fn read_universe_files(
+    path: String,
+    relative_paths: Vec<String>,
+    max_concurrent_reads: Option<usize>,
+) -> Result<UniverseReadResult, String> {
+    read_universe_paths(PathBuf::from(path), relative_paths, max_concurrent_reads.unwrap_or(4))
 }
 
 #[tauri::command]

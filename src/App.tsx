@@ -66,6 +66,7 @@ import { inspectorDocumentIndex } from "./inspectorDocumentIndex.js";
 import { createCanvasPresentationCache } from "./canvas/presentationCache.js";
 import { createCanvasValidationCache, requiresSubcanvasLayout } from "./canvas/interactionPerformance.js";
 import { createNarrativeValidationCache, narrativeContentUnchanged } from "./narrativeValidation.js";
+import { validateProject } from "./validate.js";
 import { RouteInspector } from "./components/RouteInspector.js";
 import { canvasInspectorTarget, closeInspectorStackTabs, inspectorTargetKind, inspectorTargetTitle, inspectorStackCardHeight, inspectorStackKey, orderedInspectorStack, type InspectorSize, type InspectorStackTarget } from "./inspectorNavigation.js";
 import { useInspectorLayoutMotion } from "./components/useInspectorLayoutMotion.js";
@@ -329,10 +330,13 @@ import {
 import type { ProgressiveStoryEventLoader, StoryEventFileBatch } from "./progressiveStoryLoader.js";
 import { DEFAULT_SPEECH_BEAT_COUNTER_PREFERENCE } from "./projectSerialization.js";
 import {
+  hydratePathBranchingEvents,
+  reconcilePathBranchingEventFiles,
   eventEvpathPath,
   eventPath,
   workingCopyPathForCanonRef,
   type PathBranchingWorkspace,
+  type UniverseFile,
   type UniverseProfile,
 } from "./pathBranchingWorkspace.js";
 import {
@@ -7887,22 +7891,52 @@ const FIXABLE_FINDING_CODES = new Set<ValidationFinding["code"]>([
   "orphan_script_block",
 ]);
 
-function CanvasFindingsButton({ findings, project, complete, onEnsureComplete, onLocateFinding, onFixFinding }: {
+function CanvasFindingsButton({ findings, project, complete, onValidateComplete, validationRevision, onLocateFinding, onFixFinding }: {
   findings: ValidationFinding[]; project: BranchingProject;
-  complete: boolean; onEnsureComplete: () => boolean;
+  complete: boolean;
+  onValidateComplete: (onProgress: (loadedEvents: number, totalEvents: number) => void) => Promise<{ findings: ValidationFinding[]; revision: number } | undefined>;
+  validationRevision: number;
   onLocateFinding: (finding: ValidationFinding) => void;
   onFixFinding: (finding: ValidationFinding) => void;
 }) {
   const locale = useInterfaceLocale();
   const [open, setOpen] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationProgress, setValidationProgress] = useState<{ loadedEvents: number; totalEvents: number }>();
+  const [progressiveValidation, setProgressiveValidation] = useState<{ findings: ValidationFinding[]; revision: number }>();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const errors = findings.filter((finding) => finding.severity === "error").length;
-  const warnings = findings.filter((finding) => finding.severity === "warning").length;
-  const status = !complete ? "loading" : errors ? "error" : warnings ? "warning" : "clean";
-  const label = !complete
-    ? (locale === "es" ? "Esperando a que carguen todos los eventos" : "Waiting for all events to load")
-    : findings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
+  const completedValidation = progressiveValidation?.revision === validationRevision ? progressiveValidation : undefined;
+  const displayedFindings = completedValidation?.findings ?? findings;
+  const validationComplete = complete || Boolean(completedValidation);
+  const errors = displayedFindings.filter((finding) => finding.severity === "error").length;
+  const warnings = displayedFindings.filter((finding) => finding.severity === "warning").length;
+  const status = validating || !validationComplete ? "loading" : errors ? "error" : warnings ? "warning" : "clean";
+  const progressLabel = validationProgress?.totalEvents
+    ? `${validationProgress.loadedEvents.toLocaleString()} / ${validationProgress.totalEvents.toLocaleString()}`
+    : (locale === "es" ? "Preparando…" : "Preparing…");
+  const label = validating
+    ? (locale === "es" ? `Validando historia · ${progressLabel}` : `Validating story · ${progressLabel}`)
+    : !validationComplete
+      ? (locale === "es" ? "Validar historia completa" : "Validate complete story")
+      : displayedFindings.length ? (locale === "es" ? `${errors} errores · ${warnings} avisos` : `${errors} errors · ${warnings} warnings`) : (locale === "es" ? "Sin problemas de validación" : "No validation issues");
+  const handleValidationClick = () => {
+    if (validating) return;
+    if (!validationComplete) {
+      setValidationProgress(undefined);
+      setValidating(true);
+      void onValidateComplete((loadedEvents, totalEvents) => setValidationProgress({ loadedEvents, totalEvents }))
+        .then((result) => {
+          if (!result) return;
+          setProgressiveValidation({ findings: [...result.findings, ...findings], revision: result.revision });
+          setOpen(true);
+        })
+        .catch(() => undefined)
+        .finally(() => setValidating(false));
+      return;
+    }
+    setOpen((current) => !current);
+  };
   useApplicationEffect(() => {
     if (!open) return;
     function pointer(event: PointerEvent) { if (!wrapperRef.current?.contains(event.target as Node)) setOpen(false); }
@@ -7911,14 +7945,14 @@ function CanvasFindingsButton({ findings, project, complete, onEnsureComplete, o
     return () => { document.removeEventListener("pointerdown", pointer); document.removeEventListener("keydown", key); };
   }, [open]);
   return <div data-onboarding-target="pathbranching.validation" className="canvas-findings-anchor" ref={wrapperRef}>
-    <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={() => { if (!complete) { onEnsureComplete(); return; } setOpen((current) => !current); }} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
-      {!complete ? <CircleDot size={14} /> : status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+    <button ref={trigger} type="button" className={`react-flow__controls-button canvas-findings-button ${status} ${open ? "active" : ""}`} onClick={handleValidationClick} title={label} aria-label={`${locale === "es" ? "Validación" : "Validation status"}: ${label}`} aria-expanded={open}>
+      {validating || !validationComplete ? <CircleDot size={14} /> : status === "error" ? <OctagonAlert size={14} /> : status === "warning" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
       <span className="pb-validation-label">{locale === "es" ? "Validar" : "Validate"}</span>
-      {findings.length ? <span className="canvas-findings-count">{findings.length}</span> : null}
+      {displayedFindings.length ? <span className="canvas-findings-count">{displayedFindings.length}</span> : null}
     </button>
     {open ? <div className="canvas-findings-popup" role="region" aria-label={locale === "es" ? "Hallazgos de validación" : "Validation findings"}>
       <div className="canvas-findings-popup-header"><strong>{label}</strong></div>
-      {!complete ? <span className="clean">{label}</span> : findings.length ? <div className="stack-list">{[...findings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
+      {!validationComplete ? <span className="clean">{label}</span> : displayedFindings.length ? <div className="stack-list">{[...displayedFindings].sort((a,b) => (a.severity === "error" ? 0 : 1) - (b.severity === "error" ? 0 : 1)).map((finding, index) => {
         const presentation = findingPresentation(finding, project, locale);
         const transitionOrderTarget = finding.code === "invalid_transition_order" && finding.id
           ? transitionOrderDetails(project, finding.id, locale)
@@ -8096,7 +8130,8 @@ function StoryCanvas({
   selection,
   findings,
   eventLoad,
-  onEnsureCompleteStoryEvents,
+  onValidateCompleteStoryEvents,
+  validationRevision,
   message,
   showStatusMessages,
   activeScope,
@@ -8271,7 +8306,8 @@ function StoryCanvas({
   selection?: Selection;
   findings: ValidationFinding[];
   eventLoad?: PathBranchingWorkspace["eventLoad"];
-  onEnsureCompleteStoryEvents: () => boolean;
+  onValidateCompleteStoryEvents: (onProgress: (loadedEvents: number, totalEvents: number) => void) => Promise<{ findings: ValidationFinding[]; revision: number } | undefined>;
+  validationRevision: number;
   message?: string;
   showStatusMessages: boolean;
   activeScope?: CanvasScope;
@@ -10119,7 +10155,7 @@ function StoryCanvas({
       </div>
       <div className="pb-canvas-locale-tools">
       <div className="inspector-toolbar-host" ref={setInspectorToolbarHost} />
-      <CanvasFindingsButton findings={findings} project={project} complete={!eventLoad || (eventLoad.status !== "incomplete" && eventLoad.pendingEventIds.size === 0)} onEnsureComplete={onEnsureCompleteStoryEvents} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
+      <CanvasFindingsButton findings={findings} project={project} complete={!eventLoad || (eventLoad.status !== "incomplete" && eventLoad.pendingEventIds.size === 0)} onValidateComplete={onValidateCompleteStoryEvents} validationRevision={validationRevision} onLocateFinding={locateFinding} onFixFinding={fixFinding} />
       <div className="canvas-locale-control">
         <button
           type="button"
@@ -11565,6 +11601,152 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
         : `This operation needs a complete story load before it can continue.${reason ? ` ${reason}` : ""}`);
     }
     return false;
+  }, []);
+
+  const validateCompleteStoryProgressively = useCallback(async (
+    onProgress: (loadedEvents: number, totalEvents: number) => void,
+  ): Promise<{ findings: ValidationFinding[]; revision: number } | undefined> => {
+    const initialWorkspace = workspaceRef.current;
+    const initialProject = projectRef.current;
+    if (!initialWorkspace || !initialProject) return undefined;
+    const eventLoad = initialWorkspace.eventLoad;
+    const directValidation = (targetProject: BranchingProject) => {
+      const findings = measureProgressivePerformance("narrative.validation", () => validateProject(targetProject), (result) => ({
+        events: targetProject.events.length,
+        findings: result.length,
+      }));
+      return { findings, revision: projectRevisionRef.current };
+    };
+    if (!eventLoad || eventLoad.pendingEventIds.size === 0) return directValidation(initialProject);
+    if (eventLoad.status === "incomplete") {
+      const reason = initialWorkspace.saveBlockReasons?.[0];
+      setMessage(uiLocaleRef.current === "es"
+        ? `No se puede validar hasta reparar la carga de eventos.${reason ? ` ${reason}` : ""}`
+        : `The story cannot be validated until event loading is repaired.${reason ? ` ${reason}` : ""}`);
+      return undefined;
+    }
+
+    const loader = eventLoaderRef.current;
+    const story = initialWorkspace.activeStory;
+    if (!loader || !story) {
+      setMessage(uiLocaleRef.current === "es"
+        ? "No se puede validar la historia mientras sus eventos sigan descargados."
+        : "The story cannot be validated while event payloads remain unloaded.");
+      return undefined;
+    }
+
+    const pendingIds = [...eventLoad.pendingEventIds];
+    const totalEvents = eventLoad.totalEvents;
+    let validationProject = initialProject;
+    const processedIds = new Set<string>();
+    const loadFailures: string[] = [];
+    const evpathFiles: UniverseFile[] = [];
+    const keepLoadFailures = (messages: string[]) => {
+      for (const warning of messages) {
+        if (loadFailures.length >= 20) break;
+        loadFailures.push(warning);
+      }
+    };
+    const keepEvpathFiles = (files: UniverseFile[]) => {
+      evpathFiles.push(...files.filter((file) => /\.evpath$/i.test(file.relativePath)));
+    };
+    const reportUnexpectedHydrationWarnings = (messages: string[]) => {
+      for (const warning of messages) {
+        if (loadFailures.length >= 20) break;
+        loadFailures.push(warning);
+      }
+    };
+    onProgress(initialProject.events.length, totalEvents);
+    setMessage(uiLocaleRef.current === "es"
+      ? `Leyendo los eventos para validar ${totalEvents.toLocaleString()} IDs sin cargarlos al canvas…`
+      : `Reading events to validate ${totalEvents.toLocaleString()} IDs without hydrating the canvas…`);
+
+    await measureProgressivePerformanceAsync("events.validation.progressiveLoad", () =>
+      loader.loadRemaining(pendingIds, {
+        resumeBackground: true,
+        notifyHandlers: false,
+        onBatch: (results) => {
+          if (eventLoaderRef.current !== loader || activeLoadStoryIdRef.current !== story.id) {
+            keepLoadFailures(["Story changed while validation was loading."]);
+            return;
+          }
+          const eventIds = results.map((result) => result.eventId);
+          eventIds.forEach((eventId) => processedIds.add(eventId));
+          keepLoadFailures(results.flatMap((result) => result.errors.map((error) => `Incomplete story: could not read ${error.relativePath}: ${error.message}`)));
+          const files = results.flatMap((result) => result.files);
+          keepEvpathFiles(files);
+          const hydrated = measureProgressivePerformance("events.validation.hydrateBatch", () => hydratePathBranchingEvents(
+            validationProject,
+            story,
+            initialWorkspace.storageVersion,
+            files,
+            eventIds,
+            { deferEvpathReconciliation: true },
+          ), (result) => ({ requestedEvents: eventIds.length, residentEvents: result.project.events.length, loadedEvents: result.loadedEventIds.length, failedEvents: result.failedEventIds.length }));
+          validationProject = hydrated.project;
+          if (hydrated.failedEventIds.length) reportUnexpectedHydrationWarnings(hydrated.warnings);
+          onProgress(Math.min(totalEvents, initialProject.events.length + processedIds.size), totalEvents);
+        },
+      }),
+    () => ({ totalEvents, requestedEvents: pendingIds.length, processedEvents: processedIds.size }));
+
+    if (eventLoaderRef.current !== loader || activeLoadStoryIdRef.current !== story.id) {
+      setMessage(uiLocaleRef.current === "es" ? "La validación se canceló porque cambió la historia activa." : "Validation stopped because the active story changed.");
+      return undefined;
+    }
+
+    const reconciliationWarnings: string[] = [];
+    validationProject = measureProgressivePerformance("events.validation.reconcile", () => reconcilePathBranchingEventFiles(
+      validationProject,
+      evpathFiles,
+      story.id,
+      reconciliationWarnings,
+    ), (result) => ({ events: result.events.length, evpathFiles: evpathFiles.length, warnings: reconciliationWarnings.length }));
+    evpathFiles.length = 0;
+
+    if (loadFailures.length || processedIds.size !== pendingIds.length) {
+      const reason = loadFailures[0] ?? "Some event IDs could not be loaded.";
+      setMessage(uiLocaleRef.current === "es"
+        ? `No se completó la validación porque no se pudieron leer todos los eventos. ${reason}`
+        : `Validation could not finish because not all event payloads were readable. ${reason}`);
+      return undefined;
+    }
+    if (reconciliationWarnings.length) {
+      setMessage(uiLocaleRef.current === "es"
+        ? `Se validará el contenido JSON guardado; ${reconciliationWarnings.length} proyección${reconciliationWarnings.length === 1 ? " de texto requiere" : "es de texto requieren"} revisión.`
+        : `Validating the saved JSON content; ${reconciliationWarnings.length} text projection${reconciliationWarnings.length === 1 ? " needs" : "s need"} review.`);
+    }
+
+    const latestProject = projectRef.current ?? initialProject;
+    const latestWorkspace = workspaceRef.current ?? initialWorkspace;
+    const currentSequenceEventIds = new Set(latestProject.sequences.flatMap((sequence) => sequence.eventIds));
+    const eventsById = new Map(
+      validationProject.events
+        .filter((event) => currentSequenceEventIds.has(event.id))
+        .map((event) => [event.id, event] as const),
+    );
+    // Keep user edits and newly authored resident events that changed while disk batches were being read.
+    latestProject.events.forEach((event) => eventsById.set(event.id, event));
+    const eventOrder = new Map<string, number>();
+    for (const sequence of latestProject.sequences) {
+      sequence.eventIds.forEach((eventId) => {
+        if (!eventOrder.has(eventId)) eventOrder.set(eventId, eventOrder.size);
+      });
+    }
+    const completeProject: BranchingProject = {
+      ...latestProject,
+      events: [...eventsById.values()].sort((left, right) =>
+        (eventOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (eventOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+      ),
+    };
+    if (latestWorkspace.activeProject.storyId !== story.id) return undefined;
+    onProgress(totalEvents, totalEvents);
+    const findings = measureProgressivePerformance("narrative.validation", () => validateProject(completeProject), (result) => ({
+      events: completeProject.events.length,
+      findings: result.length,
+      mode: "progressive-sidecar-stream",
+    }));
+    return { findings, revision: projectRevisionRef.current };
   }, []);
 
   const applyWorkspace = useCallback(
@@ -19049,7 +19231,8 @@ function PathBranchingApp({ suiteChrome }: { suiteChrome?: SuiteChrome } = {}) {
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
             onCanvasViewportChange={updateCanvasEventWindow}
-            onEnsureCompleteStoryEvents={ensureCompleteStoryEvents}
+            onValidateCompleteStoryEvents={validateCompleteStoryProgressively}
+            validationRevision={projectRevisionRef.current}
             onAddTransitionWaypoint={addTransitionWaypoint}
             onMoveTransitionWaypoint={moveTransitionWaypoint}
             onRemoveTransitionWaypoint={removeTransitionWaypoint}

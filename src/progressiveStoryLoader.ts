@@ -21,11 +21,14 @@ export type StoryEventFileLoadResult = {
 export type StoryEventFilePathResolver = ReadonlyMap<string, readonly string[]>
   | ((eventId: string) => readonly string[] | undefined);
 
+export type StoryEventFileReadPriority = "viewport" | "background";
+
 type QueuedEvent = {
   eventId: string;
   relativePaths: string[];
   state: "queued" | "reading" | "done";
   priority: "viewport" | "background";
+  notifyHandlers: boolean;
   promise: Promise<StoryEventFileLoadResult>;
   resolve: (result: StoryEventFileLoadResult) => void;
 };
@@ -42,7 +45,7 @@ export class ProgressiveStoryEventLoader {
 
   constructor(
     private readonly filePathsByEventId: StoryEventFilePathResolver,
-    private readonly readFiles: (relativePaths: readonly string[]) => Promise<{ files: UniverseFile[]; errors: StoryEventFileReadError[] }>,
+    private readonly readFiles: (relativePaths: readonly string[], priority: StoryEventFileReadPriority) => Promise<{ files: UniverseFile[]; errors: StoryEventFileReadError[] }>,
     private readonly batchSize = 32,
     private readonly backgroundBatchSize = batchSize,
   ) {}
@@ -52,12 +55,17 @@ export class ProgressiveStoryEventLoader {
     return () => this.handlers.delete(handler);
   }
 
-  request(eventIds: readonly string[], priority: "viewport" | "background" = "viewport"): Promise<StoryEventFileLoadResult[]> {
+  request(
+    eventIds: readonly string[],
+    priority: StoryEventFileReadPriority = "viewport",
+    options: { notifyHandlers?: boolean } = {},
+  ): Promise<StoryEventFileLoadResult[]> {
     if (this.cancelled) return Promise.resolve([]);
     const uniqueIds = [...new Set(eventIds)];
     const results = uniqueIds.map((eventId) => {
       const existing = this.records.get(eventId);
       if (existing) {
+        if (options.notifyHandlers !== false) existing.notifyHandlers = true;
         if (priority === "viewport" && existing.state === "queued" && existing.priority !== "viewport") {
           existing.priority = "viewport";
           this.viewportQueue.push(eventId);
@@ -75,6 +83,7 @@ export class ProgressiveStoryEventLoader {
         relativePaths: [...(relativePaths ?? [])],
         state: "queued",
         priority,
+        notifyHandlers: options.notifyHandlers !== false,
         promise,
         resolve,
       };
@@ -86,9 +95,19 @@ export class ProgressiveStoryEventLoader {
     return Promise.all(results);
   }
 
-  async loadRemaining(eventIds: Iterable<string>, options: { resumeBackground?: boolean } = {}): Promise<void> {
+  async loadRemaining(eventIds: Iterable<string>, options: {
+    resumeBackground?: boolean;
+    notifyHandlers?: boolean;
+    onBatch?: (results: StoryEventFileLoadResult[]) => void | Promise<void>;
+  } = {}): Promise<void> {
     if (options.resumeBackground) this.resumeBackground();
     const queueWindowSize = Math.max(1, this.backgroundBatchSize * 2);
+    const loadWindow = async (eventIds: string[]) => {
+      const results = await measureProgressivePerformanceAsync("events.complete.queueWindow", () =>
+        this.request(eventIds, "background", { notifyHandlers: options.notifyHandlers !== false }),
+      (loaded) => ({ queuedEvents: eventIds.length, completedEvents: loaded.length }));
+      await options.onBatch?.(results);
+    };
     let queueWindow: string[] = [];
     for (const eventId of eventIds) {
       if (this.cancelled) return;
@@ -96,13 +115,11 @@ export class ProgressiveStoryEventLoader {
       if (queueWindow.length < queueWindowSize) continue;
       const batch = queueWindow;
       queueWindow = [];
-      await measureProgressivePerformanceAsync("events.complete.queueWindow", () => this.request(batch, "background"),
-        (results) => ({ queuedEvents: batch.length, completedEvents: results.length }));
+      await loadWindow(batch);
     }
     if (queueWindow.length && !this.cancelled) {
       const batch = queueWindow;
-      await measureProgressivePerformanceAsync("events.complete.queueWindow", () => this.request(batch, "background"),
-        (results) => ({ queuedEvents: batch.length, completedEvents: results.length }));
+      await loadWindow(batch);
     }
   }
 
@@ -165,9 +182,10 @@ export class ProgressiveStoryEventLoader {
       const batch = this.nextBatch();
       if (!batch.length) return;
       const relativePaths = [...new Set(batch.flatMap((record) => record.relativePaths))];
+      const priority = batch[0].priority;
       let readResult: { files: UniverseFile[]; errors: StoryEventFileReadError[] };
       try {
-        readResult = await this.readFiles(relativePaths);
+        readResult = await this.readFiles(relativePaths, priority);
       } catch (error) {
         readResult = {
           files: [],
@@ -187,10 +205,11 @@ export class ProgressiveStoryEventLoader {
         record.resolve(result);
         return result;
       });
-      if (!this.cancelled) {
-        const files = eventResults.flatMap((result) => result.files);
-        const errors = eventResults.flatMap((result) => result.errors);
-        const notification = { eventIds: batch.map((record) => record.eventId), files, errors };
+      const notificationResults = eventResults.filter((_, index) => batch[index].notifyHandlers);
+      if (!this.cancelled && notificationResults.length) {
+        const files = notificationResults.flatMap((result) => result.files);
+        const errors = notificationResults.flatMap((result) => result.errors);
+        const notification = { eventIds: notificationResults.map((result) => result.eventId), files, errors };
         for (const handler of this.handlers) await handler(notification);
       }
       // The workspace now owns the resident payload. Drop completed promises so

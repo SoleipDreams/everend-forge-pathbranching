@@ -31,7 +31,7 @@ import {
   writeBrowserUniverseFile,
 } from "./utils/browserUniverse.js";
 import { createDemoBrowserUniverse } from "./utils/demoBrowserUniverse.js";
-import { ProgressiveStoryEventLoader, type StoryEventFileBatch, type StoryEventFileReadError } from "./progressiveStoryLoader.js";
+import { ProgressiveStoryEventLoader, type StoryEventFileBatch, type StoryEventFileReadError, type StoryEventFileReadPriority } from "./progressiveStoryLoader.js";
 import { measureProgressivePerformance, measureProgressivePerformanceAsync } from "./progressivePerformance.js";
 
 export { normalizeProject, parseProject, projectFileName, serializeProject } from "./projectSerialization.js";
@@ -301,14 +301,34 @@ async function readUniverseIndex(path: string, includeEventSidecars = false): Pr
   }, (index) => ({ indexedFiles: index.files.length, indexedDirectories: index.directories.length, errors: index.errors.length }));
 }
 
-async function readUniverseFileBatch(path: string, relativePaths: readonly string[]): Promise<{ files: UniverseReadResult["files"]; errors: StoryEventFileReadError[] }> {
+const UNIVERSE_FILE_READ_CONCURRENCY: Record<StoryEventFileReadPriority, number> = {
+  viewport: 4,
+  background: 16,
+};
+
+async function readUniverseFileBatch(
+  path: string,
+  relativePaths: readonly string[],
+  priority: StoryEventFileReadPriority = "viewport",
+): Promise<{ files: UniverseReadResult["files"]; errors: StoryEventFileReadError[] }> {
+  const maxConcurrentReads = UNIVERSE_FILE_READ_CONCURRENCY[priority];
   return measureProgressivePerformanceAsync("universe.files.read", async () => {
     const browserUniverse = currentBrowserUniverse(path);
     if (browserUniverse) return readBrowserUniverseFiles(browserUniverse, relativePaths);
     assertDesktopRuntime("Reading universe files");
-    const result = await invoke<UniverseReadResult>("read_universe_files", { path, relativePaths: [...relativePaths] });
+    const result = await invoke<UniverseReadResult>("read_universe_files", {
+      path,
+      relativePaths: [...relativePaths],
+      maxConcurrentReads,
+    });
     return { files: result.files, errors: result.errors };
-  }, (result) => ({ requestedFiles: relativePaths.length, loadedFiles: result.files.length, errors: result.errors.length }));
+  }, (result) => ({
+    requestedFiles: relativePaths.length,
+    loadedFiles: result.files.length,
+    errors: result.errors.length,
+    priority,
+    maxConcurrentReads,
+  }));
 }
 
 async function openIndexedUniverse(
@@ -346,15 +366,15 @@ async function openIndexedUniverse(
             ? [eventPath(activeStory.id, sequenceId, eventId), eventEvpathPath(activeStory.id, sequenceId, eventId)]
             : undefined;
         },
-        async (relativePaths) => {
-          const result = await readUniverseFileBatch(path, relativePaths);
+        async (relativePaths, priority) => {
+          const result = await readUniverseFileBatch(path, relativePaths, priority);
           return workspace.storageVersion === STORAGE_VERSION
             ? result
             : { ...result, errors: result.errors.filter((error) => !/\.evpath$/i.test(error.relativePath)) };
         },
         // Keep the first visible window small; larger background batches amortize native bridge reads.
         16,
-        128,
+        512,
       )
     : undefined;
   return { workspace, path: index.rootPath || path, files: workspace.files, eventLoader };

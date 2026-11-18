@@ -624,6 +624,16 @@ function reconcileEventEvpathFiles(
   return current;
 }
 
+/** Reconcile event text projections after every referenced event is available. */
+export function reconcilePathBranchingEventFiles(
+  project: BranchingProject,
+  files: UniverseFile[],
+  storyId: string,
+  loadWarnings?: string[],
+): BranchingProject {
+  return reconcileEventEvpathFiles(project, files, storyId, loadWarnings);
+}
+
 function parseLegacyStoryProject(
   files: UniverseFile[],
   story: PathBranchingStoryManifestEntry,
@@ -770,6 +780,7 @@ export function hydratePathBranchingEvents(
   storageVersion: string | undefined,
   files: UniverseFile[],
   requestedEventIds: readonly string[],
+  options: { deferEvpathReconciliation?: boolean } = {},
 ): HydratedStoryEvents {
   const warnings: string[] = [];
   const filesByPath = indexUniverseFilesByPath(files);
@@ -839,13 +850,9 @@ export function hydratePathBranchingEvents(
   }
   mergedEvents.push(...project.events.slice(existingIndex), ...orderedNewEvents.slice(newIndex));
   const mergedProject: BranchingProject = { ...project, events: mergedEvents };
-  const reconciledProject = reconcileEventEvpathFiles(
-    mergedProject,
-    files,
-    story.id,
-    warnings,
-    new Set(loadedEventIds),
-  );
+  const reconciledProject = options.deferEvpathReconciliation
+    ? mergedProject
+    : reconcileEventEvpathFiles(mergedProject, files, story.id, warnings, new Set(loadedEventIds));
 
   return { project: reconciledProject, attemptedEventIds, loadedEventIds, failedEventIds, warnings };
 }
