@@ -110,19 +110,41 @@ const MiniMapMarker = memo(function MiniMapMarker({ node, x, y, size, scale }: {
   );
 });
 
+function MiniMapViewportRect({ bounds }: { bounds: MapBounds }) {
+  const transform = useStore((state) => state.transform);
+  const flowWidth = useStore((state) => state.width);
+  const flowHeight = useStore((state) => state.height);
+  const [viewportX, viewportY, zoom] = transform;
+  if (zoom <= 0) return null;
+  const width = Math.min(flowWidth / zoom, bounds.width);
+  const height = Math.min(flowHeight / zoom, bounds.height);
+  const x = Math.max(bounds.x, Math.min(
+    -viewportX / zoom,
+    bounds.x + bounds.width - width,
+  ));
+  const y = Math.max(bounds.y, Math.min(
+    -viewportY / zoom,
+    bounds.y + bounds.height - height,
+  ));
+  return (
+    <rect
+      className="canvas-minimap-viewport"
+      x={x}
+      y={y}
+      width={width}
+      height={height}
+    />
+  );
+}
+
 export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const pointerRef = useRef<number | undefined>(undefined);
   const nodes = useNodes<StoryCanvasNode>();
   const edges = useEdges<StoryCanvasEdge>();
-  const transform = useStore((state) => state.transform);
   const flowWidth = useStore((state) => state.width);
-  const flowHeight = useStore((state) => state.height);
   const flow = useReactFlow<StoryCanvasNode, StoryCanvasEdge>();
-  const [viewportX, viewportY, zoom] = transform;
-  const viewport = zoom > 0
-    ? { x: -viewportX / zoom, y: -viewportY / zoom, width: flowWidth / zoom, height: flowHeight / zoom }
-    : undefined;
+  const flowHeight = useStore((state) => state.height);
 
   const mapNodes = useMemo(() => nodes
     .filter((node) => !node.hidden && node.data.kind !== "workspace" && node.data.kind !== "endAdder")
@@ -140,13 +162,13 @@ export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
     }), [nodes]);
   const mapNodeById = useMemo(() => new Map(mapNodes.map((item) => [item.node.id, item])), [mapNodes]);
   const bounds = useMemo<MapBounds>(() => {
-    if (!mapNodes.length && !viewport) return { x: 0, y: 0, width: 800, height: 460 };
-    const left = Math.min(...mapNodes.map((item) => item.x), viewport?.x ?? Number.POSITIVE_INFINITY);
-    const top = Math.min(...mapNodes.map((item) => item.y), viewport?.y ?? Number.POSITIVE_INFINITY);
-    const right = Math.max(...mapNodes.map((item) => item.x + item.width), viewport ? viewport.x + viewport.width : Number.NEGATIVE_INFINITY);
-    const bottom = Math.max(...mapNodes.map((item) => item.y + item.height), viewport ? viewport.y + viewport.height : Number.NEGATIVE_INFINITY);
+    if (!mapNodes.length) return { x: 0, y: 0, width: 800, height: 460 };
+    const left = Math.min(...mapNodes.map((item) => item.x));
+    const top = Math.min(...mapNodes.map((item) => item.y));
+    const right = Math.max(...mapNodes.map((item) => item.x + item.width));
+    const bottom = Math.max(...mapNodes.map((item) => item.y + item.height));
     return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
-  }, [mapNodes, viewport]);
+  }, [mapNodes]);
   const padding = Math.max(18, Math.min(bounds.width, bounds.height) * 0.08);
   const viewBox = {
     x: bounds.x - padding,
@@ -224,6 +246,7 @@ export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
   const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
     const centerX = bounds.x + bounds.width / 2;
     const centerY = bounds.y + bounds.height / 2;
+    const { x: viewportX, y: viewportY, zoom } = flow.getViewport();
     const visibleWidth = flowWidth / Math.max(zoom, 0.01);
     const visibleHeight = flowHeight / Math.max(zoom, 0.01);
     const stepX = Math.max(60, visibleWidth * 0.2);
@@ -293,15 +316,7 @@ export function CanvasMiniMap({ locale = "en" }: { locale?: "en" | "es" }) {
         {markerPositions.map(({ item, x, y }) => (
           <MiniMapMarker key={item.node.id} node={item.node} x={x} y={y} size={markerSize} scale={scale} />
         ))}
-        {viewport ? (
-          <rect
-            className="canvas-minimap-viewport"
-            x={viewport.x}
-            y={viewport.y}
-            width={viewport.width}
-            height={viewport.height}
-          />
-        ) : null}
+        <MiniMapViewportRect bounds={bounds} />
       </svg>
     </Panel>
   );

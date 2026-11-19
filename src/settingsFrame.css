@@ -49,8 +49,30 @@
 .ef-settings-dialog button:hover:not(:disabled), .ef-settings-content button:hover:not(:disabled) { background: var(--settings-soft); }
 .ef-settings-dialog button:disabled, .ef-settings-content button:disabled { cursor: default; opacity: .55; }
 .ef-settings-dialog :is(button,input,select,textarea,summary):focus-visible { outline: 2px solid var(--settings-accent); outline-offset: 3px; }
+.ef-settings-select { position: relative; display: block; width: 100%; min-width: 0; }
+.ef-settings-select[data-open] { z-index: 31; }
+.ef-settings-content label > .ef-settings-select { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; margin: 0; }
+.ef-settings-select-native { display: none !important; }
+.ef-settings-select-trigger { display: flex !important; align-items: center; justify-content: space-between !important; gap: 10px; width: 100%; min-width: 0; min-height: 36px; margin: 0; padding: 6px 9px !important; border: 1px solid var(--settings-border) !important; border-radius: 8px !important; background: color-mix(in srgb, var(--settings-accent) 6%, var(--settings-panel)) !important; color: var(--settings-text) !important; font: inherit !important; font-size: 13px !important; font-weight: 650 !important; line-height: 1.35; text-align: left; cursor: pointer; }
+.ef-settings-select-trigger:hover:not(:disabled), .ef-settings-select-trigger[aria-expanded="true"] { border-color: color-mix(in srgb, var(--settings-accent) 56%, var(--settings-border)) !important; background: color-mix(in srgb, var(--settings-accent) 11%, var(--settings-panel)) !important; }
+.ef-settings-select-trigger:disabled { cursor: default; opacity: .55; }
+.ef-settings-select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ef-settings-select-chevron { flex: 0 0 15px; color: var(--settings-muted); }
+.ef-settings-select-menu { position: absolute; z-index: 30; top: calc(100% + 5px); left: 0; display: grid; gap: 2px; width: max-content; min-width: 100%; max-width: min(360px, calc(100vw - 32px)); max-height: min(260px, calc(100dvh - 48px)); overflow: auto; padding: 4px; border: 1px solid var(--settings-border); border-radius: 8px; background: var(--settings-panel); color: var(--settings-text); box-shadow: 0 12px 28px #0005; }
+.ef-settings-select-menu[data-placement="top"] { top: auto; bottom: calc(100% + 5px); }
+.ef-settings-select-group + .ef-settings-select-group { margin-top: 2px; padding-top: 4px; border-top: 1px solid var(--settings-border); }
+.ef-settings-select-group-title { margin: 0; padding: 4px 7px; color: var(--settings-muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.ef-settings-content .ef-settings-select-option { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-height: 31px; margin: 0; padding: 6px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--settings-text); font: inherit; font-size: 12px; font-weight: 650; line-height: 1.35; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.ef-settings-content .ef-settings-select-option:hover:not(:disabled), .ef-settings-content .ef-settings-select-option[aria-selected="true"] { background: color-mix(in srgb, var(--settings-accent) 14%, var(--settings-panel)); color: var(--settings-accent); }
+.ef-settings-content .ef-settings-select-option:disabled { cursor: default; opacity: .55; }
+.ef-settings-content select:not([multiple]):not([size]), .ef-settings-dialog select:not([multiple]):not([size]) { appearance: none; -webkit-appearance: none; padding-right: 30px; border-radius: 8px; background-color: color-mix(in srgb, var(--settings-accent) 6%, var(--settings-panel)); background-image: linear-gradient(45deg, transparent 50%, var(--settings-accent) 50%), linear-gradient(135deg, var(--settings-accent) 50%, transparent 50%); background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; cursor: pointer; }
+.ef-settings-content select:not([multiple]):not([size]) option, .ef-settings-content select:not([multiple]):not([size]) optgroup, .ef-settings-dialog select:not([multiple]):not([size]) option, .ef-settings-dialog select:not([multiple]):not([size]) optgroup { background: var(--settings-panel); color: var(--settings-text); font: inherit; }
+.ef-settings-content select:not([multiple]):not([size]) option:checked, .ef-settings-dialog select:not([multiple]):not([size]) option:checked { background: color-mix(in srgb, var(--settings-accent) 14%, var(--settings-panel)); color: var(--settings-accent); }
 .ef-settings-content :is(p,small,.muted) { color: var(--settings-muted); }
 .ef-settings-content :is(code,dd,p,small) { overflow-wrap: anywhere; }
+.ef-settings-content dl { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 5px 18px; max-width: 660px; margin: 16px 0; }
+.ef-settings-content dt { color: var(--settings-muted); font-size: 12px; font-weight: 650; }
+.ef-settings-content dd { min-width: 0; margin: 0; font-size: 13px; }
 .ef-settings-content :is(.universe-profile-editor,.forge-license-details,.settings-category-list) { background: transparent; border: 0; display: block; padding: 0; }
 .ef-settings-content .universe-profile-editor > .universe-icon-frame { margin: 8px 0; }
 .ef-settings-content .icon-preset-row { display: flex; gap: 8px; align-items: center; padding: 14px 0; }
@@ -89,7 +111,7 @@
   .ef-settings-sidebar { border-right: 0; border-bottom: 1px solid var(--settings-border); padding: 12px 20px; }
   .ef-settings-sidebar nav { display: none; }
   .ef-settings-mobile { display: flex; gap: 12px; align-items: center; }
-  .ef-settings-mobile select { flex: 1; min-width: 0; }
+  .ef-settings-mobile .ef-settings-select { flex: 1; min-width: 0; }
   .ef-settings-help { align-self: start; }
   .ef-settings-main { flex: 1; }
   .ef-settings-content,.ef-settings-results { padding: 20px; }
@@ -98,6 +120,7 @@
 @media (max-width: 560px) {
   .ef-settings-content label:not(.image-upload-button,.icon-upload-button,.normalization-row,.plugin-toggle) { grid-template-columns: minmax(0,1fr); gap: 8px; }
   .ef-settings-content label:has(> input[type="checkbox"]) { grid-template-columns: minmax(0,1fr) auto; }
+  .ef-settings-content label > .ef-settings-select { grid-column: 1; grid-row: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .ef-settings-dialog *, .ef-settings-content * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 

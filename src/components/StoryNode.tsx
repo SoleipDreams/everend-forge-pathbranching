@@ -136,6 +136,12 @@ function badgeText(value: string) {
 
 const BEAT_FONT_MIN_PX = 12;
 const BEAT_FONT_MAX_PX = 38;
+const SHARED_BEAT_FONT_FIT_CACHE_LIMIT = 256;
+
+type BeatFontFitCacheEntry = { key: string; fontSize: number };
+
+const beatFontFitByElement = new WeakMap<HTMLDivElement, BeatFontFitCacheEntry>();
+const sharedBeatFontFitCache = new Map<string, number>();
 
 /**
  * Builds a representative filler string of the requested size so the baseline
@@ -169,7 +175,41 @@ function countBeatText(text: string, unit: "words" | "characters") {
  * inside a detached clone of the beat content element, so measuring never
  * disturbs the live contentEditable selection.
  */
-function measureBeatFontFit(reference: HTMLDivElement, text: string) {
+function measureBeatFontFit(reference: HTMLDivElement, text: string, shareAcrossNodes = false) {
+  const style = getComputedStyle(reference);
+  const key = JSON.stringify([
+    text,
+    reference.clientWidth,
+    reference.clientHeight,
+    style.fontFamily,
+    style.fontStyle,
+    style.fontWeight,
+    style.fontStretch,
+    style.fontVariant,
+    style.lineHeight,
+    style.letterSpacing,
+    style.wordSpacing,
+    style.textTransform,
+    style.whiteSpace,
+    style.wordBreak,
+    style.overflowWrap,
+    style.boxSizing,
+    style.paddingTop,
+    style.paddingRight,
+    style.paddingBottom,
+    style.paddingLeft,
+    document.fonts?.status,
+  ]);
+  const elementCache = beatFontFitByElement.get(reference);
+  if (elementCache?.key === key) return elementCache.fontSize;
+  if (shareAcrossNodes) {
+    const sharedFontSize = sharedBeatFontFitCache.get(key);
+    if (sharedFontSize !== undefined) {
+      beatFontFitByElement.set(reference, { key, fontSize: sharedFontSize });
+      return sharedFontSize;
+    }
+  }
+
   const clone = reference.cloneNode(false) as HTMLDivElement;
   clone.removeAttribute("contenteditable");
   clone.removeAttribute("role");
@@ -204,6 +244,14 @@ function measureBeatFontFit(reference: HTMLDivElement, text: string) {
     result = low;
   }
   clone.remove();
+  beatFontFitByElement.set(reference, { key, fontSize: result });
+  if (shareAcrossNodes) {
+    if (sharedBeatFontFitCache.size >= SHARED_BEAT_FONT_FIT_CACHE_LIMIT) {
+      const oldestKey = sharedBeatFontFitCache.keys().next().value;
+      if (oldestKey !== undefined) sharedBeatFontFitCache.delete(oldestKey);
+    }
+    sharedBeatFontFitCache.set(key, result);
+  }
   return result;
 }
 
@@ -869,7 +917,11 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       return;
     }
     const baselineFont = beatCounterTarget && beatCounterTarget > 0
-      ? measureBeatFontFit(element, buildBeatFillerString(beatCounterTarget, beatCounterUnit ?? "characters"))
+      ? measureBeatFontFit(
+          element,
+          buildBeatFillerString(beatCounterTarget, beatCounterUnit ?? "characters"),
+          true,
+        )
       : BEAT_FONT_MAX_PX;
     const actualText = element.textContent ?? "";
     const contentFont = actualText.trim()
@@ -879,9 +931,10 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       BEAT_FONT_MIN_PX,
       Math.min(baselineFont, contentFont),
     );
-    element.style.fontSize = `${size}px`;
-    element.style.overflowY =
-      element.scrollHeight > element.clientHeight ? "auto" : "hidden";
+    const fontSize = `${size}px`;
+    if (element.style.fontSize !== fontSize) element.style.fontSize = fontSize;
+    const overflowY = element.scrollHeight > element.clientHeight ? "auto" : "hidden";
+    if (element.style.overflowY !== overflowY) element.style.overflowY = overflowY;
   }, [beatCounterTarget, beatCounterUnit]);
   const fitBeatTextFrameRef = useRef<number | undefined>(undefined);
   const scheduleFitBeatText = useCallback(() => {
@@ -900,15 +953,15 @@ function StoryNode({ id, data, selected, positionAbsoluteX, positionAbsoluteY }:
       element.textContent = draftExternalText;
       setDraftText(draftExternalText);
     }
-    fitBeatText();
-  }, [draftExternalText, draftLocale, fitBeatText]);
+    scheduleFitBeatText();
+  }, [draftExternalText, draftLocale, scheduleFitBeatText]);
   useLayoutEffect(() => {
     const element = beatContentRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => fitBeatText());
+    const observer = new ResizeObserver(() => scheduleFitBeatText());
     observer.observe(element);
     return () => observer.disconnect();
-  }, [fitBeatText]);
+  }, [scheduleFitBeatText]);
   useEffect(() => () => {
     if (fitBeatTextFrameRef.current !== undefined) {
       cancelAnimationFrame(fitBeatTextFrameRef.current);

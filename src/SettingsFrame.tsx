@@ -1,8 +1,9 @@
-import { Children, Fragment, cloneElement, createContext, isValidElement, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type MutableRefObject } from "react";
+import { Children, Fragment, cloneElement, createContext, isValidElement, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type MutableRefObject, type SelectHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import { Search, X, ArrowLeft } from "lucide-react";
 import { findSettings, normalizeSettingsSearch, settingsText, type SettingsDraft, type SettingsHost, type SettingsPage } from "./settingsIntegration";
 import { translateSettings } from "./settingsCopy";
+import { SettingsDropdown } from "./SettingsDropdown.js";
 import "./settingsFrame.css";
 
 const DraftContext = createContext<((id: string, draft: SettingsDraft) => () => void) | undefined>(undefined);
@@ -21,6 +22,9 @@ export function settingsContent(node: ReactNode, locale: "en" | "es"): ReactNode
     if (typeof child === "string") return translateSettings(child, locale);
     if (!isValidElement(child) || (typeof child.type !== "string" && child.type !== Fragment)) return child;
     const element = child as ReactElement<Record<string, unknown>>;
+    if (element.type === "select" && !element.props.multiple && !element.props.size) {
+      return <SettingsDropdown {...(element.props as SelectHTMLAttributes<HTMLSelectElement>)}>{settingsContent(element.props.children as ReactNode, locale)}</SettingsDropdown>;
+    }
     const props: Record<string, unknown> = {};
     for (const key of ["title", "placeholder", "aria-label"]) {
       if (typeof element.props[key] === "string") props[key] = translateSettings(element.props[key] as string, locale);
@@ -171,7 +175,7 @@ export function SettingsFrame({
       <div className="ef-settings-layout" inert={confirmClose}>
         <aside className="ef-settings-sidebar">
           <label className="ef-settings-search"><Search size={16} /><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={es ? "Buscar ajustes…" : "Search settings…"} aria-label={es ? "Buscar ajustes" : "Search settings"} /></label>
-          <label className="ef-settings-mobile"><span>{es ? "Sección" : "Section"}</span><select value={page} onChange={event => { setQuery(""); setFocusControl(undefined); onPage(event.target.value); }}>{groups.map(group => <optgroup key={group} label={group}>{pages.filter(item => settingsText(item.group, locale) === group).map(item => <option key={item.id} value={item.id}>{settingsText(item.title, locale)}</option>)}</optgroup>)}</select></label>
+          <label className="ef-settings-mobile"><span>{es ? "Sección" : "Section"}</span><SettingsDropdown value={page} onChange={event => { setQuery(""); setFocusControl(undefined); onPage(event.target.value); }}>{groups.map(group => <optgroup key={group} label={group}>{pages.filter(item => settingsText(item.group, locale) === group).map(item => <option key={item.id} value={item.id}>{settingsText(item.title, locale)}</option>)}</optgroup>)}</SettingsDropdown></label>
           <nav aria-label={es ? "Secciones de ajustes" : "Settings sections"}>{groups.map(group => <div className="ef-settings-nav-group" key={group}><p>{group}</p>{pages.filter(item => settingsText(item.group, locale) === group).map(item => <button type="button" key={item.id} aria-current={page === item.id && !query ? "page" : undefined} onClick={() => { setQuery(""); setFocusControl(undefined); onPage(item.id); }}>{settingsText(item.title, locale)}</button>)}</div>)}</nav>
           {onHelp && <button className="ef-settings-help" type="button" onClick={() => { if (helpPage) { setQuery(""); onPage(helpPage); } else requestClose(onHelp); }}>{es ? "Ayuda y tutoriales" : "Help and tutorials"}</button>}
           {footer}
