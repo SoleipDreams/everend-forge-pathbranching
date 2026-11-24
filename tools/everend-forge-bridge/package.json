@@ -1,0 +1,26 @@
+{
+  "name": "@everendforge/bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Loopback bridge service between Everend PathBranching and Unity.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:runtime": "node scripts/build-runtime.mjs",
+    "stage:unity": "node scripts/build-runtime.mjs ../everend-forge-plugins/packages/com.everendforge.unity/Editor/BridgeRuntime",
+    "start": "node dist/src/cli.js start",
+    "dev": "tsx src/cli.ts start",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "license": "MIT"
+}

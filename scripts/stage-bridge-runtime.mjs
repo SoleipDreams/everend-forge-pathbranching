@@ -5,9 +5,13 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const pathBranchingRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const siblingBridgeRoot = path.resolve(pathBranchingRoot, "..", "everend-forge-bridge");
+const bundledBridgeRoot = path.join(pathBranchingRoot, "tools", "everend-forge-bridge");
 const bridgeRoot = process.env.EVEREND_FORGE_BRIDGE_ROOT
   ? path.resolve(process.env.EVEREND_FORGE_BRIDGE_ROOT)
-  : path.resolve(pathBranchingRoot, "..", "everend-forge-bridge");
+  : fs.existsSync(path.join(siblingBridgeRoot, "scripts", "build-runtime.mjs"))
+    ? siblingBridgeRoot
+    : bundledBridgeRoot;
 const destination = path.join(pathBranchingRoot, "src-tauri", "bridge-runtime");
 const builder = path.join(bridgeRoot, "scripts", "build-runtime.mjs");
 
