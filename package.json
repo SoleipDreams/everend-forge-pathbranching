@@ -1,6 +1,6 @@
 {
   "name": "@everendforge/pathbranching",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": false,
   "type": "module",
   "description": "Visual branching narrative editor core for Everend Forge.",
