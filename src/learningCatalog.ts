@@ -1,45 +1,326 @@
-import { learningText as t, type LearningStep, type LearningLesson } from "./learning";
-const step = (id: string, title: [string, string], body: [string, string], section: string, target: string, event?: string, character: "brio" | "temple" = "brio", sameDocument = false): LearningStep =>
-  ({ id, title: t(...title), body: t(...body), section, target, event, character, sameDocument });
+import {
+  learningText as t,
+  type LearningStep,
+  type LearningLesson,
+} from "./learning";
+
+const step = (
+  id: string,
+  title: [string, string],
+  body: [string, string],
+  section: string,
+  target: string,
+  character: "brio" | "temple" = "brio",
+): LearningStep => ({
+  id,
+  title: t(...title),
+  body: t(...body),
+  section,
+  target,
+  character,
+});
+
 export const pathbranchingIntroduction = [
-  step("structure", ["Historias que se ramifican", "Stories that branch"], ["Una historia reúne secuencias. Cada secuencia conecta eventos y decisiones en el canvas. Empieza desde Historias.", "A story contains sequences. Each sequence connects events and decisions on the canvas. Start in Stories."], "outline", "pathbranching.stories-panel"),
-  step("write", ["Escribe y conecta", "Write and connect"], ["Selecciona un evento y abre su inspector para escribir. Un clic selecciona; mantener el clic abre el inspector; doble clic entra al espacio narrativo.", "Select an event and open its inspector to write. Click to select; hold the click to open the inspector; double-click to enter a narrative space."], "canvas", "pathbranching.canvas"),
-  step("review", ["Del documento a la prueba", "From document to test"], ["Guarda tu historia, revisa los diagnósticos y prueba las rutas con Play Mode. Las entidades que creas aquí son locales; verifica su nombre, tipo, propiedades y relaciones antes de publicarlas en WorldNotion. Solo después de verificarlas y verlas allí como entidades se consideran parte del canon.", "Save your story, review diagnostics and test routes with Play Mode. Entities you create here are local; verify their name, type, properties, and links before publishing them to WorldNotion. Treat them as part of the canon only after they have been verified and appear there as entities."], "export", "pathbranching.export", undefined, "temple"),
+  step(
+    "structure",
+    ["Historias que se ramifican", "Stories that branch"],
+    [
+      "Una historia reúne secuencias. Cada secuencia conecta eventos y decisiones en el canvas. El panel Historias es el punto de partida para ubicarlas.",
+      "A story contains sequences. Each sequence connects events and decisions on the canvas. The Stories panel is the place to locate them.",
+    ],
+    "outline",
+    "pathbranching.stories-panel",
+  ),
+  step(
+    "write",
+    ["Escribe y conecta", "Write and connect"],
+    [
+      "El canvas organiza la secuencia y sus eventos. Seleccionar un evento muestra su inspector; el espacio narrativo permite trabajar el contenido interno.",
+      "The canvas organizes a sequence and its events. Selecting an event shows its inspector; the narrative space is where its inner content is organized.",
+    ],
+    "canvas",
+    "pathbranching.canvas",
+  ),
+  step(
+    "review",
+    ["Del documento a la prueba", "From document to test"],
+    [
+      "La barra superior reúne guardado, diagnósticos, Play Mode y exportación. Las entidades creadas en PathBranching son locales hasta publicarse y verificarse en WorldNotion.",
+      "The top bar brings together saving, diagnostics, Play Mode and export. Entities created in PathBranching are local until published and verified in WorldNotion.",
+    ],
+    "export",
+    "pathbranching.export",
+    "temple",
+  ),
 ];
+
 export const pathbranchingLessons: LearningLesson[] = [
-  { id: "structure", title: t("Historia y secuencia", "Story and sequence"), summary: t("Prepara el espacio de tu relato.", "Prepare a space for your story."), section: "outline", steps: [
-    step("story", ["Una historia nueva", "A new story"], ["En Historias, abre Acciones de la historia y elige Nueva historia. Ponle un nombre y confirma; las historias existentes no cuentan como acción de este tutorial.", "In Stories, open Story actions and choose New story. Name it and confirm; existing stories do not count as an action in this tutorial."], "outline", "pathbranching.create-story", "story-created"),
-    step("sequence", ["La primera secuencia", "The first sequence"], ["En Historias, abre Acciones de la secuencia, elige Nueva secuencia, ponle un nombre y confirma para llegar al canvas.", "In Stories, open Sequence actions, choose New sequence, name it and confirm to reach the canvas."], "outline", "pathbranching.create-sequence", "sequence-created"),
-  ] },
-  { id: "events", title: t("Evento y diálogo", "Event and dialogue"), summary: t("Crea una escena y escribe su primera línea.", "Create a scene and write its first line."), section: "canvas", steps: [
-    step("event", ["Crea un evento", "Create an event"], ["Haz clic derecho en un espacio vacío de la secuencia. Abre «Evento» y selecciona un tipo, por ejemplo «Evento». Este paso se confirma cuando el evento aparece en la historia.", "Right-click an empty space in the sequence. Open “Event” and choose a type, such as “Event”. This step completes when the event appears in the story."], "canvas", "pathbranching.create-event", "event-created"),
-    step("dialogue", ["Inicia una conversación", "Start a conversation"], ["Haz doble clic en el evento para entrar. En un espacio vacío, haz clic derecho y elige Estructura → Conversación. El paso termina cuando se crea.", "Double-click the event to enter it. Right-click an empty space and choose Structure → Conversation. The step completes when it is created."], "canvas", "pathbranching.create-dialogue", "dialogue-created"),
-    step("line", ["Escribe la primera línea", "Write the first line"], ["Dentro de la conversación, haz clic derecho en un espacio vacío y elige Narrativa → Diálogo. Escribe una línea y haz clic fuera del texto para aplicarla.", "Inside the conversation, right-click an empty space and choose Narrative → Dialogue. Write a line, then click outside the text to apply it."], "canvas", "pathbranching.create-speech", "dialogue-written"),
-  ] },
-  { id: "decisions", title: t("Conectar dos resultados", "Connect two outcomes"), summary: t("Una decisión, dos destinos.", "One decision, two destinations."), section: "canvas", steps: [
-    step("branch", ["Abre dos posibilidades", "Open two possibilities"], ["Dentro del evento, haz clic derecho y elige Narrativa → Decisión. Añade dos opciones y conecta cada salida a un destino distinto; puedes crear un destino desde el propio conector.", "Inside the event, right-click and choose Narrative → Decision. Add two options and connect each outcome to a different destination; you can create a destination from the connector."], "canvas", "pathbranching.create-decision", "branch-connected"),
-  ] },
-  { id: "conditions", title: t("Añadir condiciones", "Add conditions"), summary: t("Decide cuándo se puede seguir una ruta.", "Choose when a route can be followed."), section: "canvas", steps: [
-    step("condition", ["Condiciona una ruta", "Add a route condition"], ["Abre la opción A, entra en Condiciones y pulsa Condición. Como ejemplo, elige Progreso → Evento → Ha sido visitado.", "Open option A, go to Conditions and click Condition. For example, choose Progress → Event → Has been visited."], "canvas", "pathbranching.condition", "condition-added", "temple"),
-  ] },
-  { id: "interactions", title: t("Añadir interacciones", "Add interactions"), summary: t("Agrega una acción que el lector pueda resolver.", "Add an action for the reader to resolve."), section: "canvas", steps: [
-    step("interaction", ["Añade una interacción", "Add an interaction"], ["Abre la opción A, selecciona Interacción y pulsa Elegir interacción. Elige un tipo y una plantilla; por ejemplo, QTE y una prueba de reacción.", "Open option A, select Interactions and click Choose interaction. Choose a type and a template, such as QTE and a reaction test."], "canvas", "pathbranching.interaction", "interaction-created", "temple"),
-  ] },
-  { id: "logic", title: t("Lógica avanzada", "Advanced logic"), summary: t("Usa variables con condiciones y consecuencias.", "Use variables with conditions and consequences."), section: "logic", steps: [
-    step("variable", ["Un valor que cambia", "A value that changes"], ["En Lógica, añade una variable para representar algo de tu historia, como confianza o una llave.", "In Logic, add a variable for something in your story, such as trust or a key."], "logic", "pathbranching.logic", "variable-created", "temple"),
-    step("rule", ["La elección deja huella", "A choice leaves a mark"], ["Añade una condición y una consecuencia en una ruta o evento, y aplica los cambios. Usa valores compatibles con la variable.", "Add a condition and a consequence to a route or event, and apply the edits. Use values compatible with the variable."], "logic", "pathbranching.logic", "logic-applied", "temple"),
-  ] },
-  { id: "persistence", title: t("Guardar y reabrir", "Save and reopen"), summary: t("Comprueba que tu historia permanece.", "Check that your story persists."), section: "outline", steps: [
-    step("save", ["Conserva la historia", "Keep the story"], ["Guarda con Ctrl+S y espera a que termine. Conservaremos la identidad de este documento para el siguiente paso.", "Save with Ctrl+S and wait for completion. We will remember this document's identity for the next step."], "outline", "pathbranching.toolbar", "document-saved", "temple"),
-    step("reopen", ["Vuelve al mismo documento", "Return to the same document"], ["Recarga la historia con Archivo → Recargar, o cierra y vuelve a abrir Forge. Comprueba texto, conexiones y lógica. La guía retomará este paso.", "Reload the story with File → Reload, or close and reopen Forge. Check text, connections and logic. The guide will resume at this step."], "outline", "pathbranching.stories-panel", "document-reopened", "temple", true),
-  ] },
-  { id: "validation", title: t("Validar y reparar", "Validate and repair"), summary: t("Revisa los diagnósticos del documento.", "Review the document diagnostics."), section: "validation", steps: [
-    step("validate", ["Revisa las rutas", "Review the routes"], ["Abre Diagnósticos, revisa los problemas y repara los errores. Usa Comprobar documento en esta guía para confirmar que no quedan errores.", "Open Diagnostics, review issues and repair errors. Use Check document in this guide to confirm there are no errors left."], "validation", "pathbranching.validation", "document-validated", "temple", true),
-  ] },
-  { id: "preview", title: t("Probar la historia", "Test the story"), summary: t("Recorre las decisiones en Play Mode.", "Follow decisions in Play Mode."), section: "preview", steps: [
-    step("play", ["Ponte en el lugar del lector", "Take the reader's place"], ["Inicia Play Mode desde el inicio de la secuencia. Prueba cada opción y comprueba cómo responde la lógica.", "Start Play Mode at the sequence start. Try each option and check how the logic responds."], "preview", "pathbranching.preview", "story-tested", "brio", true),
-  ] },
-  { id: "export", title: t("Exportar el documento", "Export the document"), summary: t("Lleva tu historia a una salida reutilizable.", "Take your story to a reusable output."), section: "export", steps: [
-    step("export", ["Lista para salir de la forja", "Ready to leave the forge"], ["En Exportación, revisa la vista previa, elige un formato disponible y exporta. El paso se confirma tras guardar el archivo de salida, no al abrir el panel.", "In Export, review the preview, choose an available format and export. This step is confirmed after the output file is saved, not when the panel opens."], "export", "pathbranching.export", "document-exported", "temple", true),
-  ] },
+  {
+    id: "structure",
+    title: t("Historias y secuencias", "Stories and sequences"),
+    summary: t(
+      "Ubica la estructura principal del relato.",
+      "Locate the main story structure.",
+    ),
+    section: "outline",
+    steps: [
+      step(
+        "story",
+        ["Historias del proyecto", "Project stories"],
+        [
+          "El panel Historias reúne los relatos del proyecto. Sus acciones permiten crear, seleccionar y organizar historias; no necesitas crear una para recorrer esta guía.",
+          "The Stories panel contains the project's narratives. Its actions let you create, select and organize stories; you do not need to create one for this tour.",
+        ],
+        "outline",
+        "pathbranching.create-story",
+      ),
+      step(
+        "sequence",
+        ["Secuencias y canvas", "Sequences and canvas"],
+        [
+          "Las secuencias ordenan los eventos de una historia. El control de secuencias está junto a las acciones de historia y abre el canvas correspondiente.",
+          "Sequences organize the events in a story. The sequence control sits beside the story actions and opens its canvas.",
+        ],
+        "outline",
+        "pathbranching.create-sequence",
+      ),
+    ],
+  },
+  {
+    id: "events",
+    title: t("Eventos y diálogo", "Events and dialogue"),
+    summary: t(
+      "Conoce dónde se organizan escenas y texto.",
+      "See where scenes and text are organized.",
+    ),
+    section: "canvas",
+    steps: [
+      step(
+        "event",
+        ["Eventos en el canvas", "Events on the canvas"],
+        [
+          "Los eventos representan escenas o unidades narrativas y se añaden desde el menú contextual del canvas. Aquí puedes ubicarlos y seleccionar uno existente.",
+          "Events represent scenes or narrative units and are added from the canvas context menu. Use this area to locate or select an existing event.",
+        ],
+        "canvas",
+        "pathbranching.create-event",
+      ),
+      step(
+        "dialogue",
+        ["Contenido dentro de un evento", "Content inside an event"],
+        [
+          "Al entrar a un evento encuentras un canvas interno para sus estructuras y conversaciones. El doble clic abre ese espacio; no hace falta modificar el evento.",
+          "An event has an inner canvas for its structures and conversations. Double-clicking opens that space; you do not need to change the event.",
+        ],
+        "canvas",
+        "pathbranching.create-dialogue",
+      ),
+      step(
+        "line",
+        ["Diálogo y narrativa", "Dialogue and narrative"],
+        [
+          "Los bloques de diálogo aparecen dentro de la conversación y guardan las líneas del personaje. El menú contextual del espacio narrativo reúne estas opciones.",
+          "Dialogue blocks appear inside a conversation and hold character lines. The narrative-space context menu contains these options.",
+        ],
+        "canvas",
+        "pathbranching.create-speech",
+      ),
+    ],
+  },
+  {
+    id: "decisions",
+    title: t("Decisiones y rutas", "Choices and routes"),
+    summary: t(
+      "Ubica cómo una elección conecta destinos.",
+      "Locate how a choice connects destinations.",
+    ),
+    section: "canvas",
+    steps: [
+      step(
+        "branch",
+        ["Resultados de una decisión", "Outcomes of a choice"],
+        [
+          "Las decisiones se muestran en el canvas del evento. Cada opción tiene una salida que puede conectarse a otro destino de la historia.",
+          "Choices appear on an event's canvas. Each option has an output that can connect to another destination in the story.",
+        ],
+        "canvas",
+        "pathbranching.create-decision",
+      ),
+    ],
+  },
+  {
+    id: "conditions",
+    title: t("Condiciones", "Conditions"),
+    summary: t(
+      "Encuentra los requisitos de cada opción.",
+      "Find the requirements for each choice.",
+    ),
+    section: "canvas",
+    steps: [
+      step(
+        "condition",
+        ["Cuándo aparece una ruta", "When a route is available"],
+        [
+          "El inspector de una opción contiene Condiciones. Allí se expresan requisitos de progreso, eventos o variables que determinan cuándo puede seguirse una ruta.",
+          "A choice's inspector contains Conditions. This is where progress, event or variable requirements determine when a route can be followed.",
+        ],
+        "canvas",
+        "pathbranching.condition",
+        "temple",
+      ),
+    ],
+  },
+  {
+    id: "interactions",
+    title: t("Interacciones", "Interactions"),
+    summary: t(
+      "Ubica las acciones que pueden resolver los lectores.",
+      "Locate actions readers can resolve.",
+    ),
+    section: "canvas",
+    steps: [
+      step(
+        "interaction",
+        ["Interacciones de una opción", "Interactions for a choice"],
+        [
+          "El inspector de la opción también contiene Interacciones. Allí se consultan las mecánicas disponibles, sus tipos y plantillas.",
+          "A choice's inspector also contains Interactions. This is where available mechanics, types and templates are listed.",
+        ],
+        "canvas",
+        "pathbranching.interaction",
+        "temple",
+      ),
+    ],
+  },
+  {
+    id: "logic",
+    title: t("Variables y lógica", "Variables and logic"),
+    summary: t(
+      "Conoce dónde se conectan condiciones y consecuencias.",
+      "See where conditions and consequences are connected.",
+    ),
+    section: "logic",
+    steps: [
+      step(
+        "variable",
+        ["Variables del relato", "Story variables"],
+        [
+          "El panel Lógica reúne variables, condiciones y consecuencias. Sirve para representar información que puede cambiar durante la historia.",
+          "The Logic panel contains variables, conditions and consequences. It represents information that can change during a story.",
+        ],
+        "logic",
+        "pathbranching.logic",
+        "temple",
+      ),
+      step(
+        "rule",
+        ["Reglas de una ruta", "Route rules"],
+        [
+          "Las condiciones deciden si una ruta está disponible; las consecuencias describen qué cambia al seguirla. Ambas se revisan desde los controles de lógica del documento.",
+          "Conditions decide whether a route is available; consequences describe what changes when it is followed. Both are reviewed through the document's logic controls.",
+        ],
+        "logic",
+        "pathbranching.logic",
+        "temple",
+      ),
+    ],
+  },
+  {
+    id: "persistence",
+    title: t("Guardar y reabrir", "Save and reopen"),
+    summary: t(
+      "Ubica los controles de archivo y la lista de historias.",
+      "Locate file controls and the story list.",
+    ),
+    section: "outline",
+    steps: [
+      step(
+        "save",
+        ["Guardado del documento", "Saving the document"],
+        [
+          "La barra superior muestra el estado del documento y sus controles de guardado. PathBranching conserva la historia en el archivo del universo.",
+          "The top bar shows document status and save controls. PathBranching keeps the story in the universe's project file.",
+        ],
+        "outline",
+        "pathbranching.toolbar",
+        "temple",
+      ),
+      step(
+        "reopen",
+        ["Volver a una historia", "Return to a story"],
+        [
+          "El panel Historias permite volver a seleccionar una historia y sus secuencias. Estos controles sirven para reabrir trabajo cuando lo necesites.",
+          "The Stories panel lets you select a story and its sequences again. These controls are available whenever you need to reopen your work.",
+        ],
+        "outline",
+        "pathbranching.stories-panel",
+        "temple",
+      ),
+    ],
+  },
+  {
+    id: "validation",
+    title: t("Diagnósticos", "Diagnostics"),
+    summary: t(
+      "Encuentra los avisos de estructura y referencias.",
+      "Find structure and reference notices.",
+    ),
+    section: "validation",
+    steps: [
+      step(
+        "validate",
+        ["Revisión del documento", "Document review"],
+        [
+          "Diagnósticos reúne problemas de estructura y referencias. El botón de comprobación inicia una revisión cuando quieras; no es requisito para seguir esta guía.",
+          "Diagnostics collects structure and reference issues. Its check button starts a review whenever you need one; it is not required to continue this tour.",
+        ],
+        "validation",
+        "pathbranching.validation",
+        "temple",
+      ),
+    ],
+  },
+  {
+    id: "preview",
+    title: t("Play Mode", "Play Mode"),
+    summary: t(
+      "Ubica cómo recorrer una historia como lector.",
+      "Locate how to follow a story as a reader.",
+    ),
+    section: "preview",
+    steps: [
+      step(
+        "play",
+        ["Probar una ruta", "Preview a route"],
+        [
+          "Play Mode abre la historia desde el punto de inicio y permite recorrer sus opciones como lector. Está disponible desde las acciones principales de la secuencia.",
+          "Play Mode opens the story at its starting point and lets you follow its choices as a reader. It is available from the sequence's primary actions.",
+        ],
+        "preview",
+        "pathbranching.preview",
+      ),
+    ],
+  },
+  {
+    id: "export",
+    title: t("Exportación", "Export"),
+    summary: t(
+      "Ubica los formatos y controles de salida.",
+      "Locate output formats and controls.",
+    ),
+    section: "export",
+    steps: [
+      step(
+        "export",
+        ["Salidas del documento", "Document outputs"],
+        [
+          "Exportación muestra las vistas previas y formatos disponibles para el documento. Guardar un archivo es una acción aparte; no hace falta exportar para cerrar el recorrido.",
+          "Export shows previews and available formats for the document. Saving an output file is a separate action; you do not need to export to finish this tour.",
+        ],
+        "export",
+        "pathbranching.export",
+        "temple",
+      ),
+    ],
+  },
 ];
